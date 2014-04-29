@@ -43,6 +43,14 @@ class Profile(object):
         The units for each of the independent variables.
     y_units : str
         The units for the dependent variable.
+    y : :py:class:`Array`, (`M`,)
+        The `M` dependent variables.
+    X : :py:class:`Matrix`, (`M`, `X_dim`)
+        The `M` independent variables.
+    err_y : :py:class:`Array`, (`M`,)
+        The uncertainty in the `M` dependent variables.
+    err_X : :py:class:`Matrix`, (`M`, `X_dim`)
+        The uncertainties in each dimension of the `M` independent variables.
     """
     def __init__(self, X_dim=1, X_units=None, y_units=''):
         self.X_dim = X_dim
@@ -55,6 +63,80 @@ class Profile(object):
                 
         self.X_units = X_units
         self.y_units = y_units
-    
-    def add_data(self, X, y, err_X=None, err_Y=0):
         
+        self.y = scipy.array([], dtype=float)
+        self.X = None
+        self.err_y = scipy.array([], dtype=float)
+        self.err_X = None
+    
+    def add_data(self, X, y, err_X=None, err_y=0):
+        """Add data to the training data set of the :py:class:`Profile` instance.
+        
+        Parameters
+        ----------
+        X : array-like, (`M`, `N`)
+            `M` independent variables of dimension `N`.
+        y : array-like, (`M`,)
+            `M` dependent variables.
+        err_X : array-like, (`M`, `N`), or scalar float, or single array-like (`N`,), optional
+            Non-negative values only. Error given as standard deviation for
+            each of the `N` dimensions in the `M` independent variables. If a
+            scalar is given, it is used for all of the values. If a single
+            array of length `N` is given, it is used for each point. The
+            default is to assign zero error to each point.
+        err_y : array-like (`M`,) or scalar float, optional
+            Non-negative values only. Error given as standard deviation in the
+            `M` dependent variables. If `err_y` is a scalar, the data set is
+            taken to be homoscedastic (constant error). Otherwise, the length
+            of `err_y` must equal the length of `y`. Default value is 0
+            (noiseless observations).
+        
+        Raises
+        ------
+        ValueError
+            Bad shapes for any of the inputs, negative values for `err_y` or `n`.
+        """
+        # Verify y has only one non-trivial dimension:
+        try:
+            iter(y)
+        except TypeError:
+            y = scipy.array([y], dtype=float)
+        else:
+            y = scipy.asarray(y, dtype=float)
+            if len(y.shape) != 1:
+                raise ValueError("Dependent variables y must have only one "
+                                 "dimension with length greater than one! Shape "
+                                 "of y given is %s" % (y.shape,))
+        
+        # Handle scalar error or verify shape of array error matches shape of y:
+        try:
+            iter(err_y)
+        except TypeError:
+            err_y = err_y * scipy.ones_like(y, dtype=float)
+        else:
+            err_y = scipy.asarray(err_y, dtype=float)
+            if err_y.shape != y.shape:
+                raise ValueError("When using array-like err_y, shape must match "
+                                 "shape of y! Shape of err_y given is %s, shape "
+                                 "of y given is %s." % (err_y.shape, y.shape))
+        if (err_y < 0).any():
+            raise ValueError("All elements of err_y must be non-negative!")
+        
+        # Handle scalar training input or convert array input into matrix.
+        X = scipy.asmatrix(X, dtype=float)
+        # Correct single-dimension inputs:
+        if self.num_dim == 1 and X.shape[0] == 1:
+            X = X.T
+        if X.shape != (len(y), self.num_dim):
+            raise ValueError("Shape of training inputs must be (len(y), k.num_dim)! "
+                             "X given has shape %s, shape of "
+                             "y is %s and num_dim=%d." % (X.shape, y.shape, self.num_dim))
+        
+        # TODO: Add handling for err_X!
+        
+        if self.X is None:
+            self.X = X
+        else:
+            self.X = scipy.vstack((self.X, X))
+        self.y = scipy.append(self.y, y)
+        self.err_y = scipy.append(self.err_y, err_y)
