@@ -69,7 +69,7 @@ class Profile(object):
         self.err_y = scipy.array([], dtype=float)
         self.err_X = None
     
-    def add_data(self, X, y, err_X=None, err_y=0):
+    def add_data(self, X, y, err_X=0, err_y=0):
         """Add data to the training data set of the :py:class:`Profile` instance.
         
         Parameters
@@ -103,7 +103,7 @@ class Profile(object):
             y = scipy.array([y], dtype=float)
         else:
             y = scipy.asarray(y, dtype=float)
-            if len(y.shape) != 1:
+            if y.ndim != 1:
                 raise ValueError("Dependent variables y must have only one "
                                  "dimension with length greater than one! Shape "
                                  "of y given is %s" % (y.shape,))
@@ -122,21 +122,43 @@ class Profile(object):
         if (err_y < 0).any():
             raise ValueError("All elements of err_y must be non-negative!")
         
-        # Handle scalar training input or convert array input into matrix.
+        # Handle scalar independent variable or convert array input into matrix.
         X = scipy.asmatrix(X, dtype=float)
         # Correct single-dimension inputs:
-        if self.num_dim == 1 and X.shape[0] == 1:
+        if self.X_dim == 1 and X.shape[0] == 1:
             X = X.T
-        if X.shape != (len(y), self.num_dim):
-            raise ValueError("Shape of training inputs must be (len(y), k.num_dim)! "
+        if X.shape != (len(y), self.X_dim):
+            raise ValueError("Shape of independent variables must be (len(y), self.X_dim)! "
                              "X given has shape %s, shape of "
-                             "y is %s and num_dim=%d." % (X.shape, y.shape, self.num_dim))
+                             "y is %s and X_dim=%d." % (X.shape, y.shape, self.X_dim))
         
-        # TODO: Add handling for err_X!
+        # Process uncertainty in err_X:
+        try:
+            iter(err_X)
+        except TypeError:
+            err_X = err_X * scipy.ones_like(X, dtype=float)
+        else:
+            err_X = scipy.asarray(err_X)
+            if err_X.ndim == 1 and self.X_dim != 1:
+                err_X = scipy.tile(err_X, (X.shape[0], 1))
+        err_X = scipy.asmatrix(err_X, dtype=float)
+        if self.X_dim == 1 and err_X.shape[0] == 1:
+            err_X = err_X.T
+        if err_X.shape != X.shape:
+            raise ValueError("Shape of uncertainties on independent variables must be (len(y), self.X_dim)! "
+                             "X given has shape %s, shape of "
+                             "y is %s and X_dim=%d." % (X.shape, y.shape, self.X_dim))
         
+        if (err_X < 0).any():
+            raise ValueError("All elements of err_X must be non-negative!")
+
         if self.X is None:
             self.X = X
         else:
             self.X = scipy.vstack((self.X, X))
+        if self.err_X is None:
+            self.err_X = err_X
+        else:
+            self.err_X = scipy.vstack((self.err_X, err_X))
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
