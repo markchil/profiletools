@@ -20,6 +20,10 @@
 
 from __future__ import division
 
+import scipy
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
 class Profile(object):
     """Object to abstractly represent a profile.
     
@@ -34,6 +38,13 @@ class Profile(object):
         of empty strings will be used.
     y_units : str, optional
         Units for the dependent variable. Default is an empty string.
+    X_labels : str, list of str or None, optional
+        Descriptive label for each of the independent variables. If `X_dim`=1,
+        this should be given as a single string, if `X_dim`>1, this should be
+        given as a list of strings of length `X_dim`. Default value is `None`,
+        meaning a list of empty strings will be used.
+    y_label : str, optional
+        Descriptive label for the dependent variable. Default is an empty string.
     
     Attributes
     ----------
@@ -43,6 +54,10 @@ class Profile(object):
         The units for each of the independent variables.
     y_units : str
         The units for the dependent variable.
+    X_labels : list of str, (X_dim,)
+        Descriptive labels for each of the independent variables.
+    y_label : str
+        Descriptive label for the dependent variable.
     y : :py:class:`Array`, (`M`,)
         The `M` dependent variables.
     X : :py:class:`Matrix`, (`M`, `X_dim`)
@@ -52,7 +67,7 @@ class Profile(object):
     err_X : :py:class:`Matrix`, (`M`, `X_dim`)
         The uncertainties in each dimension of the `M` independent variables.
     """
-    def __init__(self, X_dim=1, X_units=None, y_units=''):
+    def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label=''):
         self.X_dim = X_dim
         if X_units is None:
             X_units = [''] * X_dim
@@ -60,9 +75,19 @@ class Profile(object):
             X_units = [X_units]
         elif len(X_units) != X_dim:
             raise ValueError("The length of X_units must be equal to X_dim!")
-                
+        
+        if X_labels is None:
+            X_labels = [''] * X_dim
+        elif X_dim == 1:
+            X_labels = [X_labels]
+        elif len(X_labels) != X_dim:
+            raise ValueError("The length of X_labels must be equal to X_dim!")
+        
         self.X_units = X_units
         self.y_units = y_units
+        
+        self.X_labels = X_labels
+        self.y_label = y_label
         
         self.y = scipy.array([], dtype=float)
         self.X = None
@@ -162,3 +187,88 @@ class Profile(object):
             self.err_X = scipy.vstack((self.err_X, err_X))
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
+    
+    def plot_data(self, ax=None, label_axes=True, **kwargs):
+        """Plot the data stored in this Profile. Only works for X_dim = 1 or 2.
+        
+        Parameters
+        ----------
+        ax : axis instance, optional
+            Axis to plot the result on. If no axis is passed, one is created.
+            If the string 'gca' is passed, the current axis (from plt.gca())
+            is used. If X_dim = 2, the axis must be 3d.
+        label_axes : bool, optional
+            If True, the axes will be labelled with strings constructed from
+            the labels and units set when creating the Profile instance.
+            Default is True (label axes).
+        **kwargs : extra plotting arguments, optional
+            Extra arguments that are passed to errorbar/errorbar3d.
+        
+        Returns
+        -------
+        The axis instance used.
+        """
+        if self.X_dim > 2:
+            raise ValueError("Plotting is not supported for X_dim > 2!")
+        if ax is None:
+            f = plt.figure()
+            if self.X_dim == 1:
+                ax = f.add_subplot(1, 1, 1)
+            elif self.X_dim == 2:
+                ax = f.add_subplot(111, projection='3d')
+        elif ax == 'gca':
+            ax = plt.gca()
+        
+        if 'label' not in kwargs:
+            kwargs['label'] = self.y_label
+        
+        if self.X_dim == 1:
+            ax.errorbar(self.X, self.y, yerr=self.err_y, xerr=self.err_X, **kwargs)
+            if label_axes:
+                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],))
+                ax.set_ylabel("%s [%s]" % (self.y_label[0], self.y_units,))
+        elif self.X_dim == 2:
+            errorbar3d(ax, self.X[:, 0], self.X[:, 1], self.y,
+                       xerr=self.err_X[:, 0], yerr=self.err_X[:, 1], zerr=self.err_y,
+                       **kwargs)
+            if label_axes:
+                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],))
+                ax.set_ylabel("%s [%s]" % (self.X_labels[1], self.X_units[1],))
+                ax.set_zlabel("%s [%s]" % (self.y_label, self.y_units,))
+        
+        return ax
+
+def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
+    """Draws errorbar plot of z(x, y) with errorbars on all variables.
+    
+    Parameters
+    ----------
+    ax : 3d axis instance
+        The axis to draw the plot on.
+    x : array, (`M`,)
+        x-values of data.
+    y : array, (`M`,)
+        y-values of data.
+    z : array, (`M`,)
+        z-values of data.
+    xerr : array, (`M`,), optional
+        Errors in x-values. Default value is 0.
+    yerr : array, (`M`,), optional
+        Errors in y-values. Default value is 0.
+    zerr : array, (`M`,), optional
+        Errors in z-values. Default value is 0.
+    **kwargs : optional
+        Extra arguments are passed to the plot command used to draw the datapoints.
+    """
+    if xerr is None:
+        xerr = scipy.zeros_like(x)
+    if yerr is None:
+        yerr = scipy.zeros_like(y)
+    if zerr is None:
+        zerr = scipy.zeros_like(z)
+    pts = ax.plot(x, y, z, **kwargs)
+    color = plt.getp(pts, 'color')
+    for X, Y, Z, Xerr, Yerr, Zerr in zip(x, y, z, xerr, yerr, zerr):
+        ax.plot([X - Xerr, X + Xerr], [Y, Y], [Z, Z], color=color, marker='_')
+        ax.plot([X, X], [Y - Yerr, Y + Yerr], [Z, Z], color=color, marker='_')
+        ax.plot([X, X], [Y, Y], [Z - Zerr, Z + Zerr], color=color, marker='_')
