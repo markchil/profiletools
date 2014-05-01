@@ -345,27 +345,6 @@ class Profile(object):
         self.err_y = self.err_y[idxs]
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
-    
-    def convert_abscissa(self, new_abscissa):
-        # TODO: This assumes the data haven't been averaged along t yet!
-        if self.abscissa == new_abscissa:
-            return
-        if self.abscissa == 'RZ':
-            if new_abscissa == 'psi_norm':
-                psin = self.efit_tree.rz2psinorm(self.X[:, 1], self.X[:, 2], self.X[:, 0], each_t=False)
-                self.X = scipy.hstack((self.X[:, 0], psin))
-                self.channels = self.channels[:, 0:2]
-                self.X_labels = [self.X_labels[0], 'psi_n']
-                self.X_units = [self.X_units[0], '']
-                self.err_X = scipy.hstack((self.err_X[:, 0], scipy.zeros_like(self.X[:, 0])))
-                
-                self.X_dim = 2
-                
-                self.abscissa = new_abscissa
-            else:
-                raise NotImplementedError("Conversion to that abscissa is not supported!")
-        else:
-            raise NotImplementedError("Conversion from that abscissa is not supported!")
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
