@@ -66,6 +66,9 @@ class Profile(object):
         The uncertainty in the `M` dependent variables.
     err_X : :py:class:`Matrix`, (`M`, `X_dim`)
         The uncertainties in each dimension of the `M` independent variables.
+    channels : :py:class:`Matrix`, (`M`, `X_dim`)
+        The logical groups of points into channels along each of the independent
+        variables.
     """
     def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label=''):
         self.X_dim = X_dim
@@ -93,8 +96,9 @@ class Profile(object):
         self.X = None
         self.err_y = scipy.array([], dtype=float)
         self.err_X = None
+        self.channels = None
     
-    def add_data(self, X, y, err_X=0, err_y=0):
+    def add_data(self, X, y, err_X=0, err_y=0, channels=None):
         """Add data to the training data set of the :py:class:`Profile` instance.
         
         Parameters
@@ -115,6 +119,14 @@ class Profile(object):
             taken to be homoscedastic (constant error). Otherwise, the length
             of `err_y` must equal the length of `y`. Default value is 0
             (noiseless observations).
+        channels : dict or array-like (`M`, `N`)
+            Keys to logically group points into "channels" along each dimension
+            of `X`. If not passed, channels are based simply on which points
+            have equal values in `X`. If only certain dimensions have groupings
+            other than the simple default equality conditions, then you can
+            pass a dict with integer keys in the interval [0, `X_dim`-1] whose
+            values are the arrays of length `M` indicating the channels.
+            Otherwise, you can pass in a full (`M`, `N`) array.
         
         Raises
         ------
@@ -176,17 +188,90 @@ class Profile(object):
         
         if (err_X < 0).any():
             raise ValueError("All elements of err_X must be non-negative!")
-
+        
+        # Process channel flags:
+        if channels is None:
+            channels = X.copy()
+        else:
+            if isinstance(channels, dict):
+                d_channels = channels
+                channels = X.copy()
+                for idx in d_channels:
+                    channels[:, idx] = scipy.atleast_2d(d_channels[idx]).T
+            else:
+                channels = scipy.asmatrix(channels)
+                if channels.shape != X.shape:
+                    raise ValueError("Shape of channels and X must be the same!")
+        
         if self.X is None:
             self.X = X
         else:
             self.X = scipy.vstack((self.X, X))
+        if self.channels is None:
+            self.channels = channels
+        else:
+            self.channels = scipy.vstack((self.channels, channels))
         if self.err_X is None:
             self.err_X = err_X
         else:
             self.err_X = scipy.vstack((self.err_X, err_X))
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
+    
+    def average_data(self, axis=0, ddof=1):
+        """Computes the average of the profile over the desired axis.
+        
+        If `X_dim` is already 1, this returns the average of the quantity.
+        Otherwise, a new :py:class:`Profile` is returned, populated with the
+        desired averaged data. `err_X` and `err_y` are populated with the
+        standard deviations of the respective quantities. The averaging is
+        carried out within the groupings defined by the `channels` attribute.
+        
+        Parameters
+        ----------
+        axis : int, optional
+            The index of the dimension to average over. Default is 0.
+        ddof : int, optional
+            The degree of freedom correction used in computing the standard
+            deviation. The default is 1, the standard Bessel correction to
+            give an unbiased estimate of the variance.
+        
+        Returns
+        -------
+        A :py:class:`Profile` object populated according to the rules above,
+        or the single mean value if `X_dim` is already 1.
+        """
+        if self.X_dim == 1:
+            return scipy.mean(self.y)
+        reduced_channels = scipy.delete(self.channels, axis, axis=1)
+        reduced_X = scipy.delete(self.X, axis, axis=1)
+        channels = unique_rows(reduced_channels)
+        # TODO: Add support for other estimators!
+        X = scipy.zeros((len(channels), self.X_dim - 1))
+        y = scipy.zeros(len(channels))
+        err_X = scipy.zeros_like(X)
+        err_y = scipy.zeros_like(y)
+        for i, chan in zip(range(0, len(channels)), channels):
+            chan_mask = (scipy.asarray(reduced_channels) == scipy.asarray(chan).flatten()).all(axis=1)
+            y[i] = scipy.mean(self.y[chan_mask])
+            err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
+            X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
+            err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
+        
+        # Package into new profile object:
+        new_X_units = self.X_units[:]
+        new_X_units.pop(axis)
+        new_X_labels = self.X_labels[:]
+        new_X_labels.pop(axis)
+        if self.X_dim - 1 == 1:
+            new_X_units = new_X_units[0]
+            new_X_labels = new_X_labels[0]
+        p = Profile(X_dim=self.X_dim - 1,
+                    X_units=new_X_units, y_units=self.y_units,
+                    X_labels=new_X_labels, y_label=self.y_label)
+        p.add_data(X, y, err_X=err_X, err_y=err_y, channels=channels)
+        
+        return p
     
     def plot_data(self, ax=None, label_axes=True, **kwargs):
         """Plot the data stored in this Profile. Only works for X_dim = 1 or 2.
@@ -222,14 +307,21 @@ class Profile(object):
         if 'label' not in kwargs:
             kwargs['label'] = self.y_label
         
+        if 'fmt' not in kwargs and 'marker' not in kwargs:
+            kwargs['fmt'] = 'o'
+        
         if self.X_dim == 1:
-            ax.errorbar(self.X, self.y, yerr=self.err_y, xerr=self.err_X, **kwargs)
+            ax.errorbar(scipy.asarray(self.X).flatten(), self.y,
+                        yerr=self.err_y, xerr=scipy.asarray(self.err_X).flatten(),
+                        **kwargs)
             if label_axes:
                 ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],))
-                ax.set_ylabel("%s [%s]" % (self.y_label[0], self.y_units,))
+                ax.set_ylabel("%s [%s]" % (self.y_label, self.y_units,))
         elif self.X_dim == 2:
-            errorbar3d(ax, self.X[:, 0], self.X[:, 1], self.y,
-                       xerr=self.err_X[:, 0], yerr=self.err_X[:, 1], zerr=self.err_y,
+            X_arr = scipy.asarray(self.X)
+            err_X_arr = scipy.asarray(self.err_X)
+            errorbar3d(ax, X_arr[:, 0], X_arr[:, 1], self.y,
+                       xerr=err_X_arr[:, 0], yerr=err_X_arr[:, 1], zerr=self.err_y,
                        **kwargs)
             if label_axes:
                 ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],))
@@ -237,6 +329,43 @@ class Profile(object):
                 ax.set_zlabel("%s [%s]" % (self.y_label, self.y_units,))
         
         return ax
+    
+    def remove_points(self, conditional):
+        """Remove points where conditional is True.
+        
+        Parameters
+        ----------
+        conditional : array-like of bool, (`M`,)
+            Array of booleans corresponding to each entry in `y`. Where an
+            entry is True, that value will be removed.
+        """
+        idxs = ~conditional
+        self.y = self.y[idxs]
+        self.X = self.X[idxs, :]
+        self.err_y = self.err_y[idxs]
+        self.err_X = self.err_X[idxs, :]
+        self.channels = self.channels[idxs, :]
+    
+    def convert_abscissa(self, new_abscissa):
+        # TODO: This assumes the data haven't been averaged along t yet!
+        if self.abscissa == new_abscissa:
+            return
+        if self.abscissa == 'RZ':
+            if new_abscissa == 'psi_norm':
+                psin = self.efit_tree.rz2psinorm(self.X[:, 1], self.X[:, 2], self.X[:, 0], each_t=False)
+                self.X = scipy.hstack((self.X[:, 0], psin))
+                self.channels = self.channels[:, 0:2]
+                self.X_labels = [self.X_labels[0], 'psi_n']
+                self.X_units = [self.X_units[0], '']
+                self.err_X = scipy.hstack((self.err_X[:, 0], scipy.zeros_like(self.X[:, 0])))
+                
+                self.X_dim = 2
+                
+                self.abscissa = new_abscissa
+            else:
+                raise NotImplementedError("Conversion to that abscissa is not supported!")
+        else:
+            raise NotImplementedError("Conversion from that abscissa is not supported!")
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
@@ -260,15 +389,48 @@ def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     **kwargs : optional
         Extra arguments are passed to the plot command used to draw the datapoints.
     """
+    fmt = kwargs.pop('fmt', kwargs.pop('marker', 'o'))
     if xerr is None:
         xerr = scipy.zeros_like(x)
     if yerr is None:
         yerr = scipy.zeros_like(y)
     if zerr is None:
         zerr = scipy.zeros_like(z)
-    pts = ax.plot(x, y, z, **kwargs)
-    color = plt.getp(pts, 'color')
+    pts = ax.plot(x, y, z, fmt, **kwargs)
+    color = plt.getp(pts[0], 'color')
     for X, Y, Z, Xerr, Yerr, Zerr in zip(x, y, z, xerr, yerr, zerr):
         ax.plot([X - Xerr, X + Xerr], [Y, Y], [Z, Z], color=color, marker='_')
         ax.plot([X, X], [Y - Yerr, Y + Yerr], [Z, Z], color=color, marker='_')
         ax.plot([X, X], [Y, Y], [Z - Zerr, Z + Zerr], color=color, marker='_')
+
+def unique_rows(arr):
+    """Returns a copy of arr with duplicate rows removed.
+    
+    From Stackoverflow "Find unique rows in numpy.array."
+    
+    Parameters
+    ----------
+    arr : :py:class:`Array`, (`m`, `n`). The array to find the unique rows of.
+    
+    Returns
+    -------
+    unique : :py:class:`Array`, (`p`, `n`) where `p` <= `m`
+        The array `arr` with duplicate rows removed.
+    """
+    b = scipy.ascontiguousarray(arr).view(
+        scipy.dtype((scipy.void, arr.dtype.itemsize * arr.shape[1]))
+    )
+    try:
+        dum, idx = scipy.unique(b, return_index=True)
+    except TypeError:
+        # Handle bug in numpy 1.6.2:
+        rows = [_Row(row) for row in b]
+        srt_idx = sorted(range(len(rows)), key=rows.__getitem__)
+        rows = scipy.asarray(rows)[srt_idx]
+        row_cmp = [-1]
+        for k in xrange(1, len(srt_idx)):
+            row_cmp.append(rows[k-1].__cmp__(rows[k]))
+        row_cmp = scipy.asarray(row_cmp)
+        transition_idxs = scipy.where(row_cmp != 0)[0]
+        idx = scipy.asarray(srt_idx)[transition_idxs]
+    return arr[idx]
