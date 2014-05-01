@@ -59,7 +59,7 @@ class BivariatePlasmaProfile(Profile):
         # TODO: This does not work right if abscissa is still RZ!
         return self.average_data(axis=0, ddof=ddof)
 
-def neCTS(self, shot, abscissa='RZ', t_min=None, t_max=None):
+def neCTS(shot, abscissa='RZ', t_min=None, t_max=None):
     """Returns a profile representing electron density from the core Thomson scattering system.
     """
     p = BivariatePlasmaProfile(X_dim=3,
