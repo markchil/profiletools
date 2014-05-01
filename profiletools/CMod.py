@@ -43,7 +43,7 @@ class BivariatePlasmaProfile(Profile):
                 psin = self.efit_tree.rz2psinorm(self.X[:, 1], self.X[:, 2], self.X[:, 0], each_t=False)
                 self.X = scipy.hstack((self.X[:, 0], psin))
                 self.channels = self.channels[:, 0:2]
-                self.X_labels = [self.X_labels[0], 'psi_n']
+                self.X_labels = [self.X_labels[0], r'$\psi_n$']
                 self.X_units = [self.X_units[0], '']
                 self.err_X = scipy.hstack((self.err_X[:, 0], scipy.zeros_like(self.X[:, 0])))
                 
@@ -56,17 +56,27 @@ class BivariatePlasmaProfile(Profile):
             raise NotImplementedError("Conversion from that abscissa is not supported!")
 
     def time_average(self, ddof=1):
-        # TODO: This does not work right if abscissa is still RZ!
-        return self.average_data(axis=0, ddof=ddof)
+        """Compute the time average of the quantity.
+
+        Parameters
+        ----------
+        ddof : int, optional
+            The degree of freedom correction used in computing the standard
+            deviation. The default is 1, the standard Bessel correction to
+            give an unbiased estimate of the variance.
+        """
+        if self.abscissa == 'RZ':
+            self.drop_axis(1)
+        self.average_data(axis=0, ddof=ddof)
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None):
     """Returns a profile representing electron density from the core Thomson scattering system.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
-                               y_units='1e20 m^-3',
-                               X_labels=['t', 'R', 'Z'],
-                               y_label='n_e CTS')
+                               y_units='$10^{20}$ m$^-3$',
+                               X_labels=['$t$', '$R$', '$Z$'],
+                               y_label='$n_e$, CTS')
 
     electrons = MDSplus.Tree('electrons', shot)
 

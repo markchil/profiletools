@@ -218,11 +218,44 @@ class Profile(object):
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
     
+    def add_profile(self, other):
+        """Absorbs the data from one profile object.
+
+        Parameters
+        ----------
+        other : :py:class:`Profile`
+            :py:class:`Profile` to absorb.
+        """
+        # TODO: This does not handle channels properly!
+        if self.X_dim != other.X_dim:
+            raise ValueError("When merging profiles, X_dim must be equal between the two profiles!")
+        if self.y_units != other.y_units:
+            raise ValueError("When merging profiles, the y_units must agree!")
+        if self.X_units != other.X_units:
+            raise ValueError("When merging profiles, the X_units must agree!")
+        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y, channels=other.channels)
+
+    def drop_axis(self, axis):
+        """Drops a selected axis from `X`.
+
+        Parameters
+        ----------
+        axis : int
+            The index of the axis to drop.
+        """
+        if self.X_dim == 1:
+            raise ValueError("Can't drop axis from a univariate profile!")
+        self.X_dim -= 1
+        self.channels = scipy.delete(self.channels, axis, axis=1)
+        self.X = scipy.delete(self.X, axis, axis=1)
+        self.err_X = scipy.delete(self.err_X, axis, axis=1)
+
+
     def average_data(self, axis=0, ddof=1):
         """Computes the average of the profile over the desired axis.
         
         If `X_dim` is already 1, this returns the average of the quantity.
-        Otherwise, a new :py:class:`Profile` is returned, populated with the
+        Otherwise, the :py:class:`Profile` is mutated to contain the
         desired averaged data. `err_X` and `err_y` are populated with the
         standard deviations of the respective quantities. The averaging is
         carried out within the groupings defined by the `channels` attribute.
@@ -235,11 +268,6 @@ class Profile(object):
             The degree of freedom correction used in computing the standard
             deviation. The default is 1, the standard Bessel correction to
             give an unbiased estimate of the variance.
-        
-        Returns
-        -------
-        A :py:class:`Profile` object populated according to the rules above,
-        or the single mean value if `X_dim` is already 1.
         """
         if self.X_dim == 1:
             return scipy.mean(self.y)
@@ -258,20 +286,14 @@ class Profile(object):
             X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
             err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
         
-        # Package into new profile object:
-        new_X_units = self.X_units[:]
-        new_X_units.pop(axis)
-        new_X_labels = self.X_labels[:]
-        new_X_labels.pop(axis)
-        if self.X_dim - 1 == 1:
-            new_X_units = new_X_units[0]
-            new_X_labels = new_X_labels[0]
-        p = Profile(X_dim=self.X_dim - 1,
-                    X_units=new_X_units, y_units=self.y_units,
-                    X_labels=new_X_labels, y_label=self.y_label)
-        p.add_data(X, y, err_X=err_X, err_y=err_y, channels=channels)
-        
-        return p
+        self.X_dim -= 1
+        self.X_units.pop(axis)
+        self.X_labels.pop(axis)
+        self.X = X
+        self.y = y
+        self.err_X = err_X
+        self.err_y = err_y
+        self.channels = channels
     
     def plot_data(self, ax=None, label_axes=True, **kwargs):
         """Plot the data stored in this Profile. Only works for X_dim = 1 or 2.
@@ -315,8 +337,8 @@ class Profile(object):
                         yerr=self.err_y, xerr=scipy.asarray(self.err_X).flatten(),
                         **kwargs)
             if label_axes:
-                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],))
-                ax.set_ylabel("%s [%s]" % (self.y_label, self.y_units,))
+                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0] else self.X_labels[0])
+                ax.set_ylabel("%s [%s]" % (self.y_label, self.y_units,) if self.y_units else self.y_label)
         elif self.X_dim == 2:
             X_arr = scipy.asarray(self.X)
             err_X_arr = scipy.asarray(self.err_X)
@@ -324,9 +346,9 @@ class Profile(object):
                        xerr=err_X_arr[:, 0], yerr=err_X_arr[:, 1], zerr=self.err_y,
                        **kwargs)
             if label_axes:
-                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],))
-                ax.set_ylabel("%s [%s]" % (self.X_labels[1], self.X_units[1],))
-                ax.set_zlabel("%s [%s]" % (self.y_label, self.y_units,))
+                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0] else self.X_labels[0])
+                ax.set_ylabel("%s [%s]" % (self.X_labels[1], self.X_units[1],) if self.X_units[1] else self.X_labels[1])
+                ax.set_zlabel("%s [%s]" % (self.y_label, self.y_units,) if self.y_units else self.y_label)
         
         return ax
     
