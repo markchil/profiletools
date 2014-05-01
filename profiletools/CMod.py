@@ -99,7 +99,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None):
     
     p.add_data(X, ne, err_y=err_ne, channels={1: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(self.err_y) | (self.err_y == 0.0))
+    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
