@@ -182,7 +182,7 @@ class BivariatePlasmaProfile(Profile):
             else:
                 warnings.warn("remove_edge_points is not compatible with abcsissa %s! "
                               "Converting to psinorm, will attempt to convert back."
-                              % (abscissa,))
+                              % (self.abscissa,))
                 convert_abscissa = True
                 old_abscissa = self.abscissa
                 self.convert_abscissa('psinorm')
