@@ -226,14 +226,15 @@ class Profile(object):
         other : :py:class:`Profile`
             :py:class:`Profile` to absorb.
         """
-        # TODO: This does not handle channels properly!
         if self.X_dim != other.X_dim:
             raise ValueError("When merging profiles, X_dim must be equal between the two profiles!")
         if self.y_units != other.y_units:
             raise ValueError("When merging profiles, the y_units must agree!")
         if self.X_units != other.X_units:
             raise ValueError("When merging profiles, the X_units must agree!")
-        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y, channels=other.channels)
+        # Modify the channels of other.channels to avoid clashes:
+        new_other_channels = other.channels - other.channels.min(axis=0) + self.channels.max(axis=0) + 1
+        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y, channels=new_other_channels)
 
     def drop_axis(self, axis):
         """Drops a selected axis from `X`.
@@ -249,7 +250,8 @@ class Profile(object):
         self.channels = scipy.delete(self.channels, axis, axis=1)
         self.X = scipy.delete(self.X, axis, axis=1)
         self.err_X = scipy.delete(self.err_X, axis, axis=1)
-
+        self.X_labels.pop(axis)
+        self.X_units.pop(axis)
 
     def average_data(self, axis=0, ddof=1):
         """Computes the average of the profile over the desired axis.
@@ -269,6 +271,7 @@ class Profile(object):
             deviation. The default is 1, the standard Bessel correction to
             give an unbiased estimate of the variance.
         """
+        # TODO: Add support for custom bins!
         if self.X_dim == 1:
             return scipy.mean(self.y)
         reduced_channels = scipy.delete(self.channels, axis, axis=1)
@@ -392,17 +395,29 @@ def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """
     fmt = kwargs.pop('fmt', kwargs.pop('marker', 'o'))
     if xerr is None:
+        no_x = True
         xerr = scipy.zeros_like(x)
+    else:
+        no_x = False
     if yerr is None:
+        no_y = True
         yerr = scipy.zeros_like(y)
+    else:
+        no_y = False
     if zerr is None:
+        no_z = True
         zerr = scipy.zeros_like(z)
+    else:
+        no_z = False
     pts = ax.plot(x, y, z, fmt, **kwargs)
     color = plt.getp(pts[0], 'color')
     for X, Y, Z, Xerr, Yerr, Zerr in zip(x, y, z, xerr, yerr, zerr):
-        ax.plot([X - Xerr, X + Xerr], [Y, Y], [Z, Z], color=color, marker='_')
-        ax.plot([X, X], [Y - Yerr, Y + Yerr], [Z, Z], color=color, marker='_')
-        ax.plot([X, X], [Y, Y], [Z - Zerr, Z + Zerr], color=color, marker='_')
+        if not no_x:
+            ax.plot([X - Xerr, X + Xerr], [Y, Y], [Z, Z], color=color, marker='_')
+        if not no_y:
+            ax.plot([X, X], [Y - Yerr, Y + Yerr], [Z, Z], color=color, marker='_')
+        if not no_z:
+            ax.plot([X, X], [Y, Y], [Z - Zerr, Z + Zerr], color=color, marker='_')
 
 def unique_rows(arr):
     """Returns a copy of arr with duplicate rows removed.
