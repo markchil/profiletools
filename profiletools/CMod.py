@@ -92,6 +92,10 @@ class BivariatePlasmaProfile(Profile):
             raise ValueError("Can't convert abscissa after time-averaging!")
         if self.abscissa == new_abscissa:
             return
+        elif self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
+            new_rho = scipy.power(self.X[:, 1], 2)
+        elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
+            new_rho = scipy.power(self.X[:, 1], 0.5)
         elif self.abscissa == 'RZ':
             new_rho = self.efit_tree.rz2rho(new_abscissa,
                                             self.X[:, 1],
@@ -105,6 +109,16 @@ class BivariatePlasmaProfile(Profile):
                                               self.X[:, 1],
                                               self.X[:, 0],
                                               each_t=False)
+        elif self.abscissa == 'psinorm':
+            new_rho = self.efit_tree.psinorm2rho(new_abscissa,
+                                                 self.X[:, 1],
+                                                 self.X[:, 0],
+                                                 each_t=False)
+        elif self.abscissa == 'sqrtpsinorm':
+            new_rho = self.efit_tree.psinorm2rho(new_abscissa,
+                                                 scipy.power(self.X[:, 1], 2),
+                                                 self.X[:, 0],
+                                                 each_t=False)
         else:
             raise NotImplementedError("Conversion from that abscissa is not supported!")
         self.X = scipy.hstack((self.X[:, 0], new_rho))
@@ -151,6 +165,7 @@ class BivariatePlasmaProfile(Profile):
         that the last column of `self.X` is space: so it will do the wrong
         thing if you have already taken an average along space.
         """
+        # TODO: This needs a lot more work!
         if self.abscissa != 'r/a' and 'norm' not in self.abscissa:
             raise ValueError("Removing points outside the LCFS is not supported "
                              "when the abscissa is %s. Convert to a normalized "
@@ -239,6 +254,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
@@ -324,6 +340,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
@@ -446,6 +463,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
@@ -531,6 +549,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
@@ -625,6 +644,7 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
@@ -711,6 +731,7 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
@@ -802,6 +823,7 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
                           "Converting to psinorm." % (abscissa,))
             p.convert_abscissa('psinorm')
             p.remove_edge_points()
+            p.convert_abscissa(abscissa)
 
     return p
 
