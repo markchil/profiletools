@@ -62,10 +62,10 @@ class BivariatePlasmaProfile(Profile):
 
         Supported original abscissae are:
 
-            ====  =====================================================
-            RZ    (R, Z) ordered pairs in physical machine coordinates.
-            Rmid  Mapped midplane major radius
-            ====  =====================================================
+            ==== =====================================================
+            RZ   (R, Z) ordered pairs in physical machine coordinates.
+            Rmid Mapped midplane major radius
+            ==== =====================================================
 
         The target abcissae are what are supported by `rz2rho` and `rmid2rho`
         from the `eqtools` package. Namely,
@@ -89,15 +89,22 @@ class BivariatePlasmaProfile(Profile):
         # TODO: This assumes the data haven't been averaged along t yet!
         # TODO: NEEDS A LOT OF WORK!
         if self.X_labels[0] != '$t$':
-            raise ValueError("Can't convert abscissa after time-averaging at this point!")
+            raise ValueError("Can't convert abscissa after time-averaging!")
         if self.abscissa == new_abscissa:
             return
         elif self.abscissa == 'RZ':
-            new_rho = self.efit_tree.rz2rho(new_abscissa, self.X[:, 1], self.X[:, 2], self.X[:, 0], each_t=False)
+            new_rho = self.efit_tree.rz2rho(new_abscissa,
+                                            self.X[:, 1],
+                                            self.X[:, 2],
+                                            self.X[:, 0],
+                                            each_t=False)
             self.channels = self.channels[:, 0:2]                
             self.X_dim = 2
         elif self.abscissa == 'Rmid':
-            new_rho = self.efit_tree.rmid2rho(new_abscissa, self.X[:, 1], self.X[:, 0], each_t=False)
+            new_rho = self.efit_tree.rmid2rho(new_abscissa,
+                                              self.X[:, 1],
+                                              self.X[:, 0],
+                                              each_t=False)
         else:
             raise NotImplementedError("Conversion from that abscissa is not supported!")
         self.X = scipy.hstack((self.X[:, 0], new_rho))
@@ -129,15 +136,30 @@ class BivariatePlasmaProfile(Profile):
         """
         # Warn about merging profiles from different shots:
         if self.shot != other.shot:
-            warnings.warn("Merging data from two different shots: %d and %d" % (self.shot, other.shot,))
+            warnings.warn("Merging data from two different shots: %d and %d"
+                          % (self.shot, other.shot,))
         other.convert_abscissa(self.abscissa)
         # Split off the diagnostic description when merging profiles:
         super(BivariatePlasmaProfile, self).add_profile(other)
         if self.y_label != other.y_label:
             self.y_label = self.y_label.split(', ')[0]
 
+    def remove_edge_points(self):
+        """Removes points that are outside the LCFS.
+
+        Must be called when the abscissa is a normalized coordinate. Assumes
+        that the last column of `self.X` is space: so it will do the wrong
+        thing if you have already taken an average along space.
+        """
+        if self.abscissa != 'r/a' and 'norm' not in self.abscissa:
+            raise ValueError("Removing points outside the LCFS is not supported "
+                             "when the abscissa is %s. Convert to a normalized "
+                             "coordinate first." % (self.abscissa,))
+        self.remove_points((scipy.asarray(self.X[:, -1]).flatten() >= 1) |
+                           scipy.asarray(scipy.isnan(self.X[:, -1])).flatten())
+
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None):
+          efit_tree=None, remove_edge=False):
     """Returns a profile representing electron density from the core Thomson scattering system.
 
     Parameters
@@ -156,6 +178,9 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -206,10 +231,19 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None):
+          efit_tree=None, remove_edge=False):
     """Returns a profile representing electron density from the edge Thomson scattering system.
 
     Parameters
@@ -228,6 +262,9 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -279,6 +316,15 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def ne(shot, include=['CTS', 'ETS'], **kwargs):
@@ -291,10 +337,10 @@ def ne(shot, include=['CTS', 'ETS'], **kwargs):
     include : list of str, optional
         The data sources to include. Valid options are:
 
-            ===  =======================
-            CTS  Core Thomson scattering
-            ETS  Edge Thomson scattering
-            ===  =======================
+            === =======================
+            CTS Core Thomson scattering
+            ETS Edge Thomson scattering
+            === =======================
 
         The default is to include all data sources.
     **kwargs
@@ -316,11 +362,11 @@ def ne(shot, include=['CTS', 'ETS'], **kwargs):
     p = p_list.pop()
     for p_other in p_list:
         p.add_profile(p_other)
-    
+
     return p
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None):
+          efit_tree=None, remove_edge=False):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
 
     Parameters
@@ -339,6 +385,9 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -389,10 +438,19 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None):
+          efit_tree=None, remove_edge=False):
     """Returns a profile representing electron temperature from the edge Thomson scattering system.
 
     Parameters
@@ -411,6 +469,9 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -462,10 +523,19 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None,
-             electrons=None, efit_tree=None):
+             electrons=None, efit_tree=None, remove_edge=False):
     """Returns a profile representing electron temperature from the FRCECE system.
     
     Parameters
@@ -489,6 +559,9 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=2,
                                X_units=['s', 'm'],
@@ -544,10 +617,19 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
-           efit_tree=None):
+           efit_tree=None, remove_edge=False):
     """Returns a profile representing electron temperature from the GPC2 system.
 
     Parameters
@@ -566,6 +648,9 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=2,
                                X_units=['s', 'm'],
@@ -618,10 +703,19 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
 
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
-          efit_tree=None):
+          efit_tree=None, remove_edge=False):
     """Returns a profile representing electron temperature from the GPC system.
 
     Parameters
@@ -643,6 +737,9 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
     """
     p = BivariatePlasmaProfile(X_dim=2,
                                X_units=['s', 'm'],
@@ -697,10 +794,19 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
 
     p.convert_abscissa(abscissa)
 
+    if remove_edge:
+        try:
+            p.remove_edge_points()
+        except ValueError:
+            warnings.warn("Option 'remove_edge' is not compatible with abcsissa %s! "
+                          "Converting to psinorm." % (abscissa,))
+            p.convert_abscissa('psinorm')
+            p.remove_edge_points()
+
     return p
 
 def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
-       FRCECE_cutoff=0.15, GPC_cutoff=0.15, **kwargs):
+       FRCECE_cutoff=0.15, GPC_cutoff=0.15, remove_ECE_edge=True, **kwargs):
     """Returns a profile representing electron temperature from the Thomson scattering and ECE systems.
 
     Parameters
@@ -710,13 +816,13 @@ def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
     include : list of str, optional
         The data sources to include. Valid options are:
 
-            ======  ===============================
-            CTS     Core Thomson scattering
-            ETS     Edge Thomson scattering
-            FRCECE  FRC electron cyclotron emission
-            GPC     Grating polychromator
-            GPC2    Grating polychromator 2
-            ======  ===============================
+            ====== ===============================
+            CTS    Core Thomson scattering
+            ETS    Edge Thomson scattering
+            FRCECE FRC electron cyclotron emission
+            GPC    Grating polychromator
+            GPC2   Grating polychromator 2
+            ====== ===============================
 
         The default is to include all data sources.
     FRCECE_rate : {'s', 'f'}, optional
@@ -728,6 +834,11 @@ def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
     GPC_cutoff : float, optional
         The cutoff value for eliminating cut-off points from GPC. All points
         with values less than this will be discarded. Default is 0.15.
+    remove_ECE_edge : bool, optional
+        If True, the points outside of the LCFS for the ECE diagnostics will be
+        removed. Note that this overrides remove_edge, if present, in kwargs.
+        Furthermore, this may lead to abscissa being converted to psinorm if an
+        incompatible option was used.
     **kwargs
         All remaining parameters are passed to the individual loading methods.
     """
@@ -742,11 +853,18 @@ def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
         elif system == 'ETS':
             p_list.append(TeETS(shot, **kwargs))
         elif system == 'FRCECE':
-            p_list.append(TeFRCECE(shot, rate=FRCECE_rate, cutoff=FRCECE_cutoff, **kwargs))
+            p_list.append(TeFRCECE(shot, rate=FRCECE_rate, cutoff=FRCECE_cutoff,
+                                   **kwargs))
+            if remove_ECE_edge:
+                p_list[-1].remove_edge_points()
         elif system == 'GPC2':
             p_list.append(TeGPC2(shot, **kwargs))
+            if remove_ECE_edge:
+                p_list[-1].remove_edge_points()
         elif system == 'GPC':
             p_list.append(TeGPC(shot, cutoff=GPC_cutoff, **kwargs))
+            if remove_ECE_edge:
+                p_list[-1].remove_edge_points()
         else:
             raise ValueError("Unknown profile '%s'." % (system,))
     
