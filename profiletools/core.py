@@ -182,9 +182,10 @@ class Profile(object):
         if self.X_dim == 1 and err_X.shape[0] == 1:
             err_X = err_X.T
         if err_X.shape != X.shape:
-            raise ValueError("Shape of uncertainties on independent variables must be (len(y), self.X_dim)! "
-                             "X given has shape %s, shape of "
-                             "y is %s and X_dim=%d." % (X.shape, y.shape, self.X_dim))
+            raise ValueError("Shape of uncertainties on independent variables "
+                             "must be (len(y), self.X_dim)! X given has shape %s, "
+                             "shape of y is %s and X_dim=%d."
+                             % (X.shape, y.shape, self.X_dim))
         
         if (err_X < 0).any():
             raise ValueError("All elements of err_X must be non-negative!")
@@ -227,14 +228,17 @@ class Profile(object):
             :py:class:`Profile` to absorb.
         """
         if self.X_dim != other.X_dim:
-            raise ValueError("When merging profiles, X_dim must be equal between the two profiles!")
+            raise ValueError("When merging profiles, X_dim must be equal between "
+                             "the two profiles!")
         if self.y_units != other.y_units:
             raise ValueError("When merging profiles, the y_units must agree!")
         if self.X_units != other.X_units:
             raise ValueError("When merging profiles, the X_units must agree!")
         # Modify the channels of other.channels to avoid clashes:
-        new_other_channels = other.channels - other.channels.min(axis=0) + self.channels.max(axis=0) + 1
-        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y, channels=new_other_channels)
+        new_other_channels = (other.channels - other.channels.min(axis=0) +
+                              self.channels.max(axis=0) + 1)
+        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y,
+                      channels=new_other_channels)
 
     def drop_axis(self, axis):
         """Drops a selected axis from `X`.
@@ -283,7 +287,8 @@ class Profile(object):
         err_X = scipy.zeros_like(X)
         err_y = scipy.zeros_like(y)
         for i, chan in zip(range(0, len(channels)), channels):
-            chan_mask = (scipy.asarray(reduced_channels) == scipy.asarray(chan).flatten()).all(axis=1)
+            chan_mask = (scipy.asarray(reduced_channels) ==
+                         scipy.asarray(chan).flatten()).all(axis=1)
             y[i] = scipy.mean(self.y[chan_mask])
             err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
             X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
@@ -340,8 +345,14 @@ class Profile(object):
                         yerr=self.err_y, xerr=scipy.asarray(self.err_X).flatten(),
                         **kwargs)
             if label_axes:
-                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0] else self.X_labels[0])
-                ax.set_ylabel("%s [%s]" % (self.y_label, self.y_units,) if self.y_units else self.y_label)
+                ax.set_xlabel(
+                    "%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0]
+                    else self.X_labels[0]
+                )
+                ax.set_ylabel(
+                    "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
+                    else self.y_label
+                )
         elif self.X_dim == 2:
             X_arr = scipy.asarray(self.X)
             err_X_arr = scipy.asarray(self.err_X)
@@ -349,9 +360,18 @@ class Profile(object):
                        xerr=err_X_arr[:, 0], yerr=err_X_arr[:, 1], zerr=self.err_y,
                        **kwargs)
             if label_axes:
-                ax.set_xlabel("%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0] else self.X_labels[0])
-                ax.set_ylabel("%s [%s]" % (self.X_labels[1], self.X_units[1],) if self.X_units[1] else self.X_labels[1])
-                ax.set_zlabel("%s [%s]" % (self.y_label, self.y_units,) if self.y_units else self.y_label)
+                ax.set_xlabel(
+                    "%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0]
+                    else self.X_labels[0]
+                )
+                ax.set_ylabel(
+                    "%s [%s]" % (self.X_labels[1], self.X_units[1],) if self.X_units[1]
+                    else self.X_labels[1]
+                )
+                ax.set_zlabel(
+                    "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
+                    else self.y_label
+                )
         
         return ax
     
@@ -391,7 +411,8 @@ def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     zerr : array, (`M`,), optional
         Errors in z-values. Default value is 0.
     **kwargs : optional
-        Extra arguments are passed to the plot command used to draw the datapoints.
+        Extra arguments are passed to the plot command used to draw the
+        datapoints.
     """
     fmt = kwargs.pop('fmt', kwargs.pop('marker', 'o'))
     if xerr is None:
@@ -411,6 +432,7 @@ def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
         no_z = False
     pts = ax.plot(x, y, z, fmt, **kwargs)
     color = plt.getp(pts[0], 'color')
+    # Only draw the lines if the error is nonzero:
     for X, Y, Z, Xerr, Yerr, Zerr in zip(x, y, z, xerr, yerr, zerr):
         if not no_x:
             ax.plot([X - Xerr, X + Xerr], [Y, Y], [Z, Z], color=color, marker='_')
