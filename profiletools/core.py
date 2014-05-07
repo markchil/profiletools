@@ -305,8 +305,12 @@ class Profile(object):
                 err_y[i] = (scipy.stats.scoreatpercentile(self.y[chan_mask], 75.0) -
                             scipy.stats.scoreatpercentile(self.y[chan_mask], 25.0)) / IQR_TO_STD
                 X[i, :] = scipy.median(reduced_X[chan_mask, :], axis=0)
-                err_X[i, :] = (scipy.stats.scoreatpercentile(reduced_X[chan_mask, :], 75.0, axis=0) -
-                               scipy.stats.scoreatpercentile(reduced_X[chan_mask, :], 25.0, axis=0)) / IQR_TO_STD
+                err_X[i, :] = (scipy.stats.scoreatpercentile(reduced_X[chan_mask, :],
+                                                             75.0,
+                                                             axis=0) -
+                               scipy.stats.scoreatpercentile(reduced_X[chan_mask, :],
+                                                             25.0,
+                                                             axis=0)) / IQR_TO_STD
         
         self.X_dim -= 1
         self.X_units.pop(axis)
