@@ -21,8 +21,11 @@
 from __future__ import division
 
 import scipy
+import scipy.stats
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+
+IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
 
 class Profile(object):
     """Object to abstractly represent a profile.
@@ -257,7 +260,7 @@ class Profile(object):
         self.X_labels.pop(axis)
         self.X_units.pop(axis)
 
-    def average_data(self, axis=0, ddof=1):
+    def average_data(self, axis=0, ddof=1, robust=False):
         """Computes the average of the profile over the desired axis.
         
         If `X_dim` is already 1, this returns the average of the quantity.
@@ -274,6 +277,9 @@ class Profile(object):
             The degree of freedom correction used in computing the standard
             deviation. The default is 1, the standard Bessel correction to
             give an unbiased estimate of the variance.
+        robust : bool, optional
+            If True, the median is used for the central value and the
+            interquartile range is used for the distributional width.
         """
         # TODO: Add support for custom bins!
         if self.X_dim == 1:
@@ -289,10 +295,18 @@ class Profile(object):
         for i, chan in zip(range(0, len(channels)), channels):
             chan_mask = (scipy.asarray(reduced_channels) ==
                          scipy.asarray(chan).flatten()).all(axis=1)
-            y[i] = scipy.mean(self.y[chan_mask])
-            err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
-            X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
-            err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
+            if not robust:
+                y[i] = scipy.mean(self.y[chan_mask])
+                err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
+                X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
+                err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
+            else:
+                y[i] = scipy.median(self.y[chan_mask])
+                err_y[i] = (scipy.stats.scoreatpercentile(self.y[chan_mask], 75.0) -
+                            scipy.stats.scoreatpercentile(self.y[chan_mask], 25.0)) / IQR_TO_STD
+                X[i, :] = scipy.median(reduced_X[chan_mask, :], axis=0)
+                err_X[i, :] = (scipy.stats.scoreatpercentile(reduced_X[chan_mask, :], 75.0, axis=0) -
+                               scipy.stats.scoreatpercentile(reduced_X[chan_mask, :], 25.0, axis=0)) / IQR_TO_STD
         
         self.X_dim -= 1
         self.X_units.pop(axis)
