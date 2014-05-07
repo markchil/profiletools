@@ -408,6 +408,19 @@ class Profile(object):
         self.err_y = self.err_y[idxs]
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
+    
+    def create_gp(self, k=None, noise_k=None):
+        # TODO: Add better initial guesses/param_bounds!
+        # TODO: Add handling for string kernels!
+        if k is None:
+            k = gptools.SquaredExponentialKernel(num_dim=self.X_dim)
+        elif isinstance(k, str):
+            raise NotImplementedError("Not done yet!")
+        self.gp = gptools.GaussianProcess(k, noise_k=nk)
+        gp.add_data(self.X, self.y, err_y=self.err_y)
+    
+    def find_gp_MAP_estimate(self):
+        
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
