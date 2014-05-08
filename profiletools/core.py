@@ -27,6 +27,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import gptools
 import sys
 
+# Conversion factor to get from interquartile range to standard deviation:
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
 
 class Profile(object):
@@ -103,7 +104,7 @@ class Profile(object):
         self.err_X = None
         self.channels = None
         
-        self.gp_up_to_date = False
+        self.gp = None
     
     def add_data(self, X, y, err_X=0, err_y=0, channels=None):
         """Add data to the training data set of the :py:class:`Profile` instance.
@@ -293,7 +294,6 @@ class Profile(object):
         reduced_channels = scipy.delete(self.channels, axis, axis=1)
         reduced_X = scipy.delete(self.X, axis, axis=1)
         channels = unique_rows(reduced_channels)
-        # TODO: Add support for other estimators!
         X = scipy.zeros((len(channels), self.X_dim - 1))
         y = scipy.zeros(len(channels))
         err_X = scipy.zeros_like(X)
@@ -415,30 +415,78 @@ class Profile(object):
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
     
-    def create_gp(self, k=None, noise_k=None, bound_expansion=10):
+    def create_gp(self, k=None, noise_k=None, bound_expansion=5):
+        """Create a Gaussian process to handle the data.
+        
+        Parameters
+        ----------
+        k : :py:class:`Kernel` instance, optional
+            Covariance kernel (from :py:mod:`gptools`) with the appropriate
+            number of dimensions, or None. If None, a squared exponential kernel
+            is used. The bounds for each hyperparameter are selected as follows:
+            
+                ======= ===============================
+                sigma_f [10*eps, be*range(y)]
+                l1      [10*eps, be*range(X[:, 1])]
+                ...     And so on for each length scale
+                ======= ===============================
+            
+            Here, eps is sys.float_info.epsilon and be is the `bound_expansion`
+            parameter. The initial guesses for each parameter are set to be
+            halfway between the upper and lower bounds. Default is None (use SE
+            kernel).
+        noise_k : :py:class:`Kernel` instance, optional
+            The noise covariance kernel. Default is None (use the default zero
+            noise kernel, with all noise being specified by `err_y`).
+        bound_expansion : float, optional
+            Factor by which the range of the data are expanded for the bounds on
+            both length scales and signal variances. Default is 5, which seems
+            to work pretty well for C-Mod data.
+        """
         # TODO: Add better initial guesses/param_bounds!
         # TODO: Add handling for string kernels!
-        # TODO: Get smarter about handling gp_up_to_date!
-        if not self.gp_up_to_date:
-            if k is None:
-                bounds = [(10 * sys.float_info.epsilon, bound_expansion * (self.X[:, i].max() - self.X[:, i].min())) for i in range(0, self.X_dim)]
-                bounds.insert(0, (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min())))
-                initial = [(b[1] - b[0]) / 2 for b in bounds]
-                k = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
-                                                     initial_params=initial,
-                                                     param_bounds=bounds)
-            elif isinstance(k, str):
-                raise NotImplementedError("Not done yet!")
-            self.gp = gptools.GaussianProcess(k, noise_k=noise_k)
-            self.gp.add_data(self.X, self.y, err_y=self.err_y)
-            self.gp_up_to_date = True
+        if k is None or k == 'SE':
+            bounds = [(10 * sys.float_info.epsilon, bound_expansion * (self.X[:, i].max() - self.X[:, i].min())) for i in range(0, self.X_dim)]
+            bounds.insert(0, (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min())))
+            initial = [(b[1] - b[0]) / 2 for b in bounds]
+            k = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
+                                                 initial_params=initial,
+                                                 param_bounds=bounds)
+        elif isinstance(k, str):
+            raise NotImplementedError("Not done yet!")
+        self.gp = gptools.GaussianProcess(k, noise_k=noise_k)
+        self.gp.add_data(self.X, self.y, err_y=self.err_y)
     
-    def find_gp_MAP_estimate(self, **kwargs):
+    def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):
+        """Find the MAP estimate for the hyperparameters of the Profile's Gaussian process.
+        
+        If this profile does not already have a Gaussian process, it will be
+        created. Note that the user is responsible for manually updating the
+        Gaussian process if more data are added or the Profile is otherwise
+        mutated. This can be accomplished directly using the `force_update`
+        keyword.
+        
+        Parameters
+        ----------
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        **kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`optimize`
+        """
         # TODO: Add more intelligent kwargs for this!
+        if force_update or self.gp is None:
+            self.create_gp(**gp_kwargs)
         self.gp.optimize_hyperparameters(**kwargs)
     
     def plot_gp(self, gp_kwargs={}, MAP_kwargs={}, **kwargs):
-        if not self.gp_up_to_date:
+        if self.gp is None:
             self.create_gp(**gp_kwargs)
             self.find_gp_MAP_estimate(**MAP_kwargs)
         # TODO: Add a little more intelligence!
