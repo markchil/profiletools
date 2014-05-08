@@ -24,6 +24,8 @@ import scipy
 import scipy.stats
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import gptools
+import sys
 
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
 
@@ -100,6 +102,8 @@ class Profile(object):
         self.err_y = scipy.array([], dtype=float)
         self.err_X = None
         self.channels = None
+        
+        self.gp_up_to_date = False
     
     def add_data(self, X, y, err_X=0, err_y=0, channels=None):
         """Add data to the training data set of the :py:class:`Profile` instance.
@@ -221,6 +225,8 @@ class Profile(object):
             self.err_X = scipy.vstack((self.err_X, err_X))
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
+        
+        self.gp_up_to_date = False
     
     def add_profile(self, other):
         """Absorbs the data from one profile object.
@@ -409,18 +415,44 @@ class Profile(object):
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
     
-    def create_gp(self, k=None, noise_k=None):
+    def create_gp(self, k=None, noise_k=None, bound_expansion=10):
         # TODO: Add better initial guesses/param_bounds!
         # TODO: Add handling for string kernels!
-        if k is None:
-            k = gptools.SquaredExponentialKernel(num_dim=self.X_dim)
-        elif isinstance(k, str):
-            raise NotImplementedError("Not done yet!")
-        self.gp = gptools.GaussianProcess(k, noise_k=nk)
-        gp.add_data(self.X, self.y, err_y=self.err_y)
+        # TODO: Get smarter about handling gp_up_to_date!
+        if not self.gp_up_to_date:
+            if k is None:
+                bounds = [(10 * sys.float_info.epsilon, bound_expansion * (self.X[:, i].max() - self.X[:, i].min())) for i in range(0, self.X_dim)]
+                bounds.insert(0, (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min())))
+                initial = [(b[1] - b[0]) / 2 for b in bounds]
+                k = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
+                                                     initial_params=initial,
+                                                     param_bounds=bounds)
+            elif isinstance(k, str):
+                raise NotImplementedError("Not done yet!")
+            self.gp = gptools.GaussianProcess(k, noise_k=noise_k)
+            self.gp.add_data(self.X, self.y, err_y=self.err_y)
+            self.gp_up_to_date = True
     
-    def find_gp_MAP_estimate(self):
-        
+    def find_gp_MAP_estimate(self, **kwargs):
+        # TODO: Add more intelligent kwargs for this!
+        self.gp.optimize_hyperparameters(**kwargs)
+    
+    def plot_gp(self, gp_kwargs={}, MAP_kwargs={}, **kwargs):
+        if not self.gp_up_to_date:
+            self.create_gp(**gp_kwargs)
+            self.find_gp_MAP_estimate(**MAP_kwargs)
+        # TODO: Add a little more intelligence!
+        self.gp.plot(**kwargs)
+    
+    def smooth(self, X, n=0, plot=False, gp_kwargs={}, MAP_kwargs={}, predict_kwargs={}, plot_kwargs={}):
+        # TODO: Add a lot more intelligence!
+        self.create_gp(**gp_kwargs)
+        self.find_gp_MAP_estimate(**MAP_kwargs)
+        if plot:
+            plot_kwargs.pop('return_prediction', True)
+            return self.gp.plot(X=X, n=n, return_prediction=True, **plot_kwargs)
+        else:
+            return self.gp.predict(X, n=n, **predict_kwargs)
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
