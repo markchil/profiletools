@@ -460,11 +460,11 @@ class Profile(object):
     def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):
         """Find the MAP estimate for the hyperparameters of the Profile's Gaussian process.
         
-        If this profile does not already have a Gaussian process, it will be
-        created. Note that the user is responsible for manually updating the
-        Gaussian process if more data are added or the Profile is otherwise
-        mutated. This can be accomplished directly using the `force_update`
-        keyword.
+        If this :py:class:`Profile` instance does not already have a Gaussian
+        process, it will be created. Note that the user is responsible for
+        manually updating the Gaussian process if more data are added or the
+        :py:class:`Profile` is otherwise mutated. This can be accomplished
+        directly using the `force_update` keyword.
         
         Parameters
         ----------
@@ -478,29 +478,103 @@ class Profile(object):
             :py:meth:`create_gp` if it gets called. Default is {}.
         **kwargs : optional parameters
             All other parameters are passed to the Gaussian process'
-            :py:meth:`optimize`
+            :py:meth:`optimize_hyperparameters` method.
         """
         # TODO: Add more intelligent kwargs for this!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
         self.gp.optimize_hyperparameters(**kwargs)
     
-    def plot_gp(self, gp_kwargs={}, MAP_kwargs={}, **kwargs):
-        if self.gp is None:
+    def plot_gp(self, force_update=False, gp_kwargs={}, MAP_kwargs={}, **kwargs):
+        """Plot the current state of the Profile's Gaussian process.
+        
+        If this :py:class:`Profile` instance does not already have a Gaussian
+        process, it will be created. Note that the user is responsible for
+        manually updating the Gaussian process if more data are added or the
+        :py:class:`Profile` is otherwise mutated. This can be accomplished
+        directly using the `force_update` keyword.
+        
+        Parameters
+        ----------
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        MAP_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
+        **kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`plot` method.
+        """
+        if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             self.find_gp_MAP_estimate(**MAP_kwargs)
         # TODO: Add a little more intelligence!
         self.gp.plot(**kwargs)
     
-    def smooth(self, X, n=0, plot=False, gp_kwargs={}, MAP_kwargs={}, predict_kwargs={}, plot_kwargs={}):
+    def smooth(self, X, n=0, force_update=False, plot=False, gp_kwargs={},
+               MAP_kwargs={}, **kwargs):
+        """Evaluate the underlying smooth curve at a given set of points using Gaussian process regression.
+        
+        If this :py:class:`Profile` instance does not already have a Gaussian
+        process, it will be created. Note that the user is responsible for
+        manually updating the Gaussian process if more data are added or the
+        :py:class:`Profile` is otherwise mutated. This can be accomplished
+        directly using the `force_update` keyword.
+        
+        Parameters
+        ----------
+        X : array-like (`N`, `X_dim`)
+            Points to evaluate smooth curve at.
+        n : non-negative int, optional
+            The order of derivative to evaluate at. Default is 0 (return value).
+            See the documentation on :py:meth:`gptools.GaussianProcess.predict`.
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        plot : bool, optional
+            If True, :py:meth:`gptools.GaussianProcess.plot` is called to
+            produce a plot of the smoothed curve. Otherwise,
+            :py:meth:`gptools.GaussianProcess.predict` is called directly.
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        MAP_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
+        **kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`plot` or :py:meth:`predict` method according to the
+            state of the `plot` keyword.
+        
+        Returns
+        -------
+        ax : axis instance
+            The axis instance used. This is only returned if the `plot`
+            keyword is True.
+        mean : array
+            The mean at the desired points `X` of derivative order `n`.
+        cov : matrix
+            The covariance matrix between all predicted values. You can prevent
+            this from being returned by setting `return_cov` to False in the
+            extra kwargs.
+        """
         # TODO: Add a lot more intelligence!
-        self.create_gp(**gp_kwargs)
-        self.find_gp_MAP_estimate(**MAP_kwargs)
+        if force_update or self.gp is None:
+            self.create_gp(**gp_kwargs)
+            self.find_gp_MAP_estimate(**MAP_kwargs)
         if plot:
             plot_kwargs.pop('return_prediction', True)
-            return self.gp.plot(X=X, n=n, return_prediction=True, **plot_kwargs)
+            return self.gp.plot(X=X, n=n, return_prediction=True, **kwargs)
         else:
-            return self.gp.predict(X, n=n, **predict_kwargs)
+            return self.gp.predict(X, n=n, **kwargs)
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
