@@ -109,6 +109,8 @@ class Profile(object):
     def add_data(self, X, y, err_X=0, err_y=0, channels=None):
         """Add data to the training data set of the :py:class:`Profile` instance.
         
+        Will also update the Profile's Gaussian process instance (if it exists).
+        
         Parameters
         ----------
         X : array-like, (`M`, `N`)
@@ -226,6 +228,9 @@ class Profile(object):
             self.err_X = scipy.vstack((self.err_X, err_X))
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
+        
+        if self.gp is not None:
+            self.gp.add_data(X, y, err_y=err_y)
         
     def add_profile(self, other):
         """Absorbs the data from one profile object.
@@ -413,7 +418,7 @@ class Profile(object):
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
     
-    def create_gp(self, k=None, noise_k=None, bound_expansion=5):
+    def create_gp(self, k=None, noise_k=None, bound_expansion=5, **kwargs):
         """Create a Gaussian process to handle the data.
         
         Parameters
@@ -440,6 +445,9 @@ class Profile(object):
             Factor by which the range of the data are expanded for the bounds on
             both length scales and signal variances. Default is 5, which seems
             to work pretty well for C-Mod data.
+        **kwargs : optional kwargs
+            All additional kwargs are passed to the constructor of
+            :py:class:`gptools.GaussianProcess`.
         """
         # TODO: Add better initial guesses/param_bounds!
         # TODO: Add handling for string kernels!
@@ -452,7 +460,7 @@ class Profile(object):
                                                  param_bounds=bounds)
         elif isinstance(k, str):
             raise NotImplementedError("Not done yet!")
-        self.gp = gptools.GaussianProcess(k, noise_k=noise_k)
+        self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
         self.gp.add_data(self.X, self.y, err_y=self.err_y)
     
     def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):

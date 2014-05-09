@@ -140,6 +140,12 @@ class BivariatePlasmaProfile(Profile):
             self.drop_axis(1)
         self.average_data(axis=0, **kwargs)
     
+    def drop_axis(self, axis):
+        if self.X_labels[axis] == '$t$':
+            self.t_min = self.X[:, 0].min()
+            self.t_max = self.X[:, 0].max()
+        super(BivariatePlasmaProfile, self).drop_axis(axis)
+    
     def add_profile(self, other):
         """Absorbs the data from one profile object.
 
@@ -192,6 +198,92 @@ class BivariatePlasmaProfile(Profile):
                            scipy.asarray(scipy.isnan(self.X[:, -1])).flatten())
         if convert_abscissa:
             self.convert_abscissa(old_abscissa)
+    
+    def constrain_slope_on_axis(self, err=0, times=None):
+        """Constrains the slope at the magnetic axis of this Profile's Gaussian process to be zero.
+        
+        Note that this is accomplished approximately for bivariate data by
+        specifying the slope to be zero at the magnetic axis for a number of
+        points in time.
+        
+        It is assumed that the Gaussian process has already been created with
+        a call to :py:meth:`create_gp`.
+        
+        It is required that the abscissa be either Rmid or one of the
+        normalized coordinates.
+        
+        Parameters
+        ----------
+        err : float, optional
+            The uncertainty to place on the slope constraint. The default is 0
+            (slope constraint is exact). This could also potentially be an
+            array for bivariate data where you wish to have the uncertainty
+            vary in time.
+        times : array-like, optional
+            The times to impose the constraint at. Default is to use the
+            unique time values in `X[:, 0]`.
+        """
+        if self.X_dim == 1:
+            if self.abscissa == 'Rmid':
+                t_EFIT = self.efit_tree.getTimeBase()
+                x0 = scipy.mean(self.efit_tree.getMagR()[(t_EFIT >= self.t_min) &
+                                                         (t_EFIT <= self.t_max)])
+            elif 'norm' in self.abscissa or 'r/a' in self.abscissa:
+                x0 = 0
+            else:
+                raise ValueError("Magnetic axis slope constraint is not "
+                                 "supported for abscissa '%s'. Convert to a "
+                                 "normalized coordinate or Rmid to use this "
+                                 "constraint." % (self.abscissa,))
+            self.gp.add_data(x0, 0, err_y=err, n=1)
+        elif self.X_dim == 2:
+            if times is None:
+                times = scipy.unique(scipy.asarray(self.X[:, 0]).ravel())
+            if self.abscissa == 'Rmid':
+                x0 = scipy.interpolate.interp1d(self.efit_tree.getTimeBase(),
+                                                self.efit_tree.getMagR(),
+                                                kind='nearest' if not self.efit_tree._tricubic else 'cubic')(times)
+            elif 'norm' in self.abscissa or 'r/a' in self.abscissa:
+                x0 = scipy.zeros_like(times)
+            else:
+                raise ValueError("Magnetic axis slope constraint is not "
+                                 "supported for abscissa '%s'. Convert to a "
+                                 "normalized coordinate or Rmid to use this "
+                                 "constraint." % (self.abscissa,))
+            y = scipy.zeros_like(x0)
+            X = scipy.hstack((scipy.atleast_2d(times).T, scipy.atleast_2d(x0).T))
+            n = scipy.tile([0, 1], (len(y), 1))
+            self.gp.add_data(X, y, err_y=err, n=n)
+        else:
+            raise ValueError("Magnetic axis slope constraint is not supported "
+                             "for X_dim=%d, abscissa '%s'. Convert to a "
+                             "normalized coordinate or Rmid to use this "
+                             "constraint." % (self.X_dim, self.abscissa,))
+
+    def create_gp(self, constrain_slope_on_axis=True, constraint_kwargs={}, **kwargs):
+        """Create a Gaussian process to handle the data.
+        
+        Calls :py:meth:`Profile.create_gp`, then imposes constraints as
+        requested.
+        
+        Parameters
+        ----------
+        constrain_slope_on_axis : bool, optional
+            If True, a zero slope constraint at the magnetic axis will be
+            imposed after creating the gp. Default is True (constrain slope).
+        constraint_kwargs : dict, optional
+            The contents of this dictionary are passed as kwargs to
+            :py:meth:`constrain_slope_on_axis`.
+        **kwargs : optional kwargs
+            All remaining kwargs are passed to :py:meth:`Profile.create_gp`.
+        """
+        # Increase the diagonal factor for multivariate data -- I was having
+        # issues with the default level when using slope constraints.
+        if self.X_dim > 1 and 'diag_factor' not in kwargs:
+            kwargs['diag_factor'] = 1e4
+        super(BivariatePlasmaProfile, self).create_gp(**kwargs)
+        if constrain_slope_on_axis:
+            self.constrain_slope_on_axis(**constraint_kwargs)
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):
