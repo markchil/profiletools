@@ -227,8 +227,6 @@ class Profile(object):
         self.y = scipy.append(self.y, y)
         self.err_y = scipy.append(self.err_y, err_y)
         
-        self.gp_up_to_date = False
-    
     def add_profile(self, other):
         """Absorbs the data from one profile object.
 
