@@ -259,8 +259,85 @@ class BivariatePlasmaProfile(Profile):
                              "for X_dim=%d, abscissa '%s'. Convert to a "
                              "normalized coordinate or Rmid to use this "
                              "constraint." % (self.X_dim, self.abscissa,))
+    
+    def constrain_at_limiter(self, err_y=0.01, err_dy=0.1, times=None, n_pts=4, expansion=1.25):
+        """Constrains the slope and value of this Profile's Gaussian process to be zero at the GH limiter.
+        
+        The specific value of `X` coordinate to impose this constraint at is
+        determined by finding the point of the GH limiter which has the
+        smallest mapped coordinate.
+        
+        Note that this is accomplished approximately for bivariate data by
+        specifying the slope and value to be zero at the limiter for a number
+        of points in time.
+        
+        It is assumed that the Gaussian process has already been created with
+        a call to :py:meth:`create_gp`.
+        
+        The abscissa cannot be 'Z' or 'RZ'.
+        
+        Parameters
+        ----------
+        err_y : float, optional
+            The uncertainty to place on the value constraint. The default is
+            0.01. This could also potentially be an array for bivariate data
+            where you wish to have the uncertainty vary in time.
+        err_dy : float, optional
+            The uncertainty to place on the slope constraint. The default is
+            0.1. This could also potentially be an array for bivariate data
+            where you wish to have the uncertainty vary in time.
+        times : array-like, optional
+            The times to impose the constraint at. Default is to use the
+            unique time values in `X[:, 0]`.
+        n_pts : int, optional
+            The number of points outside of the limiter to use. It helps to use
+            three or more points outside the plasma to ensure appropriate
+            behavior. The constraint is applied at `n_pts` linearly spaced
+            points between the limiter location (computed as discussed above)
+            and the limiter location times `expansion`. If you set this to one
+            it will only impose the constraint at the limiter. Default is 4.
+        expansion : float, optional
+            The factor by which the coordinate of the limiter location is
+            multiplied to get the outer limit of the `n_pts` constraint points.
+            Default is 1.25.
+        """
+        if self.abscissa in ['RZ', 'Z']:
+            raise ValueError("Limiter constraint is not supported for abscissa "
+                             "'%s'. Convert to a normalized coordinate or Rmid "
+                             "to use this constraint." % (self.abscissa,))
+        analysis = MDSplus.Tree('analysis', self.shot)
+        Z_lim = analysis.getNode('.limiters.gh_limiter.z').getData().data()
+        R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
+        if self.X_dim == 1:
+            t_EFIT = self.efit_tree.getTimeBase()
+            t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
+            rho_lim = scipy.mean(self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True), axis=0)
+            xa = rho_lim.min()
+            x_pts = scipy.linspace(xa, xa * expansion, n_pts)
+            y = scipy.zeros_like(x_pts)
+            self.gp.add_data(x_pts, y, err_y=err_y, n=0)
+            self.gp.add_data(x_pts, y, err_y=err_dy, n=1)
+        elif self.X_dim == 2:
+            if times is None:
+                times = scipy.unique(scipy.asarray(self.X[:, 0]).ravel())
+            rho_lim = self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, times, each_t=True)
+            xa = rho_lim.max(axis=1)
+            x_pts = scipy.asarray([scipy.linspace(x, x * expansion, n_pts) for x in xa]).flatten()
+            times = scipy.tile(times, n_pts)
+            X = scipy.hstack((scipy.atleast_2d(times).T, scipy.atleast_2d(x_pts).T))
+            y = scipy.zeros_like(x_pts)
+            n = scipy.tile([0, 1], (len(y), 1))
+            self.gp.add_data(X, y, err_y=err_y, n=0)
+            self.gp.add_data(X, y, err_y=err_dy, n=n)
+        else:
+            raise ValueError("Limiter constraint is not supported for X_dim=%d, "
+                             "abscissa '%s'. Convert to a normalized "
+                             "coordinate or Rmid to use this constraint."
+                             % (self.X_dim, self.abscissa,))
 
-    def create_gp(self, constrain_slope_on_axis=True, constraint_kwargs={}, **kwargs):
+    
+    def create_gp(self, constrain_slope_on_axis=True, constrain_at_limiter=True,
+                  axis_constraint_kwargs={}, limiter_constraint_kwargs={}, **kwargs):
         """Create a Gaussian process to handle the data.
         
         Calls :py:meth:`Profile.create_gp`, then imposes constraints as
@@ -271,9 +348,16 @@ class BivariatePlasmaProfile(Profile):
         constrain_slope_on_axis : bool, optional
             If True, a zero slope constraint at the magnetic axis will be
             imposed after creating the gp. Default is True (constrain slope).
-        constraint_kwargs : dict, optional
+        constrain_at_limiter : bool, optional
+            If True, a zero slope and value constraint at the GH limiter will
+            be imposed after creating the gp. Default is True (constrain at
+            axis).
+        axis_constraint_kwargs : dict, optional
             The contents of this dictionary are passed as kwargs to
             :py:meth:`constrain_slope_on_axis`.
+        limiter_constraint_kwargs : dict, optional
+            The contents of this dictionary are passed as kwargs to
+            :py:meth:`constrain_at_limiter`.
         **kwargs : optional kwargs
             All remaining kwargs are passed to :py:meth:`Profile.create_gp`.
         """
@@ -283,7 +367,9 @@ class BivariatePlasmaProfile(Profile):
             kwargs['diag_factor'] = 1e4
         super(BivariatePlasmaProfile, self).create_gp(**kwargs)
         if constrain_slope_on_axis:
-            self.constrain_slope_on_axis(**constraint_kwargs)
+            self.constrain_slope_on_axis(**axis_constraint_kwargs)
+        if constrain_at_limiter:
+            self.constrain_at_limiter(**limiter_constraint_kwargs)
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):
