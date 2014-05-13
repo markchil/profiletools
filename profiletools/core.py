@@ -418,7 +418,7 @@ class Profile(object):
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
     
-    def create_gp(self, k=None, noise_k=None, bound_expansion=5, **kwargs):
+    def create_gp(self, k=None, noise_k=None, bound_expansion=5, x0_bounds=None, k_kwargs={}, **kwargs):
         """Create a Gaussian process to handle the data.
         
         Parameters
@@ -426,13 +426,24 @@ class Profile(object):
         k : :py:class:`Kernel` instance, optional
             Covariance kernel (from :py:mod:`gptools`) with the appropriate
             number of dimensions, or None. If None, a squared exponential kernel
-            is used. The bounds for each hyperparameter are selected as follows:
+            is used. Can also be a string from the following table:
             
-                ======= ===============================
+                ========= ==============================
+                SE        Squared exponential
+                gibbstanh Gibbs kernel with tanh warping
+                ========= ==============================
+            
+            The bounds for each hyperparameter are selected as follows (lower
+            part is for the Gibbs kernel only):
+            
+                ======= ==================================
                 sigma_f [10*eps, be*range(y)]
                 l1      [10*eps, be*range(X[:, 1])]
                 ...     And so on for each length scale
-                ======= ===============================
+                ------- ----------------------------------
+                lw      [10*eps, be*range(X[:, 0]) / 50.0]
+                x0      range(X[:, 0])
+                ======= ==================================
             
             Here, eps is sys.float_info.epsilon and be is the `bound_expansion`
             parameter. The initial guesses for each parameter are set to be
@@ -445,21 +456,50 @@ class Profile(object):
             Factor by which the range of the data are expanded for the bounds on
             both length scales and signal variances. Default is 5, which seems
             to work pretty well for C-Mod data.
+        x0_bounds : 2-tuple, optional
+            Bounds to use on the x0 (transition location) hyperparameter of the
+            Gibbs covariance function with tanh warping. This is the
+            hyperparameter that tends to need the most tuning on C-Mod data.
+            Default is None (use range of X).
+        k_kwargs : dict, optional
+            All entries are passed as kwargs to the constructor for the kernel
+            if a kernel instance is not provided.
         **kwargs : optional kwargs
             All additional kwargs are passed to the constructor of
             :py:class:`gptools.GaussianProcess`.
         """
         # TODO: Add better initial guesses/param_bounds!
         # TODO: Add handling for string kernels!
-        if k is None or k == 'SE':
+        # TODO: Create more powerful way of specifying mixed kernels!
+        if isinstance(k, gptools.Kernel):
+            # Skip to the end for pure kernel instances, no need to do all the
+            # testing...
+            pass
+        elif k is None or k == 'SE':
             bounds = [(10 * sys.float_info.epsilon, bound_expansion * (self.X[:, i].max() - self.X[:, i].min())) for i in range(0, self.X_dim)]
             bounds.insert(0, (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min())))
-            initial = [(b[1] - b[0]) / 2 for b in bounds]
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
             k = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
                                                  initial_params=initial,
-                                                 param_bounds=bounds)
+                                                 param_bounds=bounds,
+                                                 **k_kwargs)
+        elif k == 'gibbstanh':
+            if self.X_dim != 1:
+                raise ValueError('Gibbs kernel is only supported for univariate data!')
+            sigma_f_bounds = (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min()))
+            l1_bounds = (10 * sys.float_info.epsilon, bound_expansion * (self.X[:, 0].max() - self.X[:, 0].min()))
+            l2_bounds = l1_bounds
+            lw_bounds = (l1_bounds[0], l1_bounds[1] / 50.0)
+            if x0_bounds is None:
+                x0_bounds = (self.X[:, 0].min(), self.X[:, 0].max())
+            bounds = [sigma_f_bounds, l1_bounds, l2_bounds, lw_bounds, x0_bounds]
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            initial[2] = initial[2] / 2
+            k = gptools.GibbsKernel1dTanh(initial_params=initial,
+                                          hyperprior=gptools.CoreEdgeJointPrior(bounds),
+                                          **k_kwargs)
         elif isinstance(k, str):
-            raise NotImplementedError("Not done yet!")
+            raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
         self.gp.add_data(self.X, self.y, err_y=self.err_y)
     

@@ -26,6 +26,7 @@ import MDSplus
 import scipy
 import scipy.interpolate
 import eqtools
+import gptools
 import warnings
 
 _X_label_mapping = {'psinorm': r'$\psi_n$',
@@ -343,6 +344,9 @@ class BivariatePlasmaProfile(Profile):
         Calls :py:meth:`Profile.create_gp`, then imposes constraints as
         requested.
         
+        Defaults to using a squared exponential kernel in two dimensions or a
+        Gibbs kernel with tanh warping in one dimension.
+        
         Parameters
         ----------
         constrain_slope_on_axis : bool, optional
@@ -365,6 +369,12 @@ class BivariatePlasmaProfile(Profile):
         # issues with the default level when using slope constraints.
         if self.X_dim > 1 and 'diag_factor' not in kwargs:
             kwargs['diag_factor'] = 1e4
+        if 'k' not in kwargs and self.X_dim == 1:
+            kwargs['k'] = 'gibbstanh'
+        if kwargs.get('k', None) == 'gibbstanh':
+            # Set the bound on x0 intelligently according to the abscissa:
+            if 'x0_bounds' not in kwargs:
+                kwargs['x0_bounds'] = (0.87, 0.915) if self.abscissa == 'Rmid' else (0.95, 1.1)
         super(BivariatePlasmaProfile, self).create_gp(**kwargs)
         if constrain_slope_on_axis:
             self.constrain_slope_on_axis(**axis_constraint_kwargs)
