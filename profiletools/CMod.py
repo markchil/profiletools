@@ -380,6 +380,109 @@ class BivariatePlasmaProfile(Profile):
             self.constrain_slope_on_axis(**axis_constraint_kwargs)
         if constrain_at_limiter:
             self.constrain_at_limiter(**limiter_constraint_kwargs)
+    
+    def compute_a_over_L(self, X, force_update=False, use_MCMC=True, plot=False,
+                         gp_kwargs={}, MAP_kwargs={}, plot_kwargs={},
+                         **predict_kwargs):
+        # TODO: Add ability to just compute value.
+        if force_update or self.gp is None:
+            self.create_gp(**gp_kwargs)
+            if not use_MCMC:
+                self.find_gp_MAP_estimate(**MAP_kwargs)
+        if self.X_dim == 1:
+            # Get GP fit:
+            XX = scipy.concatenate((X, X))
+            n = scipy.concatenate((scipy.zeros_like(X), scipy.ones_like(X)))
+            mean, cov = self.gp.predict(XX, n=n, use_MCMC=use_MCMC,
+                                        return_cov=True, return_std=False,
+                                        **predict_kwargs)
+            var = scipy.diagonal(cov)
+            mean_val = mean[:len(X)]
+            var_val = var[:len(X)]
+            mean_grad = mean[len(X):]
+            var_grad = var[len(X):]
+            i = range(0, len(X))
+            j = range(len(X), 2 * len(X))
+            cov_val_grad = scipy.asarray(cov[i, j]).flatten()
+            
+            # Get geometry from EFIT:
+            t_efit = self.efit_tree.getTimeBase()
+            ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+            
+            a = self.efit_tree.getAOut()[ok_idxs]
+            var_a = scipy.var(a, ddof=1)
+            mean_a = scipy.mean(a)
+            
+            # Get correction factor for converting the abscissa back to Rmid:
+            if self.abscissa == 'Rmid':
+                mean_dX_dRmid = scipy.ones_like(X)
+                var_dX_dRmid = scipy.zeros_like(X)
+            elif self.abscissa == 'r/a':
+                mean_dX_dRmid = scipy.mean(1.0 / a) * scipy.ones_like(X)
+                var_dX_dRmid = scipy.var(1.0 / a, ddof=1) * scipy.ones_like(X)
+            else:
+                # Code taken from core.py of eqtools, modified to use
+                # InterpolatedUnivariateSpline so I have direct access to derivatives:
+                dX_dRmid = scipy.zeros((len(X), len(ok_idxs)))
+                # Loop over time indices:
+                for idx, k in zip(ok_idxs, range(0, len(ok_idxs))):
+                    resample_factor = 3
+                    R_grid = scipy.linspace(
+                        self.efit_tree.getMagR()[idx],
+                        self.efit_tree.getRGrid()[-1],
+                        resample_factor * len(self.efit_tree.getRGrid())
+                    )
+                
+                    X_on_grid = self.efit_tree.rz2rho(
+                        self.abscissa,
+                        R_grid,
+                        self.efit_tree.getMagZ()[idx] * scipy.ones(R_grid.shape),
+                        t_efit[idx]
+                    )
+                
+                    spline = scipy.interpolate.InterpolatedUnivariateSpline(
+                        X_on_grid, R_grid, k=3
+                    )
+                    dX_dRmid[:, k] = 1.0 / spline(X, nu=1)
+                
+                mean_dX_dRmid = scipy.mean(dX_dRmid, axis=1)
+                var_dX_dRmid = scipy.var(dX_dRmid, ddof=1, axis=1)
+            
+            # Compute using error propagation:
+            mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
+            std_a_L = scipy.sqrt(
+                var_a**2 * (mean_grad * mean_dX_dRmid / mean_val)**2 +
+                var_val**2 * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
+                var_grad**2 * (mean_a * mean_dX_dRmid / mean_val)**2 +
+                var_dX_dRmid**2 * (mean_a * mean_grad / mean_val)**2 +
+                cov_val_grad * ((-mean_a * mean_grad * mean_dX_dRmid / mean_val**2) *
+                                (mean_a * mean_dX_dRmid / mean_val))
+            )
+            # Plot result:
+            if plot:
+                ax = plot_kwargs.pop('ax', None)
+                envelopes = plot_kwargs.pop('envelopes', [1, 3])
+                if ax is None:
+                    f = plt.figure()
+                    ax = f.add_subplot(1, 1, 1)
+                elif ax == 'gca':
+                    ax = plt.gca()
+                
+                l = ax.plot(X, mean_a_L, **plot_kwargs)
+                color = plt.getp(l[0], 'color')
+                for i in envelopes:
+                    ax.fill_between(X,
+                                    mean_a_L - i * std_a_L,
+                                    mean_a_L + i * std_a_L,
+                                    facecolor=color,
+                                    alpha=base_alpha / i)
+        elif self.X_dim == 2:
+            raise NotImplementedError("Not there yet!")
+        else:
+            raise ValueError("Cannot compute gradient scale length on data with "
+                             "X_dim=%d!" % (self.X_dim,))
+        
+        return (mean_a_L, std_a_L)
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):
