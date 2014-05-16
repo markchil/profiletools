@@ -28,6 +28,7 @@ import scipy.interpolate
 import eqtools
 import gptools
 import warnings
+import matplotlib.pyplot as plt
 
 _X_label_mapping = {'psinorm': r'$\psi_n$',
                     'phinorm': r'$\phi_n$',
@@ -89,10 +90,10 @@ class BivariatePlasmaProfile(Profile):
         """
         # TODO: This assumes the data haven't been averaged along t yet!
         # TODO: NEEDS A LOT OF WORK!
-        if self.X_labels[0] != '$t$':
-            raise ValueError("Can't convert abscissa after time-averaging!")
         if self.abscissa == new_abscissa:
             return
+        elif self.X_labels[0] != '$t$':
+            raise ValueError("Can't convert abscissa after time-averaging!")
         elif self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
             new_rho = scipy.power(self.X[:, 1], 2)
         elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
@@ -383,8 +384,9 @@ class BivariatePlasmaProfile(Profile):
     
     def compute_a_over_L(self, X, force_update=False, use_MCMC=True, plot=False,
                          gp_kwargs={}, MAP_kwargs={}, plot_kwargs={},
-                         **predict_kwargs):
+                         return_mean_and_std=False, **predict_kwargs):
         # TODO: Add ability to just compute value.
+        # TODO: Make finer-grained control over what to return.
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not use_MCMC:
@@ -451,10 +453,10 @@ class BivariatePlasmaProfile(Profile):
             # Compute using error propagation:
             mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
             std_a_L = scipy.sqrt(
-                var_a**2 * (mean_grad * mean_dX_dRmid / mean_val)**2 +
-                var_val**2 * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
-                var_grad**2 * (mean_a * mean_dX_dRmid / mean_val)**2 +
-                var_dX_dRmid**2 * (mean_a * mean_grad / mean_val)**2 +
+                var_a * (mean_grad * mean_dX_dRmid / mean_val)**2 +
+                var_val * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
+                var_grad * (mean_a * mean_dX_dRmid / mean_val)**2 +
+                var_dX_dRmid * (mean_a * mean_grad / mean_val)**2 +
                 cov_val_grad * ((-mean_a * mean_grad * mean_dX_dRmid / mean_val**2) *
                                 (mean_a * mean_dX_dRmid / mean_val))
             )
@@ -462,6 +464,7 @@ class BivariatePlasmaProfile(Profile):
             if plot:
                 ax = plot_kwargs.pop('ax', None)
                 envelopes = plot_kwargs.pop('envelopes', [1, 3])
+                base_alpha = plot_kwargs.pop('base_alpha', 0.375)
                 if ax is None:
                     f = plt.figure()
                     ax = f.add_subplot(1, 1, 1)
@@ -482,7 +485,10 @@ class BivariatePlasmaProfile(Profile):
             raise ValueError("Cannot compute gradient scale length on data with "
                              "X_dim=%d!" % (self.X_dim,))
         
-        return (mean_a_L, std_a_L)
+        if return_mean_and_std:
+            return (mean_val, scipy.sqrt(var_val), mean_grad, scipy.sqrt(var_grad), mean_a_L, std_a_L)
+        else:
+            return (mean_a_L, std_a_L)
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):
