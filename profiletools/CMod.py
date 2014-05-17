@@ -384,7 +384,7 @@ class BivariatePlasmaProfile(Profile):
     
     def compute_a_over_L(self, X, force_update=False, use_MCMC=True, plot=False,
                          gp_kwargs={}, MAP_kwargs={}, plot_kwargs={},
-                         return_mean_and_std=False, **predict_kwargs):
+                         return_prediction=False, **predict_kwargs):
         # TODO: Add ability to just compute value.
         # TODO: Make finer-grained control over what to return.
         if force_update or self.gp is None:
@@ -395,9 +395,10 @@ class BivariatePlasmaProfile(Profile):
             # Get GP fit:
             XX = scipy.concatenate((X, X))
             n = scipy.concatenate((scipy.zeros_like(X), scipy.ones_like(X)))
-            mean, cov = self.gp.predict(XX, n=n, use_MCMC=use_MCMC,
-                                        return_cov=True, return_std=False,
-                                        **predict_kwargs)
+            out = self.gp.predict(XX, n=n, use_MCMC=use_MCMC, full_output=True,
+                                  **predict_kwargs)
+            mean = out['mean']
+            cov = out['cov']
             var = scipy.diagonal(cov)
             mean_val = mean[:len(X)]
             var_val = var[:len(X)]
@@ -485,8 +486,14 @@ class BivariatePlasmaProfile(Profile):
             raise ValueError("Cannot compute gradient scale length on data with "
                              "X_dim=%d!" % (self.X_dim,))
         
-        if return_mean_and_std:
-            return (mean_val, scipy.sqrt(var_val), mean_grad, scipy.sqrt(var_grad), mean_a_L, std_a_L)
+        if return_prediction:
+            return {'mean_val': mean_val,
+                    'std_val': scipy.sqrt(var_val),
+                    'mean_grad': mean_grad,
+                    'std_grad': scipy.sqrt(var_grad),
+                    'mean_a_L': mean_a_L,
+                    'std_a_L': std_a_L,
+                    'out': out}
         else:
             return (mean_a_L, std_a_L)
 

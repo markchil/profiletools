@@ -562,7 +562,7 @@ class Profile(object):
             if not kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         # TODO: Add a little more intelligence!
-        self.gp.plot(**kwargs)
+        return self.gp.plot(**kwargs)
     
     def smooth(self, X, n=0, force_update=False, use_MCMC=False, plot=False,
                gp_kwargs={}, MAP_kwargs={}, MCMC_kwargs={}, **kwargs):
@@ -606,12 +606,12 @@ class Profile(object):
         ax : axis instance
             The axis instance used. This is only returned if the `plot`
             keyword is True.
-        mean : array
-            The mean at the desired points `X` of derivative order `n`.
-        std : matrix
-            The standard deviations for the predicted values. You can prevent
-            this from being returned by setting `return_std` to False in the
-            extra kwargs.
+        mean : :py:class:`Array`, (`M`,)
+            Predicted GP mean. Only returned if `full_output` is False.
+        std : :py:class:`Array`, (`M`,)
+            Predicted standard deviation, only returned if `return_std` is True and `full_output` is False.
+        full_output : dict
+            Dictionary with fields for mean, std, cov and possibly random samples. Only returned if `full_output` is True.
         """
         # TODO: Add a lot more intelligence!
         if force_update or self.gp is None:
