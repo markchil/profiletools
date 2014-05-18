@@ -1,0 +1,115 @@
+#!/usr/bin/env python2.7
+# Copyright 2014 Mark Chilenski
+# This program is distributed under the terms of the GNU General Purpose License (GPL).
+# Refer to http://www.gnu.org/licenses/gpl.txt
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+from __future__ import division
+
+import argparse
+parser = argparse.ArgumentParser(
+    description="Fit univariate profile using gptools/profiletools. Must either "
+                "specify signal with -s or input NetCDF file with -i. Note that "
+                "much more functionality is available if you pull data from the "
+                "tree.",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter
+)
+parser.add_argument('--shotnum',
+                    type=int,
+                    help="Shot number to use.")
+parser.add_argument('--t-min',
+                    type=float,
+                    help="Starting time of period to average over.")
+parser.add_argument('--t-max',
+                    type=float,
+                    help="Ending time of period to average over.")
+parser.add_argument('-t', '--t-point',
+                    type=float,
+                    help="Single time value to average over. The nearest time "
+                         "to this will be selected. You must either specify "
+                         "--t-min and --t-max, or -t.")
+parser.add_argument('-s', '--signal',
+                    choices=['ne', 'Te'], help="Which signal to fit.")
+parser.add_argument('--system',
+                    nargs='*',
+                    choices=['CTS', 'ETS', 'TS', 'GPC', 'GPC2', 'FRCECE'],
+                    help="Which system(s) to take data from. If not provided, "
+                         "all applicable systems will be used. The 'TS' option "
+                         "is a shortcut to include both the core (CTS) and edge "
+                         "(ETS) Thomson systems.")
+parser.add_argument('--kernel',
+                    choices=['SE', 'gibbstanh'],
+                    default='gibbstanh',
+                    help="Which covariance kernel to used. This dictates the "
+                         "properties of the fit. SE is the squared exponential "
+                         "kernel, which is good for core data. gibbstanh is the "
+                         "Gibbs kernel with tanh warping of the length scale. "
+                         "This kernel allows the entire profile to be fit at "
+                         "once, and should be used if you have edge data.")
+parser.add_argument('--coordinate', '--abscissa',
+                    choices=['psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
+                             'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'],
+                    default='psinorm',
+                    help="Which coordinate to fit against. Note that this does "
+                         "not have an effect if data pulled from a NetCDF file.")
+parser.add_argument('--core-only',
+                    action='store_true',
+                    help="Set this flag to only fit the data in the core. This will "
+                         "default to using a squared exponential kernel.")
+parser.add_argument('--robust', '--robust-estimators',
+                    action='store_true',
+                    help="Set this flag to use robust estimators (median, IQR) "
+                         "when performing time-averages.")
+parser.add_argument('--outlier-threshold',
+                    type=float,
+                    help="If provided, any points whose value is more than this "
+                         "many times its own error bar outside of the fit will "
+                         "be rejected.")
+parser.add_argument('--random-starts', '--starts',
+                    type=int,
+                    help="The number of random starts to use when trying to find "
+                         "the MAP estimate for the hyperparameters. If you are "
+                         "getting bad fits, try increasing this. If not "
+                         "specified, this is set to the number of processors "
+                         "available on your machine.")
+parser.add_argument('--hyperparameter-bounds', '--bounds',
+                    type=float,
+                    nargs='*',
+                    help="Bounds to use for each of the hyperparameters. "
+                         "Specified as pairs of lower, upper bounds. If present, "
+                         "there should be two such pairs for the squared "
+                         "exponential kernel and five such pairs for the Gibbs "
+                         "kernel with tanh length scale warping. If not specified, "
+                         "somewhat intelligent guesses are made based on the data "
+                         "itself. If you are getting bad fits, try tweaking these.")
+parser.add_argument('-i', '--input-filename', '--input',
+                    help="Filename/path to a NetCDF file containing the profile "
+                         "data to be fit.")
+parser.add_argument('-o', '--output-filename', '--output',
+                    help="Filename/path to write a NetCDF file to containing the "
+                         "results of the fit.")
+parser.add_argument('--abscissa-name',
+                    default='x',
+                    help="Name of the variable in the input/output NetCDF files "
+                         "that contains the values of the abscissa (independent "
+                         "variable).")
+parser.add_argument('--ordinate-name',
+                    default='y',
+                    help="Name of the variable in the input/output NetCDF files "
+                         "that contains the values of the ordinate (dependent "
+                         "variable).")
+
+parser.parse_args()
+

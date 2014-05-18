@@ -692,6 +692,11 @@ def ne(shot, include=['CTS', 'ETS'], **kwargs):
 
     return p
 
+def neTS(shot, **kwargs):
+    """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
+    """
+    return ne(shot, include=['CTS', 'ETS'], **kwargs)
+
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
@@ -1170,3 +1175,10 @@ def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
         p.add_profile(p_other)
     
     return p
+
+def TeTS(shot, **kwargs):
+    """Returns a profile representing electron temperature data from the Thomson scattering system.
+    
+    Includes both core and edge system.
+    """
+    return Te(shot, include=['CTS', 'ETS'], **kwargs)

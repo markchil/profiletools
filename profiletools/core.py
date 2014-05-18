@@ -405,6 +405,10 @@ class Profile(object):
     def remove_points(self, conditional):
         """Remove points where conditional is True.
         
+        Note that this does NOT remove anything from the GP -- you either need
+        to call :py:meth:`create_gp` again or act manually on the :py:attr:`gp`
+        attribute.
+        
         Parameters
         ----------
         conditional : array-like of bool, (`M`,)
@@ -417,6 +421,63 @@ class Profile(object):
         self.err_y = self.err_y[idxs]
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
+    
+    def remove_outliers(self, force_update=False, gp_kwargs={}, MAP_kwargs={},
+                        **remove_kwargs):
+        """Remove outliers from the Gaussian process.
+        
+        The Gaussian process is created if it does not already exist. The
+        chopping of values assumes that any artificial constraints that have
+        been added to the GP are at the END of the GP's data arrays.
+        
+        The values removed are returned.
+        
+        Parameters
+        ----------
+        thresh : float, optional
+            The threshold as a multiplier times `err_y`. Default is 3 (i.e.,
+            throw away all 3-sigma points).
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        MAP_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
+        **remove_kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`remove_outliers` method.
+        
+        Returns
+        -------
+        X_bad : matrix
+            Input values of the bad points.
+        y_bad : array
+            Bad values.
+        err_y_bad : array
+            Uncertainties on the bad values.
+        n_bad : matrix
+            Derivative order of the bad values.
+        bad_idxs : array
+            Array of booleans with the original shape of X with True wherever
+            a point was taken to be bad and subsequently removed.
+        """
+        if force_update or self.gp is None:
+            self.create_gp(**gp_kwargs)
+            if not remove_kwargs.get('use_MCMC', False):
+                self.find_gp_MAP_estimate(**MAP_kwargs)
+        
+        out = self.gp.remove_outliers(**remove_kwargs)
+        bad_idxs = out[4]
+        # Chop bad_idxs down with the assumption that all constraints that are
+        # not reflected in self.y are at the end:
+        self.remove_points(out[4][:len(self.y)])
+        
+        return out
     
     def create_gp(self, k=None, noise_k=None, bound_expansion=5, x0_bounds=None, k_kwargs={}, **kwargs):
         """Create a Gaussian process to handle the data.
