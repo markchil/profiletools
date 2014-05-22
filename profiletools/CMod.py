@@ -148,6 +148,11 @@ class BivariatePlasmaProfile(Profile):
             self.t_max = self.X[:, 0].max()
         super(BivariatePlasmaProfile, self).drop_axis(axis)
     
+    def keep_times(self, times):
+        if self.X_labels[0] != '$t$':
+            raise ValueError("Cannot keep specific time slices after time-averaging!")
+        self.keep_slices(0, times)
+    
     def add_profile(self, other):
         """Absorbs the data from one profile object.
 
@@ -228,8 +233,12 @@ class BivariatePlasmaProfile(Profile):
         if self.X_dim == 1:
             if self.abscissa == 'Rmid':
                 t_EFIT = self.efit_tree.getTimeBase()
-                x0 = scipy.mean(self.efit_tree.getMagR()[(t_EFIT >= self.t_min) &
-                                                         (t_EFIT <= self.t_max)])
+                if self.t_min != self.t_max:
+                    x0 = scipy.mean(self.efit_tree.getMagR()[(t_EFIT >= self.t_min) &
+                                                             (t_EFIT <= self.t_max)])
+                else:
+                    idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
+                    x0 = self.efit_tree.getMagR()[idx]
             elif 'norm' in self.abscissa or 'r/a' in self.abscissa:
                 x0 = 0
             else:
@@ -312,8 +321,16 @@ class BivariatePlasmaProfile(Profile):
         R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
         if self.X_dim == 1:
             t_EFIT = self.efit_tree.getTimeBase()
-            t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
-            rho_lim = scipy.mean(self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True), axis=0)
+            if self.t_min != self.t_max:
+                t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
+            else:
+                idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
+                t_EFIT = t_EFIT[idx]
+            rho_lim = scipy.mean(
+                self.efit_tree.rz2rho(
+                    self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True
+                ), axis=0
+            )
             xa = rho_lim.min()
             x_pts = scipy.linspace(xa, xa * expansion, n_pts)
             y = scipy.zeros_like(x_pts)
@@ -375,7 +392,7 @@ class BivariatePlasmaProfile(Profile):
         if kwargs.get('k', None) == 'gibbstanh':
             # Set the bound on x0 intelligently according to the abscissa:
             if 'x0_bounds' not in kwargs:
-                kwargs['x0_bounds'] = (0.87, 0.915) if self.abscissa == 'Rmid' else (0.95, 1.1)
+                kwargs['x0_bounds'] = (0.87, 0.915) if self.abscissa == 'Rmid' else (0.94, 1.1)
         super(BivariatePlasmaProfile, self).create_gp(**kwargs)
         if constrain_slope_on_axis:
             self.constrain_slope_on_axis(**axis_constraint_kwargs)
@@ -410,10 +427,15 @@ class BivariatePlasmaProfile(Profile):
             
             # Get geometry from EFIT:
             t_efit = self.efit_tree.getTimeBase()
-            ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+            if self.t_min != self.t_max:
+                ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+            else:
+                ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
             
             a = self.efit_tree.getAOut()[ok_idxs]
             var_a = scipy.var(a, ddof=1)
+            if scipy.isnan(var_a):
+                var_a = 0
             mean_a = scipy.mean(a)
             
             # Get correction factor for converting the abscissa back to Rmid:
@@ -423,6 +445,7 @@ class BivariatePlasmaProfile(Profile):
             elif self.abscissa == 'r/a':
                 mean_dX_dRmid = scipy.mean(1.0 / a) * scipy.ones_like(X)
                 var_dX_dRmid = scipy.var(1.0 / a, ddof=1) * scipy.ones_like(X)
+                var_dX_dRmid[scipy.isnan(var_dX_dRmid)] = 0
             else:
                 # Code taken from core.py of eqtools, modified to use
                 # InterpolatedUnivariateSpline so I have direct access to derivatives:
@@ -450,6 +473,7 @@ class BivariatePlasmaProfile(Profile):
                 
                 mean_dX_dRmid = scipy.mean(dX_dRmid, axis=1)
                 var_dX_dRmid = scipy.var(dX_dRmid, ddof=1, axis=1)
+                var_dX_dRmid[scipy.isnan(var_dX_dRmid)] = 0
             
             # Compute using error propagation:
             mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
@@ -906,7 +930,7 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
         Te_FRC.extend(Te)
         # There appears to consistently be an extra point. Lacking a better
         # explanation, I will knock off the last point:
-        t = N.dim_of().data()[:-1]
+        t = N.dim_of().data()[:len(Te)]
         t_FRC.extend(t)
         
         N_R = electrons.getNode(r'frcece.data.rmid_%02d' % (k + 1,))
@@ -927,7 +951,7 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
     p.shot = shot
     p.abscissa = 'Rmid'
     
-    p.add_data(X, Te, channels={1: scipy.asarray(channels)})
+    p.add_data(X, Te, channels={1: scipy.asarray(channels)}, err_y=0.1 * scipy.absolute(Te))
     # Remove flagged points:
     # I think these are cut off channels, but I am not sure...
     p.remove_points(p.y < cutoff)
@@ -1006,7 +1030,7 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
     p.shot = shot
     p.abscissa = 'Rmid'
 
-    p.add_data(X, Te, channels={1: channels})
+    p.add_data(X, Te, channels={1: channels}, err_y=0.1 * scipy.absolute(Te))
     
     # Remove flagged points:
     p.remove_points(p.y == 0)
@@ -1090,7 +1114,7 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
     p.shot = shot
     p.abscissa = 'Rmid'
     
-    p.add_data(X, Te, channels={1: scipy.asarray(channels)})
+    p.add_data(X, Te, channels={1: scipy.asarray(channels)}, err_y=0.1 * scipy.absolute(Te))
     
     # Remove flagged points:
     # I think these are cut off channels, but I am not sure...

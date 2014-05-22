@@ -26,6 +26,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import gptools
 import sys
+import os.path
+import csv
 
 # Conversion factor to get from interquartile range to standard deviation:
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
@@ -269,7 +271,49 @@ class Profile(object):
         self.err_X = scipy.delete(self.err_X, axis, axis=1)
         self.X_labels.pop(axis)
         self.X_units.pop(axis)
-
+    
+    def keep_slices(self, axis, vals):
+        """Keeps only the nearest points to vals along the given axis for each channel.
+        
+        Parameters
+        ----------
+        axis : int
+            The axis to take the slice of.
+        vals : array of float
+            The values the axis should be close to.
+        """
+        try:
+            iter(vals)
+        except TypeError:
+            vals = [vals]
+        new_X = []
+        new_y = []
+        new_err_X = []
+        new_err_y = []
+        new_channels = []
+        
+        axis_channels = scipy.asarray(self.channels[:, axis]).flatten()
+        
+        reduced_channels = scipy.delete(self.channels, axis, axis=1)
+        channels = unique_rows(reduced_channels)
+        
+        for ch in channels:
+            channel_idxs = (scipy.asarray(reduced_channels) ==
+                         scipy.asarray(ch).flatten()).all(axis=1)
+            ch_axis_X = scipy.asarray(self.X[channel_idxs, axis]).flatten()
+            keep_idxs = scipy.unique(get_nearest_idx(vals, ch_axis_X))
+            
+            new_X.extend(self.X[channel_idxs, :][keep_idxs, :])
+            new_y.extend(self.y[channel_idxs][keep_idxs])
+            new_err_X.extend(self.err_X[channel_idxs, :][keep_idxs, :])
+            new_err_y.extend(self.err_y[channel_idxs][keep_idxs])
+            new_channels.extend(self.channels[channel_idxs, :][keep_idxs, :])
+        self.X = scipy.vstack(new_X)
+        self.y = scipy.asarray(new_y)
+        self.err_X = scipy.vstack(new_err_X)
+        self.err_y = scipy.asarray(new_err_y)
+        self.channels = scipy.vstack(new_channels)
+    
     def average_data(self, axis=0, ddof=1, robust=False):
         """Computes the average of the profile over the desired axis.
         
@@ -414,13 +458,32 @@ class Profile(object):
         conditional : array-like of bool, (`M`,)
             Array of booleans corresponding to each entry in `y`. Where an
             entry is True, that value will be removed.
+        
+        Returns
+        -------
+        X_bad : matrix
+            Input values of the bad points.
+        y_bad : array
+            Bad values.
+        err_X_bad : array
+            Uncertainties on the abcissa of the bad values.
+        err_y_bad : array
+            Uncertainties on the bad values.
         """
         idxs = ~conditional
+        
+        y_bad = self.y[conditional]
+        X_bad = self.X[conditional, :]
+        err_y_bad = self.err_y[conditional]
+        err_X_bad = self.err_X[conditional, :]
+        
         self.y = self.y[idxs]
         self.X = self.X[idxs, :]
         self.err_y = self.err_y[idxs]
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
+        
+        return (X_bad, y_bad, err_X_bad, err_y_bad)
     
     def remove_outliers(self, force_update=False, gp_kwargs={}, MAP_kwargs={},
                         **remove_kwargs):
@@ -458,28 +521,67 @@ class Profile(object):
             Input values of the bad points.
         y_bad : array
             Bad values.
+        err_X_bad : array
+            Uncertainties on the abcissa of the bad values.
         err_y_bad : array
             Uncertainties on the bad values.
-        n_bad : matrix
-            Derivative order of the bad values.
-        bad_idxs : array
-            Array of booleans with the original shape of X with True wherever
-            a point was taken to be bad and subsequently removed.
         """
+        # TODO: This should return err_X, too!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not remove_kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         
         out = self.gp.remove_outliers(**remove_kwargs)
-        bad_idxs = out[4]
+        err_X_bad = self.err_X[out[4][:len(self.y)], :]
         # Chop bad_idxs down with the assumption that all constraints that are
         # not reflected in self.y are at the end:
-        self.remove_points(out[4][:len(self.y)])
-        
-        return out
+        return self.remove_points(out[4][:len(self.y)])
     
-    def create_gp(self, k=None, noise_k=None, bound_expansion=5, x0_bounds=None, k_kwargs={}, **kwargs):
+    def remove_extreme_changes(self, thresh=10, logic='and'):
+        """Removes points at which there is an extreme change.
+        
+        Only for univariate data!
+        
+        This operation is performed by looking for points who differ by more
+        than `thresh` * `err_y` from each of their neighbors. This operation
+        will typically only be useful with large values of thresh. This is
+        useful for eliminating bad channels.
+        
+        Note that this will NOT update the Gaussian process.
+        
+        Parameters
+        ----------
+        thresh : float, optional
+            The threshold as a multiplier times `err_y`. Default is 10 (i.e.,
+            throw away all 10-sigma changes).
+        logic : {'and', 'or'}
+            Whether the logical operation performed should be an and or an or
+            when looking at left-hand and right-hand differences. 'and' is more
+            conservative, but 'or' will help if you have multiple bad channels
+            in a row. Default is 'and' (point must have a drastic change in both 
+            directions to be rejected).
+        """
+        if self.X_dim != 1:
+            raise NotImplementedError("Extreme change removal is not supported "
+                                      "for X_dim = %d" % (self.X_dim,))
+        sort_idx = scipy.asarray(self.X).flatten().argsort()
+        y_sort = self.y[sort_idx]
+        err_y_sort = self.err_y[sort_idx]
+        forward_diff = y_sort[:-1] - y_sort[1:]
+        backward_diff = -forward_diff
+        forward_diff = scipy.absolute(scipy.append(forward_diff, 0) / err_y_sort)
+        backward_diff = scipy.absolute(scipy.insert(backward_diff, 0, 0) / err_y_sort)
+        if logic == 'and':
+            extreme_changes = (forward_diff >= thresh) & (backward_diff >= thresh)
+        elif logic == 'or':
+            extreme_changes = (forward_diff >= thresh) | (backward_diff >= thresh)
+        else:
+            raise ValueError("Unsupported logic '%s'." % (logic,))
+        return self.remove_points(extreme_changes[sort_idx.argsort()])
+    
+    def create_gp(self, k=None, noise_k=None, upper_factor=5, lower_factor=5,
+                  x0_bounds=None, k_kwargs={}, **kwargs):
         """Create a Gaussian process to handle the data.
         
         Parameters
@@ -497,26 +599,30 @@ class Profile(object):
             The bounds for each hyperparameter are selected as follows (lower
             part is for the Gibbs kernel only):
             
-                ======= ==================================
-                sigma_f [10*eps, be*range(y)]
-                l1      [10*eps, be*range(X[:, 1])]
-                ...     And so on for each length scale
-                ------- ----------------------------------
-                lw      [10*eps, be*range(X[:, 0]) / 50.0]
-                x0      range(X[:, 0])
-                ======= ==================================
+                ============== =============================================
+                sigma_f        [1/lower_factor, upper_factor]*range(y)
+                l1             [1/lower_factor, upper_factor]*range(X[:, 1])
+                ...            And so on for each length scale
+                -------------- ---------------------------------------------
+                l2 (gibbstanh) [10*eps, upper_factor*range(X[:, 1])]
+                lw             [10*eps, upper_factor*range(X[:, 0]) / 50.0]
+                x0             range(X[:, 0])
+                ============== =============================================
             
-            Here, eps is sys.float_info.epsilon and be is the `bound_expansion`
-            parameter. The initial guesses for each parameter are set to be
-            halfway between the upper and lower bounds. Default is None (use SE
-            kernel).
+            Here, eps is sys.float_info.epsilon. The initial guesses for each
+            parameter are set to be halfway between the upper and lower bounds.
+            Default is None (use SE kernel).
         noise_k : :py:class:`Kernel` instance, optional
             The noise covariance kernel. Default is None (use the default zero
             noise kernel, with all noise being specified by `err_y`).
-        bound_expansion : float, optional
-            Factor by which the range of the data are expanded for the bounds on
-            both length scales and signal variances. Default is 5, which seems
-            to work pretty well for C-Mod data.
+        upper_factor : float, optional
+            Factor by which the range of the data is multiplied for the upper
+            bounds on both length scales and signal variances. Default is 5,
+            which seems to work pretty well for C-Mod data.
+        lower_factor : float, optional
+            Factor by which the range of the data is divided for the lower
+            bounds on both length scales and signal variances. Default is 5,
+            which seems to work pretty well for C-Mod data.
         x0_bounds : 2-tuple, optional
             Bounds to use on the x0 (transition location) hyperparameter of the
             Gibbs covariance function with tanh warping. This is the
@@ -537,8 +643,12 @@ class Profile(object):
             # testing...
             pass
         elif k is None or k == 'SE':
-            bounds = [(10 * sys.float_info.epsilon, bound_expansion * (self.X[:, i].max() - self.X[:, i].min())) for i in range(0, self.X_dim)]
-            bounds.insert(0, (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min())))
+            y_range = self.y.max() - self.y.min()
+            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            for i in xrange(0, self.X_dim):
+                X_range = self.X[:, i].max() - self.X[:, i].min()
+                bounds.append((X_range / lower_factor,
+                               upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
             k = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
                                                  initial_params=initial,
@@ -547,10 +657,12 @@ class Profile(object):
         elif k == 'gibbstanh':
             if self.X_dim != 1:
                 raise ValueError('Gibbs kernel is only supported for univariate data!')
-            sigma_f_bounds = (10 * sys.float_info.epsilon, bound_expansion * (self.y.max() - self.y.min()))
-            l1_bounds = (10 * sys.float_info.epsilon, bound_expansion * (self.X[:, 0].max() - self.X[:, 0].min()))
-            l2_bounds = l1_bounds
-            lw_bounds = (l1_bounds[0], l1_bounds[1] / 50.0)
+            y_range = self.y.max() - self.y.min()
+            sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
+            X_range = self.X[:, 0].max() - self.X[:, 0].min()
+            l1_bounds = (X_range / lower_factor, upper_factor * X_range)
+            l2_bounds = (10 * sys.float_info.epsilon, l1_bounds[1])
+            lw_bounds = (l2_bounds[0], l1_bounds[1] / 50.0)
             if x0_bounds is None:
                 x0_bounds = (self.X[:, 0].min(), self.X[:, 0].max())
             bounds = [sigma_f_bounds, l1_bounds, l2_bounds, lw_bounds, x0_bounds]
@@ -685,6 +797,26 @@ class Profile(object):
                                 use_MCMC=use_MCMC, **kwargs)
         else:
             return self.gp.predict(X, n=n, use_MCMC=use_MCMC, **kwargs)
+    
+    def write_csv(self, filename):
+        """Writes this profile to a csv file.
+        
+        Parameters
+        ----------
+        filename : str
+            Path of the file to write. If the file exists, it will be
+            overwritten without warning.
+        """
+        filename = os.path.expanduser(filename)
+        with open(filename, 'wb') as outfile:
+            writer = csv.writer(outfile)
+            err_X_labels = ['err_' + l for l in self.X_labels]
+            writer.writerow(self.X_labels + err_X_labels + [self.y_label] +
+                            ['err_' + self.y_label])
+            for k in xrange(0, len(self.y)):
+                writer.writerow([x for x in self.X[k, :]] +
+                                [x for x in self.err_X[k, :]] +
+                                [self.y[k], self.err_y[k]])
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
@@ -767,3 +899,24 @@ def unique_rows(arr):
         transition_idxs = scipy.where(row_cmp != 0)[0]
         idx = scipy.asarray(srt_idx)[transition_idxs]
     return arr[idx]
+
+def get_nearest_idx(v, a):
+    """Returns the array of indices of the nearest value in `a` corresponding to each value in `v`.
+    
+    Parameters
+    ----------
+    v : Array
+        Input values to match to nearest neighbors in `a`.
+    a : Array
+        Given values to match against.
+    
+    Returns
+    -------
+    Indices in `a` of the nearest values to each value in `v`. Has the same shape as `v`.
+    """
+    # Gracefully handle single-value versus array inputs, returning in the
+    # corresponding type.
+    try:
+        return scipy.array([(scipy.absolute(a - val)).argmin() for val in v])
+    except TypeError:
+        return (scipy.absolute(a - v)).argmin()
