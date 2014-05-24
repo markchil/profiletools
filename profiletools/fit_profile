@@ -642,7 +642,7 @@ def accept_and_quit(evt):
             "fit to. If the file exists, it will be overwritten without warning.\n\n"
             "filename = "
         )
-    root, ext = os.path.splitext(args.input_filename)
+    root, ext = os.path.splitext(args.output_filename)
     history = (
         "Created by user {user} on {host} with {module} version {ver} on {time}. "
         "Command used was:\n{argv}\n".format(
