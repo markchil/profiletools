@@ -26,41 +26,117 @@ import scipy.io
 import profiletools
 import eqtools
 import matplotlib.pyplot as plt
+import matplotlib.widgets as mplw
+import matplotlib.gridspec as mplgs
 import multiprocessing
+import inspect
+import socket
+import getpass
+import time
+
+__version__ = '0.0'
+
+class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    pass
 
 parser = argparse.ArgumentParser(
-    description="Fit univariate profile using gptools/profiletools. Must either "
-                "specify signal with -s or input NetCDF file with -i.",
-    formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    description=
+"""Fit univariate profile using gptools/profiletools.
+
+Calling without arguments will enter an interactive mode, but it will only
+prompt you for the most basic parameters needed. Use the command line flags to
+specify more advanced options. This program can operate on ne, Te data from the
+tree, or you can provide data in a NetCDF or CSV file.
+
+You can choose whether to average over a time window, a specific set of points
+or to use a single time slice. Even if providing data in a file, you should
+specify the shot number and time window so that appropriate constraints can be
+imposed on the fit at the magnetic axis and edge.
+
+Examples:
+
+Basic way to fit ne profile from shot 1101014006, averaged over the flat top
+from 0.965s to 1.365s, using core and edge TS:
+
+    fit_profile --shot 1101014006 --signal ne --t-min 0.965 --t-max 1.365
+
+(To specify specific diagnostics to include, use the --system keyword.)
+
+Basic way to fit data from NetCDF file foo.nc, assuming the data are from the
+time window 0.965s to 1.365s of shot 1101014006. The abscissa is specified to be
+normalized poloidal flux and is stored in the variable psin in the NetCDF file.
+The ordinate is stored in the variable q and its uncertainty in err_q:
+
+    fit_profile -i foo.nc --coordinate psinorm --t-min 0.965 --t-max 1.365 -x psin -y q
+
+When the fit is complete, you will be presented with a plot of the fit and its
+uncertainty. You will then have the option to reject the fit and exit (with
+status code 2), or to accept the fit and exit (with status code 0). Upon
+accepting the fit, the data will be saved to either a NetCDF file or a CSV file,
+depending on the extension of the output filename you specify.
+
+Several things can go wrong in the fit. If there are bad points/outliers in your
+data you can attempt to remove them by specifying one or both of
+--change-threshold and --outlier-threshold. Change threshold rejects points that
+are too distant from their neighbors, outlier threshold rejects points that are
+too distant from the fit.
+
+If there are not apparent outliers, but the fit still looks bad, then there is
+likely an issue with the estimation of the fit's properties -- namely the
+so-called hyperparameters that dictate the spatial correlation between points.
+Try increasing the --random-starts flag to at least 8 as a first cut. This will
+make the fit take quite a bit longer, but is parallelized, so the more cores
+your computer has, the faster you will have your answer. If this still yields
+unsatisfactory fits, try adjusting the bounds for the hyperparameters using
+--bounds.
+
+Note that many warnings regarding overflow in cosh and casting complex values
+will be emitted -- these are usually benign. You will also see warnings that
+the minimizer failed. These indicate that a particular random guess for the 
+hyperparameters walked the minimizer into a bad state. At the end of the
+optimization you will be told how many starts were accepted. Try to increase
+--random-starts and/or adjust --bounds until this number is at least 4.
+
+Note that, at this point, the program only supports handling of the
+hyperparameters through MAP estimation. This is usually sufficient for the value
+in the core, but is NOT sufficient for getting uncertainties on gradients (even
+in the core) or detailed information on the edge.""",
+    formatter_class=CustomFormatter
 )
 parser.add_argument('--signal',
                     choices=['ne', 'Te'],
-                    help="Which signal to fit. This argument is required.")
+                    help="Which signal to fit when pulling data from the tree.")
 parser.add_argument('--shot',
                     type=int,
-                    help="Shot number to use.")
+                    help="Shot number to use. Required when pulling data from "
+                         "the tree. When pulling data from a file, this is "
+                         "needed to specify constraints at the magnetic axis and "
+                         "limiter.")
 parser.add_argument('--t-min',
                     type=float,
                     help="Starting time of period to average over. If you are "
-                         "reading data from a NetCDF file, you can set this flag "
-                         "to tell the program what time window to average over "
+                         "reading data from a file, you can set this flag to "
+                         "tell the program what time window to average over "
                          "when finding the location of the limiter/magnetic axis "
                          "when applying constraints.")
 parser.add_argument('--t-max',
                     type=float,
                     help="Ending time of period to average over. If you are "
-                         "reading data from a NetCDF file, you can set this flag "
-                         "to tell the program what time window to average over "
-                         "when finding the location of the limiter/magnetic axis "
+                         "reading data from a file, you can set this flag to "
+                         "tell the program what time window to average over when "
+                         "finding the location of the limiter/magnetic axis "
                          "when applying constraints.")
-parser.add_argument('-t', '--t-point',
+parser.add_argument('-t', '--t-points',
                     type=float,
-                    help="Single time value to use. The nearest time to this "
-                         "will be selected for each channel. You must either "
-                         "specify --t-min and --t-max, or -t.")
+                    nargs='+',
+                    help="Individual time values to use. The nearest time to "
+                         "each will be selected for each channel. You can use "
+                         "this, for instance, to specify the times you have "
+                         "determined are at a particular sawtooth/ELM phase. You "
+                         "must either specify --t-min and --t-max, or -t.")
 parser.add_argument('--npts',
                     type=int,
-                    default=100,
+                    default=400,
                     help="Number of evenly-spaced points to evaluate the fit at.")
 parser.add_argument('--x-min',
                     type=float,
@@ -87,7 +163,7 @@ parser.add_argument('--system',
 parser.add_argument('--kernel',
                     choices=['gibbstanh', 'SE'],
                     default='gibbstanh',
-                    help="Which covariance kernel to used. This dictates the "
+                    help="Which covariance kernel to use. This dictates the "
                          "properties of the fit. SE is the squared exponential "
                          "kernel, which is good for core data. gibbstanh is the "
                          "Gibbs kernel with tanh warping of the length scale. "
@@ -131,7 +207,7 @@ parser.add_argument('--change-threshold',
                     help="If provided, any points whose differences with respect "
                          "to either of their neighbors are more than this many "
                          "times their own error bar will be rejected. This is "
-                         "useful for getting rid of bad channels. A value of 10 "
+                         "useful for getting rid of bad channels. A value of 9 "
                          "is often useful.")
 parser.add_argument('--outlier-threshold',
                     type=float,
@@ -170,7 +246,7 @@ parser.add_argument('--bounds',
                          "Note that this overrides --upper-factor and --lower-factor "
                          "if present.")
 parser.add_argument('-i', '--input-filename',
-                    help="Filename/path to a csv or NetCDF file containing the "
+                    help="Filename/path to a CSV or NetCDF file containing the "
                          "profile data to be fit. Note that if you wish to make "
                          "use of the core/edge value, slope constraints you must "
                          "provide t-min and t-max bracketing the times used so "
@@ -179,36 +255,38 @@ parser.add_argument('-i', '--input-filename',
                          "(Though it will always be able to find the magnetic "
                          "axis if you use a normalized coordinate.) If the "
                          "extension of the file is .csv it will be treated as a "
-                         "comma-seperated values file, all other extensions will "
+                         "comma-separated values file, all other extensions will "
                          "be treated as NetCDF files. If using a CSV file, the "
-                         "first row should be a comma-seperated list of the field "
+                         "first row should be a comma-separated list of the field "
                          "names, as defined with --abscissa-name and "
-                         "--ordinate-name. These can be in any order.")
+                         "--ordinate-name. These columns can be in any order in "
+                         "the actual file.")
 parser.add_argument('-o', '--output-filename',
-                    help="Filename/path to write a NetCDF file to containing the "
-                         "results of the fit. If not specified, you will be "
-                         "prompted for a filename upon completing the fit.")
+                    help="Filename/path to write a NetCDF or CSV file to"
+                         "containing the results of the fit. If not specified, "
+                         "you will be prompted for a filename upon completing "
+                         "the fit.")
 parser.add_argument('-x', '--abscissa-name',
                     default='psinorm',
-                    help="Name of the variable in the input/output NetCDF/csv files "
-                         "that contains the values of the abscissa (independent "
-                         "variable). The uncertainty in the abscissa must then "
-                         "be in err_ABSCISSA_NAME, if present. Note that "
-                         "uncertainties in the abscissa are NOT used in the "
-                         "profile fit at present, but will be shown on the plot. "
-                         "If you wish to use the core/edge constraints, you must "
-                         "set this to the name of the coordinate you used. Valid "
-                         "options in this case are the same as for --coordinate.")
+                    help="Name of the variable in the input/output NetCDF/CSV"
+                         "files that contains the values of the abscissa "
+                         "(independent variable). The uncertainty in the "
+                         "abscissa must then be in err_ABSCISSA_NAME, if "
+                         "present. Note that uncertainties in the abscissa are "
+                         "NOT used in the profile fit at present, but will be "
+                         "shown on the plot.")
 parser.add_argument('-y', '--ordinate-name',
                     default='y',
-                    help="Name of the variable in the input/output NetCDF/csv files "
-                         "that contains the values of the ordinate (dependent "
-                         "variable). The uncertainty in the ordinate must then "
-                         "be in err_ORDINATE_NAME, if present.")
+                    help="Name of the variable in the input/output NetCDF/CSV "
+                         "files that contains the values of the ordinate "
+                         "(dependent variable). The uncertainty in the ordinate "
+                         "must then be in err_ORDINATE_NAME.")
 parser.add_argument('--full-auto',
                     action='store_true',
                     help="Set this flag to disable all prompting for missing/"
-                         "optional arguments and run fully automatically.")
+                         "optional arguments and run fully automatically. The "
+                         "program will exit with status 1 if any required "
+                         "parameters are missing.")
 
 args = parser.parse_args()
 
@@ -261,6 +339,7 @@ if args.input_filename:
               "--input-filename is used.")
     
     # Get coordinate. Only bug user if the edge or core constraints are in use.
+    # TODO: Make this intelligent about reading coordinate from field names!
     if ((not args.coordinate) and
         ((not args.no_edge_constraint) or (not args.no_core_constraint))):
         coordinate = ''
@@ -307,41 +386,32 @@ if args.input_filename:
                       "Disabling core constraint.")
                 args.no_core_constraint = True
     
-    # Get t_min and t_max or t_point. Only bother user if the edge constraint is
-    # enabled or the core constraint is enabled and the coordinate is not
+    # Get t_min and t_max or t_points. Only bother user if the edge constraint
+    # is enabled or the core constraint is enabled and the coordinate is not
     # normalized.
-    if (not args.t_min and not args.t_max and not args.t_point and
+    if (not args.t_min and not args.t_max and not args.t_points and
         ((not args.no_edge_constraint) or
          ((not args.no_core_constraint) and (('norm' not in args.coordinate) and
             ('r/a' not in args.coordinate))))):
-        method = ''
+        res = ''
         if not args.full_auto:
-            method = raw_input(
-                "In order to apply constraints on the core and the edge, you must "
-                "specify whether this profile represents a single time slice or "
-                "a window in time.\n\n"
-                "Which method would you like to use? Leave the line blank and "
-                "press return to disable these constraints.\n\n"
-                "Valid options are: {single,window}\n\n"
-                "type = "
+            res = raw_input(
+                "What time window or single time slice does your profile "
+                "correspond to?\n\n"
+                "This is needed to apply constraints on the core and edge.\n\n"
+                "Leave the line blank and press return to disable these "
+                "constraints. Enter a single time (in seconds) to use the slice "
+                "at that time. Enter two times (in seconds) separated by a space "
+                "to average over the window defined by the two times.\n\n"
+                "time(s) = "
             )
-        if method == 'single':
-            t_point = raw_input(
-                "What time (in seconds) does your profile correspond to?\n\n"
-                "time = "
-            )
-            args.t_point = float(t_point)
-        elif method == 'window':
-            t_min = raw_input(
-                "What is the starting time (in seconds) of the window your "
-                "profile corresponds to?\n\nt_min = "
-            )
-            args.t_min = float(t_min)
-            t_max = raw_input(
-                "What is the ending time (in seconds) of the window your profile "
-                "corresponds to?\n\nt_max = "
-            )
-            args.t_max = float(t_max)
+        if res:
+            res_split = res.split()
+            if len(res_split) == 1:
+                args.t_points = [float(res_split[0])]
+            else:
+                args.t_min = float(res_split[0])
+                args.t_max = float(res_split[1])
         else:
             print("No time(s) specified. Disabling edge constraint.")
             args.no_edge_constraint = True
@@ -367,27 +437,27 @@ else:
             sys.exit(1)
     
     # Warn user they haven't specified a time range/point:
-    if ((not args.t_min) or (not args.t_max)) and (not args.t_point):
+    if ((not args.t_min) or (not args.t_max)) and (not args.t_points):
         res = ''
         if not args.full_auto:
             res = raw_input(
                 "What time window or single time slice do you want to use?\n\n"
                 "Leave the line blank and press return to use all points in the "
                 "shot (not recommended). Enter a single time (in seconds) to use "
-                "the slice at that time. Enter two times (in seconds) seperated "
+                "the slice at that time. Enter two times (in seconds) separated "
                 "by a space to average over the window defined by the two times.\n\n"
                 "time(s) = "
             )
             if res:
                 res_split = res.split()
                 if len(res_split) == 1:
-                    args.t_point = float(res_split[0])
+                    args.t_points = [float(res_split[0])]
                 else:
                     args.t_min = float(res_split[0])
                     args.t_max = float(res_split[1])
         if not res:
-            print("Warning: Not specifying t-min and t-max or t-point causes the "
-                  "entire time-history to be used. This is usually not desireable.")
+            print("Warning: Not specifying t-min and t-max or t-points causes the "
+                  "entire time-history to be used. This is usually not desirable.")
     
     # Handle default value for coordinate:
     if not args.coordinate:
@@ -395,9 +465,10 @@ else:
 
 # Fetch data:
 if args.input_filename:
+    # TODO: Build this functionality into profiletools!
     # Read input file:
     root, ext = os.path.splitext(args.input_filename)
-    if ext == '.csv':
+    if ext.lower() == '.csv':
         print("Fetching data from CSV file %s..." % (args.input_filename,))
         X = []
         y = []
@@ -416,6 +487,7 @@ if args.input_filename:
                     err_y.append(float(row['err_'+args.ordinate_name]))
                 except KeyError:
                     err_y.append(0)
+        # TODO: Parse this out of the headers!
         X_units = ''
         y_units = ''
     else:
@@ -450,9 +522,10 @@ if args.input_filename:
     p.add_data(X, y, err_X=err_X, err_y=err_y)
     p.shot = args.shot
     p.abscissa = args.coordinate
-    if args.t_point:
-        p.t_min = args.t_point
-        p.t_max = args.t_point
+    if args.t_points:
+        p.times = args.t_points
+        p.t_min = min(args.t_points)
+        p.t_max = max(args.t_points)
     else:
         p.t_min = args.t_min
         p.t_max = args.t_max
@@ -475,9 +548,16 @@ else:
     elif args.signal == 'Te':
         p = profiletools.Te(args.shot, abscissa=args.coordinate,
                             t_min=args.t_min, t_max=args.t_max, **profile_kwargs)
-    if args.t_point:
-        p.keep_times(args.t_point)
-        p.drop_axis(0)
+
+# Take care of averaging -- do it here to make it easier to support bivariate
+# profiles from files in the future:
+if p.X_dim > 1:
+    if args.t_points:
+        p.keep_times(args.t_points)
+        if len(args.t_points) == 1 or args.all_points:
+            p.drop_axis(0)
+        else:
+            p.time_average(robust=args.robust)
     else:
         if args.all_points:
             p.drop_axis(0)
@@ -519,24 +599,81 @@ if args.outlier_threshold:
     print("Finding MAP estimate of hyperparameters with outliers removed...")
     p.find_gp_MAP_estimate(random_starts=args.random_starts, verbose=True)
 
+f = plt.figure()
+gs = mplgs.GridSpec(3, 2, width_ratios=[8, 1])
+a_val = f.add_subplot(gs[:, 0])
+# a_grad = f.add_subplot(gs[1, 0], sharex=a_val)
+# a_a_L = f.add_subplot(gs[2, 0], sharex=a_val)
+# a_adjust = f.add_subplot(gs[0, 1])
+a_reject = f.add_subplot(gs[1, 1])
+a_accept = f.add_subplot(gs[2, 1])
+
 print("Plotting data...")
-p.plot_data()
+p.plot_data(ax=a_val)
 
 if args.change_threshold:
-    plt.gca().errorbar(X_bad_c, y_bad_c, yerr=err_y_bad_c, xerr=err_X_bad_c,
-                       fmt='mx', label='extreme change')
+    a_val.errorbar(X_bad_c, y_bad_c, yerr=err_y_bad_c, xerr=err_X_bad_c,
+                   fmt='mx', label='extreme change')
 if args.outlier_threshold:
-    plt.gca().errorbar(X_bad_o, y_bad_o, yerr=err_y_bad_o, xerr=err_X_bad_o,
-                       fmt='rx', label='outlier')
+    a_val.errorbar(X_bad_o, y_bad_o, yerr=err_y_bad_o, xerr=err_X_bad_o,
+                   fmt='rx', label='outlier')
 
 print("Evaluating at desired points and plotting result...")
 if args.x_pts:
     X = args.x_pts
 else:
     X = scipy.linspace(args.x_min, args.x_max, args.npts)
-p.plot_gp(ax='gca', X=X)
+ax, mean, std = p.plot_gp(ax=a_val, X=X, label='MAP', return_prediction=True)
 
-plt.gca().legend(loc='best')
+a_val.legend(loc='best')
+
+# Create reject button:
+def reject_and_quit(evt):
+    print("Rejecting fit and exiting without writing file.")
+    sys.exit(2)
+b_reject = mplw.Button(a_reject, 'reject and exit')
+b_reject.on_clicked(reject_and_quit)
+
+# Create accept button:
+def accept_and_quit(evt):
+    if not args.output_filename:
+        args.output_filename = raw_input(
+            "Please type the file name/path for the file you want to save the "
+            "fit to. If the file exists, it will be overwritten without warning.\n\n"
+            "filename = "
+        )
+    root, ext = os.path.splitext(args.input_filename)
+    history = (
+        "Created by user {user} on {host} with {module} version {ver} on {time}. "
+        "Command used was:\n{argv}\n".format(
+            host=socket.gethostname(), user=getpass.getuser(),
+            module=inspect.stack()[0][1], ver=__version__, time=time.asctime(),
+            argv=sys.argv
+        )
+    )
+    if args.coordinate:
+        X_name = args.coordinate
+    else:
+        X_name = args.abscissa_name
+    if ext.lower() == '.csv':
+        with open(os.path.expanduser(args.output_filename), 'wb') as outfile:
+            outfile.write(history)
+            writer = csv.writer(outfile)
+            writer.writerow([X_name, args.ordinate_name, 'err_' + args.ordinate_name])
+            writer.writerows(zip(X, mean, std))
+    else:
+        with scipy.io.netcdf.netcdf_file(os.path.expanduser(args.output_filename), mode='w') as f:
+            f.history = history
+            f.createDimension(X_name, len(X))
+            v_X = f.createVariable(X_name, float, (X_name,))
+            v_X[:] = X
+            v_y = f.createVariable(args.ordinate_name, float, (X_name,))
+            v_y[:] = mean
+            v_err_y = f.createVariable('err_'+args.ordinate_name, float, (X_name,))
+            v_err_y[:] = std
+    sys.exit(0)
+b_accept = mplw.Button(a_accept, 'accept, save and exit')
+b_accept.on_clicked(accept_and_quit)
 
 print("Done.")
 

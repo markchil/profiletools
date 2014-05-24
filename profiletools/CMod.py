@@ -151,6 +151,11 @@ class BivariatePlasmaProfile(Profile):
     def keep_times(self, times):
         if self.X_labels[0] != '$t$':
             raise ValueError("Cannot keep specific time slices after time-averaging!")
+        try:
+            iter(times)
+        except TypeError:
+            times = [times]
+        self.times = times
         self.keep_slices(0, times)
     
     def add_profile(self, other):
@@ -233,7 +238,10 @@ class BivariatePlasmaProfile(Profile):
         if self.X_dim == 1:
             if self.abscissa == 'Rmid':
                 t_EFIT = self.efit_tree.getTimeBase()
-                if self.t_min != self.t_max:
+                if hasattr(self, 'times'):
+                    idx = self.efit_tree._getNearestIdx(self.times, t_EFIT)
+                    x0 = scipy.mean(self.efit_tree.getMagR()[idx])
+                elif self.t_min != self.t_max:
                     x0 = scipy.mean(self.efit_tree.getMagR()[(t_EFIT >= self.t_min) &
                                                              (t_EFIT <= self.t_max)])
                 else:
@@ -321,7 +329,11 @@ class BivariatePlasmaProfile(Profile):
         R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
         if self.X_dim == 1:
             t_EFIT = self.efit_tree.getTimeBase()
-            if self.t_min != self.t_max:
+            
+            if hasattr(self, 'times'):
+                idx = self.efit_tree._getNearestIdx(self.times, t_EFIT)
+                t_EFIT = t_EFIT[idx]
+            elif self.t_min != self.t_max:
                 t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
             else:
                 idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
@@ -427,7 +439,9 @@ class BivariatePlasmaProfile(Profile):
             
             # Get geometry from EFIT:
             t_efit = self.efit_tree.getTimeBase()
-            if self.t_min != self.t_max:
+            if hasattr(self, 'times'):
+                ok_idxs = self.efit_tree._getNearestIdx(self.times, t_EFIT)
+            elif self.t_min != self.t_max:
                 ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
             else:
                 ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
