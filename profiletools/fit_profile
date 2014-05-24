@@ -651,10 +651,10 @@ def accept_and_quit(evt):
             argv=sys.argv
         )
     )
-    if args.coordinate:
-        X_name = args.coordinate
-    else:
+    if args.input_filename:
         X_name = args.abscissa_name
+    else:
+        X_name = args.coordinate
     if ext.lower() == '.csv':
         with open(os.path.expanduser(args.output_filename), 'wb') as outfile:
             outfile.write(history)
