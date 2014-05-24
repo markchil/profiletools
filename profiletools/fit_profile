@@ -312,7 +312,7 @@ if args.core_only:
     args.kernel = 'SE'
 
 # Bump random starts up to 4 for low processor count machines:
-if not args.random_starts and multiprocessing.cpu_count < 4:
+if not args.random_starts and multiprocessing.cpu_count() < 4:
     print("Number of processors available is less than 4. Setting random_starts "
           "to 4 to help ensure convergence of MAP estimation. You can override "
           "this by setting the --random-starts flag. Running on a computer with "
