@@ -43,6 +43,8 @@ parser = argparse.ArgumentParser(
     description=
 """Fit univariate profile using gptools/profiletools.
 
+BASIC USAGE DETAILS:
+
 Calling without arguments will enter an interactive mode, but it will only
 prompt you for the most basic parameters needed. Use the command line flags to
 specify more advanced options. This program can operate on ne, Te data from the
@@ -53,7 +55,7 @@ or to use a single time slice. Even if providing data in a file, you should
 specify the shot number and time window so that appropriate constraints can be
 imposed on the fit at the magnetic axis and edge.
 
-Examples:
+EXAMPLES:
 
 Basic way to fit ne profile from shot 1101014006, averaged over the flat top
 from 0.965s to 1.365s, using core and edge TS:
@@ -74,6 +76,8 @@ uncertainty. You will then have the option to reject the fit and exit (with
 status code 2), or to accept the fit and exit (with status code 0). Upon
 accepting the fit, the data will be saved to either a NetCDF file or a CSV file,
 depending on the extension of the output filename you specify.
+
+FIXING/IMPROVING THE FIT:
 
 Several things can go wrong in the fit. If there are bad points/outliers in your
 data you can attempt to remove them by specifying one or both of
@@ -100,7 +104,34 @@ optimization you will be told how many starts were accepted. Try to increase
 Note that, at this point, the program only supports handling of the
 hyperparameters through MAP estimation. This is usually sufficient for the value
 in the core, but is NOT sufficient for getting uncertainties on gradients (even
-in the core) or detailed information on the edge.""",
+in the core) or detailed information on the edge.
+
+READING FROM FILES:
+
+The support for reading data from NetCDF and CSV files is fairly powerful. With
+either type of file, you can specify the column/variable names to be of the form
+"name [units]" which will be automatically parsed to generate the right plot
+labels. (Though it is better to just set the "units" attribute of each variable
+in your NetCDF file, which is the preferred approach there.) The CSV reader is
+smart enough to figure out your column names, as long as you put the time column
+first when using data you haven't time-averaged yet. In either type of file you
+can include the metadata needed to apply core/edge constraints. For CSV files,
+start the file with as many lines needed of the form "name data" or
+"name data,data,..." Be sure to specify --metadata-lines when doing this! For
+NetCDF files, simply place the metadata in the appropriate attributes of the
+file. The supported metadata are:
+
+        ========== =======================================================
+        shot       shot number
+        times      comma-separated list of times included in the data
+        t_min      minimum time included in the data
+        t_max      maximum time included in the data
+        coordinate the abscissa the data are represented as a function of,
+                   valid choices are:
+                   {psinorm,Rmid,r/a,volnorm,phinorm,sqrtpsinorm,sqrtr/a,
+                    sqrtvolnorm,sqrtphinorm}
+        ========== =======================================================
+""",
     formatter_class=CustomFormatter
 )
 parser.add_argument('--signal',
@@ -187,6 +218,21 @@ parser.add_argument('--no-edge-constraint',
                     action='store_true',
                     help="Set this flag to disable the slope, value=0 constraint "
                          "at/outside the GH limiter.")
+parser.add_argument('--core-constraint-location',
+                    type=float,
+                    help="Location to impose slope=0 constraint at. Typically "
+                         "this is the magnetic axis. If you specify a shot "
+                         "number and times then this will be found automatically, "
+                         "but you can override it with this flag.")
+parser.add_argument('--edge-constraint-locations',
+                    type=float,
+                    nargs='+',
+                    help="Location to impose slope~0, value~0 constraints at. "
+                         "Typically this is at the location of the GH limiter. "
+                         "If you specify a shot number and times then this will "
+                         "be found automatically, but you can override it with "
+                         "this flag. It helps to specify a couple of points "
+                         "outside the GH limiter, as well.")
 parser.add_argument('--core-only',
                     action='store_true',
                     help="Set this flag to only fit the data inside the LCFS. "
@@ -267,20 +313,36 @@ parser.add_argument('-o', '--output-filename',
                          "you will be prompted for a filename upon completing "
                          "the fit.")
 parser.add_argument('-x', '--abscissa-name',
-                    default='psinorm',
-                    help="Name of the variable in the input/output NetCDF/CSV"
-                         "files that contains the values of the abscissa "
-                         "(independent variable). The uncertainty in the "
+                    nargs='+',
+                    help="Name(s) of the variable(s) in the input/output NetCDF/"
+                         "CSV files that contain the values of the abscissa "
+                         "(independent variable(s)). The uncertainty in the "
                          "abscissa must then be in err_ABSCISSA_NAME, if "
                          "present. Note that uncertainties in the abscissa are "
                          "NOT used in the profile fit at present, but will be "
-                         "shown on the plot.")
+                         "shown on the plot. If you do not provide this when "
+                         "using a CSV file, the names will automatically be "
+                         "inferred by looking at the order of the header of the "
+                         "CSV file. This argument is required when using a "
+                         "NetCDF file. You must always put your time variable "
+                         "first for this to work properly.")
 parser.add_argument('-y', '--ordinate-name',
-                    default='y',
                     help="Name of the variable in the input/output NetCDF/CSV "
                          "files that contains the values of the ordinate "
                          "(dependent variable). The uncertainty in the ordinate "
-                         "must then be in err_ORDINATE_NAME.")
+                         "must then be in err_ORDINATE_NAME. If you do not "
+                         "provide this when using a CSV file, the names will "
+                         "automatically be inferred by looking at the order of "
+                         "the header of the CSV file. This argument is required "
+                         "when using a NetCDF file.")
+parser.add_argument('--metadata-lines',
+                    type=int,
+                    default=0,
+                    help="Number of lines of metadata at the start of your CSV "
+                         "file to read. You can include the shot, times and "
+                         "coordinate in the CSV file itself in this manner. See "
+                         "the documentation on profiletools.CMod.read_plasma_csv "
+                         "for more details.")
 parser.add_argument('--full-auto',
                     action='store_true',
                     help="Set this flag to disable all prompting for missing/"
@@ -319,6 +381,14 @@ if not args.random_starts and multiprocessing.cpu_count() < 4:
           "more cores will make this run much faster.")
     args.random_starts = 4
 
+# Turn "off" core constraint if constraint point is manually specified:
+if args.core_constraint_location:
+    args.no_core_constraint = True
+
+# Turn "off" edge constraint if constraint points are manually specified:
+if args.edge_constraint_locations:
+    args.no_edge_constraint = True
+
 # Handle any missing arguments for when reading from file:
 if args.input_filename:
     # Warn user that their input for signal is being ignored:
@@ -337,88 +407,6 @@ if args.input_filename:
     if args.all_points:
         print("Warning: --all-points/--no-average has no effect when "
               "--input-filename is used.")
-    
-    # Get coordinate. Only bug user if the edge or core constraints are in use.
-    # TODO: Make this intelligent about reading coordinate from field names!
-    if ((not args.coordinate) and
-        ((not args.no_edge_constraint) or (not args.no_core_constraint))):
-        coordinate = ''
-        if not args.full_auto:
-            coordinate = raw_input(
-                "What coordinate is your data represented as a function of?\n\n"
-                "This is needed to apply constraints on the core and the edge. "
-                "Leave the line blank and press return to disable these "
-                "constraints.\n\n"
-                "Valid options are: {psinorm,Rmid,r/a,volnorm,phinorm,"
-                "sqrtpsinorm,sqrtr/a,sqrtvolnorm,sqrtphinorm}\n\n"
-                "coordinate = "
-            )
-        if coordinate:
-            args.coordinate = coordinate
-        else:
-            print("No coordinate specified. Disabling core and edge constraints.")
-            args.no_edge_constraint = True
-            args.no_core_constraint = True
-    
-    # Get shot number to enable constraints to be fetched. Only bother user if
-    # the edge constraint is enabled or the core constraint is enabled and the
-    # coordinate is not normalized.    
-    if ((not args.shot) and
-        ((not args.no_edge_constraint) or
-         ((not args.no_core_constraint) and (('norm' not in args.coordinate) and
-            ('r/a' not in args.coordinate))))):
-        shot = ''
-        if not args.full_auto:
-            shot = raw_input(
-                "What shot number is input file %s from?\n\n"
-                "This is needed to apply constraints on the core and the edge. "
-                "Leave the line blank and press return to disable these "
-                "constraints.\n\n"
-                "shot = " % (args.input_filename)
-            )
-        if shot:
-            args.shot = int(shot)
-        else:
-            print("No shot specified. Disabling edge constraint.")
-            args.no_edge_constraint = True
-            if ('norm' not in args.coordinate) and ('r/a' not in args.coordinate):
-                print("No shot specified and coordinate is not normalized. "
-                      "Disabling core constraint.")
-                args.no_core_constraint = True
-    
-    # Get t_min and t_max or t_points. Only bother user if the edge constraint
-    # is enabled or the core constraint is enabled and the coordinate is not
-    # normalized.
-    if (not args.t_min and not args.t_max and not args.t_points and
-        ((not args.no_edge_constraint) or
-         ((not args.no_core_constraint) and (('norm' not in args.coordinate) and
-            ('r/a' not in args.coordinate))))):
-        res = ''
-        if not args.full_auto:
-            res = raw_input(
-                "What time window or single time slice does your profile "
-                "correspond to?\n\n"
-                "This is needed to apply constraints on the core and edge.\n\n"
-                "Leave the line blank and press return to disable these "
-                "constraints. Enter a single time (in seconds) to use the slice "
-                "at that time. Enter two times (in seconds) separated by a space "
-                "to average over the window defined by the two times.\n\n"
-                "time(s) = "
-            )
-        if res:
-            res_split = res.split()
-            if len(res_split) == 1:
-                args.t_points = [float(res_split[0])]
-            else:
-                args.t_min = float(res_split[0])
-                args.t_max = float(res_split[1])
-        else:
-            print("No time(s) specified. Disabling edge constraint.")
-            args.no_edge_constraint = True
-            if ('norm' not in args.coordinate) and ('r/a' not in args.coordinate):
-                print("No time(s) specified and coordinate is not normalized. "
-                      "Disabling core constraint.")
-                args.no_core_constraint = True
 else:
     # Handle case where a shot number is given.
     # Prompt user to specify a signal:
@@ -465,74 +453,164 @@ else:
 
 # Fetch data:
 if args.input_filename:
-    # TODO: Build this functionality into profiletools!
     # Read input file:
     root, ext = os.path.splitext(args.input_filename)
     if ext.lower() == '.csv':
         print("Fetching data from CSV file %s..." % (args.input_filename,))
-        # TODO: Re-write this to call read_plasma_csv!
-        # TODO: Add appropriate flags to specify bivariate data with read_plasma_csv!
-        X = []
-        y = []
-        err_X = []
-        err_y = []
-        with open(os.path.expanduser(args.input_filename), 'r') as infile:
-            rdr = csv.DictReader(infile)
-            for row in rdr:
-                X.append(float(row[args.abscissa_name]))
-                try:
-                    err_X.append(float(row['err_'+args.abscissa_name]))
-                except KeyError:
-                    err_X.append(0)
-                y.append(float(row[args.ordinate_name]))
-                try:
-                    err_y.append(float(row['err_'+args.ordinate_name]))
-                except KeyError:
-                    err_y.append(0)
-        # TODO: Parse this out of the headers!
-        X_units = ''
-        y_units = ''
+        p = profiletools.read_plasma_csv(args.input_filename,
+                                         X_name=args.abscissa_name,
+                                         y_name=args.ordinate_name,
+                                         metadata_lines=args.metadata_lines)
     else:
         print("Fetching data from NetCDF file %s..." % (args.input_filename,))
-        with scipy.io.netcdf.netcdf_file(os.path.expanduser(args.input_filename), mode='r') as infile:
-            vX = f.variables[args.abscissa_name]
-            X = vX[:]
-            try:
-                X_units = vX.units
-            except AttributeError:
-                X_units = ''
-            try:
-                err_X = f.variables['err_'+args.abscissa_name]
-            except KeyError:
-                err_X = 0
+        if not args.abscissa_name:
+            name = ''
+            if not args.full_auto:
+                name = raw_input(
+                    "Name of the independent variable(s) not specified. If you "
+                    "have bivariate data, type a space between the two names, "
+                    "with the name of the temporal variable first.\n\n"
+                    "abscissa name(s) = "
+                )
+            if not name:
+                print("No name for abscissa variable(s) specified!")
+                sys.exit(1)
+            else:
+                args.abscissa_name = name.split()
+        if not args.ordinate_name:
+            name = ''
+            if not args.full_auto:
+                name = raw_input(
+                    "Name of the dependent variable not specified. Please enter "
+                    "the name of the variable containing the values of the "
+                    "dependent variable in your NetCDF file:\n\n"
+                    "ordinate name = "
+                )
+            if not name:
+                print("No name for ordinate variable specified!")
+                sys.exit(1)
+            else:
+                args.ordinate_name = name
         
-            vy = f.variables[args.ordinate_name]
-            y = vy[:]
-            try:
-                y_units = vy.units
-            except AttributeError:
-                y_units = ''
-            try:
-                err_y = f.variables['err_'+args.ordinate_name]
-            except KeyError:
-                err_y = 0
+        p = profiletools.read_plasma_NetCDF(args.input_filename,
+                args.abscissa_name, args.ordinate_name)
     
-    p = profiletools.BivariatePlasmaProfile(
-        X_dim=1, X_units=X_units, y_units=y_units,
-        X_labels=args.abscissa_name, y_label=args.ordinate_name
-    )
-    p.add_data(X, y, err_X=err_X, err_y=err_y)
-    p.shot = args.shot
-    p.abscissa = args.coordinate
-    if args.t_points:
+    # Get coordinate. Only bug user if the edge or core constraints are in use.
+    if (not hasattr(p, 'coordinate')) and ((not args.coordinate) and
+        ((not args.no_edge_constraint) or (not args.no_core_constraint))):
+        coordinate = ''
+        if not args.full_auto:
+            coordinate = raw_input(
+                "What coordinate is your data represented as a function of?\n\n"
+                "This is needed to apply constraints on the core and the edge. "
+                "Leave the line blank and press return to disable these "
+                "constraints.\n\n"
+                "Valid options are: {psinorm,Rmid,r/a,volnorm,phinorm,"
+                "sqrtpsinorm,sqrtr/a,sqrtvolnorm,sqrtphinorm}\n\n"
+                "coordinate = "
+            )
+        if coordinate:
+            args.coordinate = coordinate
+            p.abscissa = coordinate
+        else:
+            print("No coordinate specified. Disabling core and edge constraints.")
+            args.no_edge_constraint = True
+            args.no_core_constraint = True
+    
+    # Get shot number to enable constraints to be fetched. Only bother user if
+    # the edge constraint is enabled or the core constraint is enabled and the
+    # coordinate is not normalized.    
+    if (
+        not hasattr(p, 'shot') and
+        not args.shot and
+        not args.no_edge_constraint or
+        (
+            not args.no_core_constraint and
+            'norm' not in args.coordinate and
+            'r/a' not in args.coordinate
+        )
+    ):
+        shot = ''
+        if not args.full_auto:
+            shot = raw_input(
+                "What shot number is input file %s from?\n\n"
+                "This is needed to apply constraints on the core and the edge. "
+                "Leave the line blank and press return to disable these "
+                "constraints.\n\n"
+                "shot = " % (args.input_filename)
+            )
+        if shot:
+            args.shot = int(shot)
+        else:
+            print("No shot specified. Disabling edge constraint.")
+            args.no_edge_constraint = True
+            if ('norm' not in args.coordinate) and ('r/a' not in args.coordinate):
+                print("No shot specified and coordinate is not normalized. "
+                      "Disabling core constraint.")
+                args.no_core_constraint = True
+    
+    # Get t_min and t_max or t_points. Only bother user if the edge constraint
+    # is enabled or the core constraint is enabled and the coordinate is not
+    # normalized.
+    if (
+        not hasattr(p, 't_min') and
+        not hasattr(p, 't_max') and
+        not hasattr(p, 'times') and
+        not args.t_min and
+        not args.t_max and
+        not args.t_points and
+        (
+            not args.no_edge_constraint or
+            (
+                not args.no_core_constraint and
+                'norm' not in args.coordinate and
+                'r/a' not in args.coordinate
+            )
+        )
+    ):
+        res = ''
+        if not args.full_auto:
+            res = raw_input(
+                "What time window or single time slice does your profile "
+                "correspond to?\n\n"
+                "This is needed to apply constraints on the core and edge.\n\n"
+                "Leave the line blank and press return to disable these "
+                "constraints. Enter a single time (in seconds) to use the slice "
+                "at that time. Enter two times (in seconds) separated by a space "
+                "to average over the window defined by the two times.\n\n"
+                "time(s) = "
+            )
+        if res:
+            res_split = res.split()
+            if len(res_split) == 1:
+                args.t_points = [float(res_split[0])]
+            else:
+                args.t_min = float(res_split[0])
+                args.t_max = float(res_split[1])
+        else:
+            print("No time(s) specified. Disabling edge constraint.")
+            args.no_edge_constraint = True
+            if ('norm' not in args.coordinate) and ('r/a' not in args.coordinate):
+                print("No time(s) specified and coordinate is not normalized. "
+                      "Disabling core constraint.")
+                args.no_core_constraint = True
+    
+    if not hasattr(p, 'shot'):
+        p.shot = args.shot
+        if args.shot:
+            p.efit_tree = eqtools.CModEFITTree(args.shot)
+    if not hasattr(p, 'abscissa'):
+        p.abscissa = args.coordinate
+    if not hasattr(p, 'times') and args.t_points:
         p.times = args.t_points
-        p.t_min = min(args.t_points)
-        p.t_max = max(args.t_points)
-    else:
+        if not hasattr(p, 't_min'):
+            p.t_min = min(p.times)
+        if not hasattr(p, 't_max'):
+            p.t_max = max(p.times)
+    if not hasattr(p.t_min):
         p.t_min = args.t_min
+    if not hasattr(p.t_max):
         p.t_max = args.t_max
-    if args.shot:
-        p.efit_tree = eqtools.CModEFITTree(args.shot)
 else:
     # Create relevant object:
     profile_kwargs = {}
@@ -551,8 +629,7 @@ else:
         p = profiletools.Te(args.shot, abscissa=args.coordinate,
                             t_min=args.t_min, t_max=args.t_max, **profile_kwargs)
 
-# Take care of averaging -- do it here to make it easier to support bivariate
-# profiles from files in the future:
+# Take care of averaging:
 if p.X_dim > 1:
     if args.t_points:
         p.keep_times(args.t_points)
@@ -583,6 +660,11 @@ p.create_gp(k=args.kernel,
             constrain_slope_on_axis=not args.no_core_constraint,
             constrain_at_limiter=not args.no_edge_constraint,
             upper_factor=args.upper_factor, lower_factor=args.lower_factor)
+if args.core_constraint_location:
+    p.gp.add_data(args.core_constraint_location, 0, err_y=0, n=1)
+if args.edge_constraint_locations:
+    p.gp.add_data(args.edge_constraint_locations, 0, err_y=0.01, n=0)
+    p.gp.add_data(args.edge_constraint_locations, 0, err_y=0.1, n=1)
 if args.bounds:
     new_bounds = scipy.asarray(args.bounds)
     if len(new_bounds) != len(p.gp.k.hyperprior.bounds.flatten()):
@@ -653,15 +735,13 @@ def accept_and_quit(evt):
             argv=sys.argv
         )
     )
-    if args.input_filename:
-        X_name = args.abscissa_name
-    else:
-        X_name = args.coordinate
+    X_name = p.X_labels[0] + ' [' + p.X_units[0] + ']' if p.X_units[0] else p.X_labels[0]
+    y_name = p.y_label + ' [' + p.y_units + ']' if p.y_units else p.y_label
     if ext.lower() == '.csv':
         with open(os.path.expanduser(args.output_filename), 'wb') as outfile:
             outfile.write(history)
             writer = csv.writer(outfile)
-            writer.writerow([X_name, args.ordinate_name, 'err_' + args.ordinate_name])
+            writer.writerow([X_name, y_name, 'err_' + y_name])
             writer.writerows(zip(X, mean, std))
     else:
         with scipy.io.netcdf.netcdf_file(os.path.expanduser(args.output_filename), mode='w') as f:
@@ -669,9 +749,9 @@ def accept_and_quit(evt):
             f.createDimension(X_name, len(X))
             v_X = f.createVariable(X_name, float, (X_name,))
             v_X[:] = X
-            v_y = f.createVariable(args.ordinate_name, float, (X_name,))
+            v_y = f.createVariable(y_name, float, (X_name,))
             v_y[:] = mean
-            v_err_y = f.createVariable('err_'+args.ordinate_name, float, (X_name,))
+            v_err_y = f.createVariable('err_'+y_name, float, (X_name,))
             v_err_y[:] = std
     sys.exit(0)
 b_accept = mplw.Button(a_accept, 'accept, save and exit')

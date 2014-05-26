@@ -29,6 +29,7 @@ import gptools
 import sys
 import os.path
 import csv
+import warnings
 
 # Conversion factor to get from interquartile range to standard deviation:
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
@@ -909,34 +910,79 @@ def read_csv(filename, X_names=None, y_name=None, metadata_lines=0):
     
     return p
 
-def read_NetCDF(filename, X_names, y_name):
-    raise NotImplementedError("Not done yet!")
+def read_NetCDF(filename, X_names, y_name, metadata=[]):
+    """Reads a NetCDF file into a :py:class:`Profile`.
+    
+    The file must contain arrays of equal length for each of the independent and
+    the dependent variable. The units of each variable can either be specified
+    as the units attribute on the variable, or the variable name can be of the
+    form "name [units]", which will be automatically parsed to populate the
+    :py:class:`Profile`. For each independent and the dependent variable there
+    can be a corresponding column "err_name" or "err_name [units]" which holds
+    the 1-sigma uncertainty in that quantity. There can be an arbitrary number
+    of metadata attributes in the file which are read into the corresponding
+    attributes of the :py:class:`Profile` created. This is most useful when using
+    :py:class:`BivariatePlasmaProfile` as you can store the shot and time window.
+    Be careful that you do not overwrite attributes needed by the class, however!
+    
+    Parameters
+    ----------
+    X_names : list of str
+        Ordered list of the column names containing the independent variables.
+        See the discussion above regarding name conventions.
+    y_name : str
+        Name of the column containing the dependent variable. See the discussion
+        above regarding name conventions.
+    metadata : list of str, optional
+        List of attribute names to read into the corresponding attributes of the
+        :py:class:`Profile` created.
+    """
     with scipy.io.netcdf.netcdf_file(os.path.expanduser(filename), mode='r') as infile:
         X = []
+        err_X = []
         X_labels = []
         X_units = []
         for l in X_names:
             vXl = f.variables[l]
-            Xl = X[:]
+            X.append(vXl[:])
+            n, u = parse_column_name(l)
+            X_labels.append(n)
             try:
-                X_units = vX.units
+                X_units.append(vXl.units)
             except AttributeError:
-                X_units = ''
+                X_units.append(u)
             try:
-                err_X = f.variables['err_'+args.abscissa_name]
+                err_X.append(f.variables['err_' + l])
             except KeyError:
-                err_X = 0
-    
-        vy = f.variables[args.ordinate_name]
-        y = y[:]
+                err_X.append(scipy.zeros_like(X[0]))
+        X = scipy.hstack(X)
+        err_X = scipy.hstack(err_X)
+        vy = f.variables[y_name]
+        y = vy[:]
+        y_label, u = parse_column_name(y_name)
         try:
             y_units = vy.units
         except AttributeError:
-            y_units = ''
+            y_units = u
         try:
-            err_y = f.variables['err_'+args.ordinate_name]
+            err_y = f.variables['err_' + y_name]
         except KeyError:
             err_y = 0
+    p = Profile(X_dim=len(X_labels), X_units=X_units, y_units=y_units,
+                X_labels=X_labels, y_label=y_label)
+    p.add_data(X, y, err_X=err_X, err_y=err_y)
+    for m in metadata:
+        try:
+            if hasattr(p, m):
+                warnings.warn("Profile class already has metadata attribute %s. "
+                              "Existing value is being overwritten. This may "
+                              "lead to undesirable behavior." % (m,),
+                              RuntimeWarning)
+            setattr(p, m, f.m)
+        except AttributeError:
+            warnings.warn("Could not find metadata attribute %s in NetCDF file %s." % 
+                          (m, filename,), RuntimeWarning)
+    return p
 
 def parse_column_name(name):
     name_split = re.split(r'^([^ \t]*)[ \t]*\[(.*)\]$', name)

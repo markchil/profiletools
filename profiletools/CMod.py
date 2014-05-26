@@ -20,7 +20,7 @@
 
 from __future__ import division
 
-from .core import Profile, read_csv
+from .core import Profile, read_csv, read_NetCDF
 
 import MDSplus
 import scipy
@@ -1264,6 +1264,49 @@ def read_plasma_csv(*args, **kwargs):
         p.t_min = float(metadata['t_min'])
     if 'coordinate' in metadata:
         p.abscissa = metadata['coordinate']
+    else:
+        if (p.X_dim > 1 and p.X_labels[-2].strip('$ ') == 'R' and
+                p.X_labels[-1].strip('$ ') == 'Z'):
+            p.abscissa = 'RZ'
+        else:
+            try:
+                p.abscissa = _abscissa_mapping[p.X_labels[-1]]
+            except KeyError:
+                p.abscissa = p.X_labels[-1].strip('$ ')
+    
+    return p
+
+def read_plasma_NetCDF(*args, **kwargs):
+    """Returns a profile containing the data from a NetCDF file.
+    
+    The file can contain metadata attributes specified in the `metadata` kwarg.
+    The following metadata are automatically parsed into the correct fields:
+    
+        ========== ======================================================
+        shot       shot number
+        times      comma-separated list of times included in the data
+        t_min      minimum time included in the data
+        t_max      maximum time included in the data
+        coordinate the abscissa the data are represented as a function of
+        ========== ======================================================
+    
+    If you don't provide `coordinate` in the metadata, the program will try to
+    use the last entry in X_labels to infer the abscissa. If this fails, it will
+    simply set the abscissa to the title of the last entry in X_labels. If you
+    provide your data as a function of R, Z it will look for the last two
+    entries in X_labels to be R and Z once surrounding dollar signs and spaces
+    are removed.
+    
+    Parameters are the same as :py:func:`read_NetCDF`.
+    """
+    metadata = kwargs.pop('metadata', [])
+    metadata = set(metadata + ['shot', 'times', 't_max', 't_min', 'coordinate'])
+    p = read_NetCDF(*args, metadata=metadata, **kwargs)
+    p.__class__ = BivariatePlasmaProfile
+    if hasattr(p, 'shot'):
+        p.efit_tree = eqtools.CModEFITTree(p.shot)
+    if hasattr(p, 'coordinate'):
+        p.abscissa = p.coordinate
     else:
         if (p.X_dim > 1 and p.X_labels[-2].strip('$ ') == 'R' and
                 p.X_labels[-1].strip('$ ') == 'Z'):
