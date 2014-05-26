@@ -470,6 +470,8 @@ if args.input_filename:
     root, ext = os.path.splitext(args.input_filename)
     if ext.lower() == '.csv':
         print("Fetching data from CSV file %s..." % (args.input_filename,))
+        # TODO: Re-write this to call read_plasma_csv!
+        # TODO: Add appropriate flags to specify bivariate data with read_plasma_csv!
         X = []
         y = []
         err_X = []
@@ -494,7 +496,7 @@ if args.input_filename:
         print("Fetching data from NetCDF file %s..." % (args.input_filename,))
         with scipy.io.netcdf.netcdf_file(os.path.expanduser(args.input_filename), mode='r') as infile:
             vX = f.variables[args.abscissa_name]
-            X = X[:]
+            X = vX[:]
             try:
                 X_units = vX.units
             except AttributeError:
@@ -505,7 +507,7 @@ if args.input_filename:
                 err_X = 0
         
             vy = f.variables[args.ordinate_name]
-            y = y[:]
+            y = vy[:]
             try:
                 y_units = vy.units
             except AttributeError:

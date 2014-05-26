@@ -20,7 +20,7 @@
 
 from __future__ import division
 
-from .core import Profile
+from .core import Profile, read_csv
 
 import MDSplus
 import scipy
@@ -39,6 +39,7 @@ _X_label_mapping = {'psinorm': r'$\psi_n$',
                     'sqrtphinorm': r'$\sqrt{\phi_n}$',
                     'sqrtvolnorm': r'$\sqrt{V_n}$',
                     'sqrtr/a': r'$\sqrt{r/a}$'}
+_abscissa_mapping = {y:x for x, y in _X_label_mapping.iteritems()}
 _X_unit_mapping = {'psinorm': '',
                    'phinorm': '',
                    'volnorm': '',
@@ -1220,3 +1221,57 @@ def TeTS(shot, **kwargs):
     Includes both core and edge system.
     """
     return Te(shot, include=['CTS', 'ETS'], **kwargs)
+
+def read_plasma_csv(*args, **kwargs):
+    """Returns a profile containing the data from a CSV file.
+    
+    If your data are bivariate, you must ensure that time ends up being the
+    first column, either by putting it first in your CSV file or by specifying
+    its name first in `X_names`.
+    
+    The CSV file can contain metadata lines of the form "name data" or
+    "name data,data,...". The following metadata are automatically parsed into
+    the correct fields:
+    
+        ========== ======================================================
+        shot       shot number
+        times      comma-separated list of times included in the data
+        t_min      minimum time included in the data
+        t_max      maximum time included in the data
+        coordinate the abscissa the data are represented as a function of
+        ========== ======================================================
+    
+    If you don't provide `coordinate` in the metadata, the program will try to
+    use the last entry in X_labels to infer the abscissa. If this fails, it will
+    simply set the abscissa to the title of the last entry in X_labels. If you
+    provide your data as a function of R, Z it will look for the last two
+    entries in X_labels to be R and Z once surrounding dollar signs and spaces
+    are removed.
+    
+    Parameters are the same as :py:func:`read_csv`.
+    """
+    p = read_csv(*args, **kwargs)
+    p.__class__ = BivariatePlasmaProfile
+    metadata = dict([l.split(None, 1) for l in p.metadata])
+    if 'shot' in metadata:
+        p.shot = int(metadata['shot'])
+        p.efit_tree = eqtools.CModEFITTree(p.shot)
+    if 'times' in metadata:
+        p.times = [float(t) for t in metadata['times'].split(',')]
+    if 't_max' in metadata:
+        p.t_max = float(metadata['t_max'])
+    if 't_min' in metadata:
+        p.t_min = float(metadata['t_min'])
+    if 'coordinate' in metadata:
+        p.abscissa = metadata['coordinate']
+    else:
+        if (p.X_dim > 1 and p.X_labels[-2].strip('$ ') == 'R' and
+                p.X_labels[-1].strip('$ ') == 'Z'):
+            p.abscissa = 'RZ'
+        else:
+            try:
+                p.abscissa = _abscissa_mapping[p.X_labels[-1]]
+            except KeyError:
+                p.abscissa = p.X_labels[-1].strip('$ ')
+    
+    return p

@@ -22,6 +22,7 @@ from __future__ import division
 
 import scipy
 import scipy.stats
+import scipy.io
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import gptools
@@ -799,7 +800,7 @@ class Profile(object):
             return self.gp.predict(X, n=n, use_MCMC=use_MCMC, **kwargs)
     
     def write_csv(self, filename):
-        """Writes this profile to a csv file.
+        """Writes this profile to a CSV file.
         
         Parameters
         ----------
@@ -810,13 +811,143 @@ class Profile(object):
         filename = os.path.expanduser(filename)
         with open(filename, 'wb') as outfile:
             writer = csv.writer(outfile)
-            err_X_labels = ['err_' + l for l in self.X_labels]
-            writer.writerow(self.X_labels + err_X_labels + [self.y_label] +
+            X_labels = [l + ' [' + u + ']' for l, u in zip(self.X_labels, self.X_units)]
+            err_X_labels = ['err_' + l for l in X_labels]
+            writer.writerow(self.X_labels + err_X_labels +
+                            [self.y_label + ' [' + self.y_units + ']'] +
                             ['err_' + self.y_label])
             for k in xrange(0, len(self.y)):
                 writer.writerow([x for x in self.X[k, :]] +
                                 [x for x in self.err_X[k, :]] +
                                 [self.y[k], self.err_y[k]])
+    
+def read_csv(filename, X_names=None, y_name=None, metadata_lines=0):
+    """Reads a CSV file into a :py:class:`Profile`.
+    
+    If names are not provided for the columns holding the `X` and `y` values and
+    errors, the names are found automatically by looking at the header row, and
+    are used in the order found, with the last column being `y`. Otherwise, the
+    columns will be read in the order specified. The column names should be of
+    the form "name [units]", which will be automatically parsed to populate the
+    :py:class:`Profile`. In either case, there can be a corresponding column
+    "err_name [units]" which holds the 1-sigma uncertainty in that quantity.
+    There can be an arbitrary number of lines of metadata at the beginning of
+    the file which are read into the :py:attr:`metadata` attribute of the
+    :py:class:`Profile` created. This is most useful when using
+    :py:class:`BivariatePlasmaProfile` as you can store the shot and time window.
+    
+    Parameters
+    ----------
+    X_names : list of str, optional
+        Ordered list of the column names containing the independent variables.
+        The default behavior is to infer the names and ordering from the header
+        of the CSV file. See the discussion above. Note that if you provide
+        `X_names` you must also provide `y_name`.
+    y_name : str, optional
+        Name of the column containing the dependent variable. The default
+        behavior is to infer this name from the header of the CSV file. See the
+        discussion above. Note that if you provide `y_name` you must also
+        provide `X_names`.
+    metadata_lines : non-negative int, optional
+        Number of lines of metadata to read from the beginning of the file.
+        These are read into the :py:attr:`metadata` attribute of the profile
+        created.
+    """
+    if X_names and not y_name:
+        raise ValueError("If supplying an ordered list of names for the X "
+                         "columns, you must also specify the name for the y "
+                         "column.")
+    if y_name and not X_names:
+        raise ValueError("If supplying a name for the y column you must also "
+                         "supply an ordered list of names for the X columns.")
+    filename = os.path.expanduser(filename)
+    X = []
+    y = []
+    err_X = []
+    err_y = []
+    metadata = []
+    with open(filename, 'rb') as infile:
+        # Capture metadata:
+        for k in xrange(0, metadata_lines):
+            metadata.append(infile.readline())
+        if not (X_names and y_name):
+            X_names = infile.readline().split(',')
+            X_names = [name for name in names if not name.startswith('err_')]
+            y_name = names.pop(-1)
+            infile.seek(0)
+            # Need to skip the metadata again:
+            for k in xrange(0, metadata_lines):
+                infile.readline()
+        rdr = csv.DictReader(infile)
+        for row in rdr:
+            X.append([row[l] for l in X_names])
+            err_X_row = []
+            for l in X_names:
+                try:
+                    err_X_row.append(row['err_' + l])
+                except KeyError:
+                    err_X_row.append(0)
+            err_X.append(err_X_row)
+            y.append(row[y_name])
+            try:
+                err_y.append('err_' + y_name)
+            except KeyError:
+                err_y.append(0)
+        
+        y_label, y_units = parse_column_name(y_name)
+        X_labels = []
+        X_units = []
+        for X_name in X_names:
+            n, u = parse_column_name(X_name)
+            X_labels.append(n)
+            X_units.append(n)
+        
+    p = Profile(X_dim=len(X_labels), X_units=X_units, y_units=y_units,
+                X_labels=X_labels, y_label=y_label)
+    p.add_data(X, y, err_X=err_X, err_y=err_y)
+    p.metadata = metadata
+    
+    return p
+
+def read_NetCDF(filename, X_names, y_name):
+    raise NotImplementedError("Not done yet!")
+    with scipy.io.netcdf.netcdf_file(os.path.expanduser(filename), mode='r') as infile:
+        X = []
+        X_labels = []
+        X_units = []
+        for l in X_names:
+            vXl = f.variables[l]
+            Xl = X[:]
+            try:
+                X_units = vX.units
+            except AttributeError:
+                X_units = ''
+            try:
+                err_X = f.variables['err_'+args.abscissa_name]
+            except KeyError:
+                err_X = 0
+    
+        vy = f.variables[args.ordinate_name]
+        y = y[:]
+        try:
+            y_units = vy.units
+        except AttributeError:
+            y_units = ''
+        try:
+            err_y = f.variables['err_'+args.ordinate_name]
+        except KeyError:
+            err_y = 0
+
+def parse_column_name(name):
+    name_split = re.split(r'^([^ \t]*)[ \t]*\[(.*)\]$', name)
+    if len(name_split) == 1:
+        name = name_split[0]
+        units = ''
+    else:
+        assert len(name_split) == 4
+        name = name_split[1]
+        units = name_split[2]
+    return (name, units)
 
 def errorbar3d(ax, x, y, z, xerr=None, yerr=None, zerr=None, **kwargs):
     """Draws errorbar plot of z(x, y) with errorbars on all variables.
