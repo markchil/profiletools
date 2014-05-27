@@ -187,30 +187,39 @@ class BivariatePlasmaProfile(Profile):
         Parameters
         ----------
         allow_conversion : bool, optional
-            If True and self.abscissa is not normalized (such as Rmid), then
-            the profile will be converted to psinorm, the points will be dropped,
-            then the profile will be converted back to the original abscissa.
-            Default is True (allow conversion).
+            If True and self.abscissa is 'RZ', then the profile will be
+            converted to psinorm and the points will be dropped. Default is True
+            (allow conversion).
         """
         # TODO: This needs a lot more work!
-        if self.abscissa != 'r/a' and 'norm' not in self.abscissa:
-            if not allow_conversion:
-                raise ValueError("Removing points outside the LCFS is not supported "
-                                 "when the abscissa is %s. Convert to a normalized "
-                                 "coordinate first." % (self.abscissa,))
-            else:
-                warnings.warn("remove_edge_points is not compatible with abcsissa %s! "
-                              "Converting to psinorm, will attempt to convert back."
-                              % (self.abscissa,))
-                convert_abscissa = True
-                old_abscissa = self.abscissa
+        if self.abscissa == 'RZ':
+            if allow_conversion:
+                warnings.warn("Removal of edge points not supported with abscissa RZ. Will convert to psinorm.")
                 self.convert_abscissa('psinorm')
+            else:
+                raise ValueError("Removal of edge points not supported with abscissa RZ!")
+        if self.abscissa == 'r/a' or 'norm' in self.abscissa:
+            x_out = 1.0
+        elif self.abscissa == 'Rmid':
+            if self.X_dim == 1:
+                if hasattr(self, 'times'):
+                    x_out = scipy.mean(self.efit_tree.getRmidOutSpline()(self.times))
+                else:
+                    t_EFIT = self.efit_tree.getTimeBase()
+                    
+                    if self.t_min != self.t_max:
+                        t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
+                    else:
+                        idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
+                        t_EFIT = t_EFIT[idx]
+                    x_out = scipy.mean(self.efit_tree.getRmidOutSpline()(t_EFIT))
+            else:
+                assert self.X_dim == 2
+                x_out = self.efit_tree.getRmidOutSpline()(scipy.asarray(self.X[:, 0]).flatten())
         else:
-            convert_abscissa = False
-        self.remove_points((scipy.asarray(self.X[:, -1]).flatten() >= 1) |
+            raise ValueError("Removal of edge points not supported with abscissa %s!" % (self.abscissa,))
+        self.remove_points((scipy.asarray(self.X[:, -1]).flatten() >= x_out) |
                            scipy.asarray(scipy.isnan(self.X[:, -1])).flatten())
-        if convert_abscissa:
-            self.convert_abscissa(old_abscissa)
     
     def constrain_slope_on_axis(self, err=0, times=None):
         """Constrains the slope at the magnetic axis of this Profile's Gaussian process to be zero.

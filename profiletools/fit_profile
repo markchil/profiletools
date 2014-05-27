@@ -1488,15 +1488,14 @@ class FitWindow(tk.Tk):
                         "Conversion to coordinate %s from %s failed for system %s."
                         % (abscissa, p.abscissa, k)
                     )
-                if 'GPC' in k or 'ECE' in k or core_only:
-                    p.remove_edge_points()
                 if len(times) == 1 or method == "all points":
                     p.drop_axis(0)
                 else:
                     p.time_average(robust=(method == "robust"))
-            else:
-                if 'GPC' in k or 'ECE' in k or core_only:
-                    p.remove_edge_points()
+            if 'GPC' in k or 'ECE' in k or core_only:
+                print("removing edge")
+                p.remove_edge_points()
+                print('done')
         
             p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
         
