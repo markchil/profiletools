@@ -1902,12 +1902,12 @@ if __name__ == "__main__":
     if not args.random_starts:
         num_proc = multiprocessing.cpu_count()
         if num_proc < 4:
-            root.status_frame.add_line(
-                "Number of processors available is less than 4. Setting random_starts "
-                "to 4 to help ensure convergence of MAP estimation. You can override "
-                "this by setting the number of random starts explicitly. Running on "
-                "a computer with more cores will make this run much faster."
-            )
+            # root.status_frame.add_line(
+            #     "Number of processors available is less than 4. Setting random_starts "
+            #     "to 4 to help ensure convergence of MAP estimation. You can override "
+            #     "this by setting the number of random starts explicitly. Running on "
+            #     "a computer with more cores will make this run much faster."
+            # )
             args.random_starts = 4
         else:
             args.random_starts = num_proc
