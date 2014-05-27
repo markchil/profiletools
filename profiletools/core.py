@@ -30,6 +30,7 @@ import sys
 import os.path
 import csv
 import warnings
+import re
 
 # Conversion factor to get from interquartile range to standard deviation:
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
@@ -704,7 +705,7 @@ class Profile(object):
         # TODO: Add more intelligent kwargs for this!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
-        self.gp.optimize_hyperparameters(**kwargs)
+        return self.gp.optimize_hyperparameters(**kwargs)
     
     def plot_gp(self, force_update=False, gp_kwargs={}, MAP_kwargs={}, **kwargs):
         """Plot the current state of the Profile's Gaussian process.
@@ -891,7 +892,7 @@ def read_csv(filename, X_names=None, y_name=None, metadata_lines=0):
             err_X.append(err_X_row)
             y.append(row[y_name])
             try:
-                err_y.append('err_' + y_name)
+                err_y.append(row['err_' + y_name])
             except KeyError:
                 err_y.append(0)
         
@@ -903,7 +904,12 @@ def read_csv(filename, X_names=None, y_name=None, metadata_lines=0):
             X_labels.append(n)
             X_units.append(n)
         
-    p = Profile(X_dim=len(X_labels), X_units=X_units, y_units=y_units,
+        X_dim = len(X_labels)
+        if X_dim == 1:
+            X_labels = X_labels[0]
+            X_units = X_units[0]
+    
+    p = Profile(X_dim=X_dim, X_units=X_units, y_units=y_units,
                 X_labels=X_labels, y_label=y_label)
     p.add_data(X, y, err_X=err_X, err_y=err_y)
     p.metadata = metadata
@@ -943,7 +949,7 @@ def read_NetCDF(filename, X_names, y_name, metadata=[]):
         X_labels = []
         X_units = []
         for l in X_names:
-            vXl = f.variables[l]
+            vXl = infile.variables[l]
             X.append(vXl[:])
             n, u = parse_column_name(l)
             X_labels.append(n)
@@ -952,36 +958,41 @@ def read_NetCDF(filename, X_names, y_name, metadata=[]):
             except AttributeError:
                 X_units.append(u)
             try:
-                err_X.append(f.variables['err_' + l])
+                err_X.append(infile.variables['err_' + l])
             except KeyError:
                 err_X.append(scipy.zeros_like(X[0]))
         X = scipy.hstack(X)
         err_X = scipy.hstack(err_X)
-        vy = f.variables[y_name]
-        y = vy[:]
+        vy = infile.variables[y_name]
+        # Explicitly convert, since I've been having strange segfaults here:
+        y = scipy.array(vy[:])
         y_label, u = parse_column_name(y_name)
         try:
             y_units = vy.units
         except AttributeError:
             y_units = u
         try:
-            err_y = f.variables['err_' + y_name]
+            err_y = scipy.array(infile.variables['err_' + y_name][:])
         except KeyError:
             err_y = 0
-    p = Profile(X_dim=len(X_labels), X_units=X_units, y_units=y_units,
-                X_labels=X_labels, y_label=y_label)
-    p.add_data(X, y, err_X=err_X, err_y=err_y)
-    for m in metadata:
-        try:
-            if hasattr(p, m):
-                warnings.warn("Profile class already has metadata attribute %s. "
-                              "Existing value is being overwritten. This may "
-                              "lead to undesirable behavior." % (m,),
-                              RuntimeWarning)
-            setattr(p, m, f.m)
-        except AttributeError:
-            warnings.warn("Could not find metadata attribute %s in NetCDF file %s." % 
-                          (m, filename,), RuntimeWarning)
+        X_dim = len(X_labels)
+        if X_dim == 1:
+            X_labels = X_labels[0]
+            X_units = X_units[0]
+        p = Profile(X_dim=X_dim, X_units=X_units, y_units=y_units,
+                    X_labels=X_labels, y_label=y_label)
+        p.add_data(X, y, err_X=err_X, err_y=err_y)
+        for m in metadata:
+            try:
+                if hasattr(p, m):
+                    warnings.warn("Profile class already has metadata attribute %s. "
+                                  "Existing value is being overwritten. This may "
+                                  "lead to undesirable behavior." % (m,),
+                                  RuntimeWarning)
+                setattr(p, m, infile.m)
+            except AttributeError:
+                warnings.warn("Could not find metadata attribute %s in NetCDF file %s." % 
+                              (m, filename,), RuntimeWarning)
     return p
 
 def parse_column_name(name):

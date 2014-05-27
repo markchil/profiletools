@@ -17,24 +17,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import division
-import argparse
-import sys
-import os.path
-import csv
-import scipy
-import scipy.io
-import profiletools
-import eqtools
-import matplotlib.pyplot as plt
-import matplotlib.widgets as mplw
-import matplotlib.gridspec as mplgs
-import multiprocessing
-import inspect
-import socket
-import getpass
-import time
 
 __version__ = '0.0'
+
+# Configure and parse command line arguments:
+import argparse
 
 class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
     pass
@@ -291,6 +278,59 @@ parser.add_argument('--bounds',
                          "itself. If you are getting bad fits, try tweaking these. "
                          "Note that this overrides --upper-factor and --lower-factor "
                          "if present.")
+parser.add_argument('--use-MCMC',
+                    action='store_true',
+                    help="Set this flag to use MCMC integration over the "
+                         "hyperparameters instead of MAP estimation. This is "
+                         "the most rigorous way of capturing all uncertainty, "
+                         "and should always be used if you are interested in "
+                         "gradients and/or the details of the edge. Note that "
+                         "this is very computationally expensive, but benefits "
+                         "strongly from having many cores to run on.")
+parser.add_argument('--walkers',
+                    type=int,
+                    default=200,
+                    help="The number of walkers to use to explore the parameter "
+                         "space. This number should be high, on the order of "
+                         "a few hundred. If you are getting poor mixing of the "
+                         "MCMC integration, try increasing this by a hundred at "
+                         "a time.")
+parser.add_argument('--MCMC-samp',
+                    type=int,
+                    default=500,
+                    help="The number of samples to take with each walker.")
+parser.add_argument('--burn',
+                    type=int,
+                    default=100,
+                    help="The number of samples to discard at the start of each "
+                         "MCMC chain. This will usually need to be on the order "
+                         "of a few hundred. If your chains are taking too long "
+                         "to mix, try narrowing the bounds on the hyperparameters.")
+parser.add_argument('--thin',
+                    type=int,
+                    default=150,
+                    help="The amount by which the MCMC samples are thinned before "
+                         "evaluating the profile at each sample.")
+parser.add_argument('--full-monte-carlo',
+                    action='store_true',
+                    help="Set this flag to compute these mean samples using a "
+                         "full Monte Carlo simulation instead of error propagation.")
+parser.add_argument('--reject-negative',
+                    action='store_true',
+                    help="Set this flag to reject any Monte Carlo samples that go "
+                         "negative during the full Monte Carlo simulation. Only "
+                         "has an effect if --full-monte-carlo is set.")
+parser.add_argument('--reject-non-monotonic',
+                    action='store_true',
+                    help="Set this flag to reject any Monte Carlo samples that "
+                         "are not monotonic when performing the full Monte Carlo "
+                         "simulation. Only has an effect if --full-monte-carlo "
+                         "is set.")
+parser.add_argument('--no-a-over-L',
+                    action='store_true',
+                    help="Set this flag to turn off the computation of a/L, "
+                         "which can save some time if you don't need gradients/"
+                         "scale lengths.")
 parser.add_argument('-i', '--input-filename',
                     help="Filename/path to a CSV or NetCDF file containing the "
                          "profile data to be fit. Note that if you wish to make "
@@ -352,411 +392,1652 @@ parser.add_argument('--full-auto',
 
 args = parser.parse_args()
 
-# Process args, prompt for missing ones:
-# Neither shot nor filename specified:
-if (not args.input_filename) and (not args.shot):
-    if not args.full_auto:
-        res = raw_input(
-            "No shot number or input file specified. Please type either a shot "
-            "number or an input file to proceed.\n\nshotnum/filename = "
-        )
-        try:
-            args.shot = int(res)
-        except ValueError:
-            args.input_filename = res
-    else:
-        print("Must specify either a shot number or an input filename.")
-        sys.exit(1)
+# Set up the GUI:
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+from matplotlib.backend_bases import key_press_handler
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import Tkinter as tk
+import tkFileDialog
+import tkFont
+import collections
+import time
+import multiprocessing
+import profiletools
+import gptools
+import MDSplus
+import os.path
+import copy
+import re
+import scipy
+import scipy.io
+import itertools
+import socket
+import getpass
+import inspect
+import csv
 
-# Turn off edge constraint for --core-only:
-if args.core_only:
-    args.no_edge_constraint = True
-    args.kernel = 'SE'
+DATE_FORMAT = '%d %b %Y %H:%M:%S'
 
-# Bump random starts up to 4 for low processor count machines:
-if not args.random_starts and multiprocessing.cpu_count() < 4:
-    print("Number of processors available is less than 4. Setting random_starts "
-          "to 4 to help ensure convergence of MAP estimation. You can override "
-          "this by setting the --random-starts flag. Running on a computer with "
-          "more cores will make this run much faster.")
-    args.random_starts = 4
-
-# Turn "off" core constraint if constraint point is manually specified:
-if args.core_constraint_location:
-    args.no_core_constraint = True
-
-# Turn "off" edge constraint if constraint points are manually specified:
-if args.edge_constraint_locations:
-    args.no_edge_constraint = True
-
-# Handle any missing arguments for when reading from file:
-if args.input_filename:
-    # Warn user that their input for signal is being ignored:
-    if args.signal:
-        print("Warning: --input-filename overrides --signal.")
+class TreeFileFrame(tk.Frame):
+    TREE_MODE = 1
+    FILE_MODE = 2
     
-    # Warn user that their input for system is being ignored:
-    if args.system:
-        print("Warning: --input-filename overrides --system.")
-    
-    # Warn user that their input for robust is being ignored:
-    if args.robust:
-        print("Warning: --robust has no effect when --input-filename is used.")
-    
-    # Warn user that their input for --all-points is being ignored:
-    if args.all_points:
-        print("Warning: --all-points/--no-average has no effect when "
-              "--input-filename is used.")
-else:
-    # Handle case where a shot number is given.
-    # Prompt user to specify a signal:
-    if not args.signal:
-        signal = ''
-        if not args.full_auto:
-            signal = raw_input(
-                "Which signal would you like to fit?\n\n"
-                "Valid choices are {ne,Te}.\n\n"
-                "signal = "
-            )
-        if signal in ['Te', 'ne']:
-            args.signal = signal
-        else:
-            print("Signal to fit not specified or invalid!")
-            sys.exit(1)
-    
-    # Warn user they haven't specified a time range/point:
-    if ((not args.t_min) or (not args.t_max)) and (not args.t_points):
-        res = ''
-        if not args.full_auto:
-            res = raw_input(
-                "What time window or single time slice do you want to use?\n\n"
-                "Leave the line blank and press return to use all points in the "
-                "shot (not recommended). Enter a single time (in seconds) to use "
-                "the slice at that time. Enter two times (in seconds) separated "
-                "by a space to average over the window defined by the two times.\n\n"
-                "time(s) = "
-            )
-            if res:
-                res_split = res.split()
-                if len(res_split) == 1:
-                    args.t_points = [float(res_split[0])]
-                else:
-                    args.t_min = float(res_split[0])
-                    args.t_max = float(res_split[1])
-        if not res:
-            print("Warning: Not specifying t-min and t-max or t-points causes the "
-                  "entire time-history to be used. This is usually not desirable.")
-    
-    # Handle default value for coordinate:
-    if not args.coordinate:
-        args.coordinate = 'psinorm'
-
-# Fetch data:
-if args.input_filename:
-    # Read input file:
-    root, ext = os.path.splitext(args.input_filename)
-    if ext.lower() == '.csv':
-        print("Fetching data from CSV file %s..." % (args.input_filename,))
-        p = profiletools.read_plasma_csv(args.input_filename,
-                                         X_name=args.abscissa_name,
-                                         y_name=args.ordinate_name,
-                                         metadata_lines=args.metadata_lines)
-    else:
-        print("Fetching data from NetCDF file %s..." % (args.input_filename,))
-        if not args.abscissa_name:
-            name = ''
-            if not args.full_auto:
-                name = raw_input(
-                    "Name of the independent variable(s) not specified. If you "
-                    "have bivariate data, type a space between the two names, "
-                    "with the name of the temporal variable first.\n\n"
-                    "abscissa name(s) = "
-                )
-            if not name:
-                print("No name for abscissa variable(s) specified!")
-                sys.exit(1)
-            else:
-                args.abscissa_name = name.split()
-        if not args.ordinate_name:
-            name = ''
-            if not args.full_auto:
-                name = raw_input(
-                    "Name of the dependent variable not specified. Please enter "
-                    "the name of the variable containing the values of the "
-                    "dependent variable in your NetCDF file:\n\n"
-                    "ordinate name = "
-                )
-            if not name:
-                print("No name for ordinate variable specified!")
-                sys.exit(1)
-            else:
-                args.ordinate_name = name
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
         
-        p = profiletools.read_plasma_NetCDF(args.input_filename,
-                args.abscissa_name, args.ordinate_name)
+        # Create radio buttons to select tree versus file:
+        self.source_state = tk.IntVar(self)
+        self.tree_button = tk.Radiobutton(self,
+                                          text="tree",
+                                          variable=self.source_state,
+                                          value=self.TREE_MODE,
+                                          command=self.master.update_source)
+        self.file_button = tk.Radiobutton(self,
+                                          text="file:",
+                                          variable=self.source_state,
+                                          value=self.FILE_MODE,
+                                          command=self.master.update_source)
+        self.tree_button.grid(row=0, column=0)
+        self.file_button.grid(row=0, column=1)
     
-    # Get coordinate. Only bug user if the edge or core constraints are in use.
-    if (not hasattr(p, 'coordinate')) and ((not args.coordinate) and
-        ((not args.no_edge_constraint) or (not args.no_core_constraint))):
-        coordinate = ''
-        if not args.full_auto:
-            coordinate = raw_input(
-                "What coordinate is your data represented as a function of?\n\n"
-                "This is needed to apply constraints on the core and the edge. "
-                "Leave the line blank and press return to disable these "
-                "constraints.\n\n"
-                "Valid options are: {psinorm,Rmid,r/a,volnorm,phinorm,"
-                "sqrtpsinorm,sqrtr/a,sqrtvolnorm,sqrtphinorm}\n\n"
-                "coordinate = "
-            )
-        if coordinate:
-            args.coordinate = coordinate
-            p.abscissa = coordinate
+        # Create text entry to input file path:
+        self.path_entry = tk.Entry(self)
+        self.path_entry.grid(row=0, column=2, stick=tk.E + tk.W)
+    
+        # Create button to select file:
+        self.choose_file_button = tk.Button(self,
+                                            text="choose file",
+                                            command=self.choose_file)
+        self.choose_file_button.grid(row=0, column=3)
+        
+        # Set file path entry to expand:
+        self.grid_columnconfigure(2, weight=1)
+    
+    def choose_file(self):
+        filepath = tkFileDialog.askopenfilename()
+        if filepath:
+            self.path_entry.delete(0, tk.END)
+            self.path_entry.insert(0, filepath)
+
+class VariableNameFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create label for variables:
+        self.variables_master_label = tk.Label(self, text="variable/column names:")
+        self.variables_master_label.grid(row=0, column=0, columnspan=6, sticky=tk.W)
+        
+        # Create label for time:
+        self.time_label = tk.Label(self, text="time:")
+        self.time_label.grid(row=1, column=0, sticky=tk.E)
+        
+        # Create box for time:
+        self.time_box = tk.Entry(self, width=4)
+        self.time_box.grid(row=1, column=1, sticky='EW')
+        
+        # Create label for space:
+        self.space_label = tk.Label(self, text="space:")
+        self.space_label.grid(row=1, column=2, sticky=tk.E)
+        
+        # Create box for space:
+        self.space_box = tk.Entry(self, width=4)
+        self.space_box.grid(row=1, column=3, sticky='EW')
+        
+        # Create label for data:
+        self.data_label = tk.Label(self, text="data:")
+        self.data_label.grid(row=1, column=4, sticky=tk.E)
+        
+        # Create box for data:
+        self.data_box = tk.Entry(self, width=4)
+        self.data_box.grid(row=1, column=5, sticky='EW')
+        
+        # Create label and box for number of metadata lines:
+        self.meta_label = tk.Label(self, text="metadata:")
+        self.meta_label.grid(row=1, column=6, sticky='E')
+        self.meta_box = tk.Entry(self, width=4)
+        self.meta_box.grid(row=1, column=7, sticky='EW')
+        
+        # Configure boxes to grow:
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+        self.grid_columnconfigure(5, weight=1)
+        self.grid_columnconfigure(7, weight=1)
+
+class ShotFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create label for shot:
+        self.shot_label = tk.Label(self, text="shot:")
+        self.shot_label.grid(row=0, column=0)
+        
+        # Create box for shot:
+        self.shot_box = tk.Entry(self)
+        self.shot_box.grid(row=0, column=1, sticky=tk.E + tk.W)
+        
+        # Allow shot entry to expand to fill:
+        self.grid_columnconfigure(1, weight=1)
+
+class SignalCoordinateFrame(tk.Frame):
+    SIGNAL_OPTIONS = ['ne', 'Te']
+    COORDINATE_OPTIONS = ['psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
+                          'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm']
+    
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create label for signal:
+        self.signal_label = tk.Label(self, text="signal:")
+        self.signal_label.grid(row=0, column=0, sticky='E')
+        
+        # Create option menu for signal:
+        self.signal_var = tk.StringVar(self)
+        self.signal_var.set(self.SIGNAL_OPTIONS[0])
+        self.signal_menu = tk.OptionMenu(self, self.signal_var, *self.SIGNAL_OPTIONS, command=self.master.update_signal)
+        self.signal_menu.grid(row=0, column=1, sticky='EW')
+        
+        # Create label for coordinate:
+        self.coordinate_label = tk.Label(self, text="coordinate:")
+        self.coordinate_label.grid(row=0, column=2, sticky='E')
+        
+        # Create option menu for coordinate:
+        self.coordinate_var = tk.StringVar(self)
+        self.coordinate_var.set(self.COORDINATE_OPTIONS[0])
+        self.coordinate_menu = tk.OptionMenu(self, self.coordinate_var, *self.COORDINATE_OPTIONS)
+        self.coordinate_menu.grid(row=0, column=3, sticky='EW')
+        
+        # Let menus expand:
+        # self.grid_columnconfigure(1, weight=1)
+        # self.grid_columnconfigure(3, weight=1)
+
+class OptionBox(tk.Frame):
+    def __init__(self, system, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.system = system
+        
+        self.state_var = tk.IntVar(self)
+        
+        self.button = tk.Checkbutton(self, text=self.system, variable=self.state_var)
+        self.button.grid(row=0, column=0)
+        
+        # Set default value:
+        self.button.select()
+
+class SystemFrame(tk.Frame):
+    SYSTEM_OPTIONS = {'Te': ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE'],
+                      'ne': ['CTS', 'ETS']}
+    
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        self.signal = None
+        self.buttons = []
+        self.update_systems(self.master.signal_coordinate_frame.signal_var.get())
+    
+    def update_systems(self, signal):
+        if signal != self.signal:
+            self.signal = signal
+            for b in self.buttons:
+                b.destroy()
+            self.buttons = [OptionBox(sys, self) for sys in self.SYSTEM_OPTIONS[signal]]
+            for k in xrange(0, len(self.buttons)):
+                self.buttons[k].grid(row=0, column=k)
+
+class DataSourceFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        self.frame_label = tk.Label(self, text="Data Source", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label.grid(row=0, sticky='W')
+        
+        # Create frame to hold tree/file selector row:
+        self.tree_file_frame = TreeFileFrame(self)
+        self.tree_file_frame.grid(row=1, sticky='EW')
+        
+        # Create frame to hold variable name selector row:
+        self.variable_name_frame = VariableNameFrame(self)
+        self.variable_name_frame.grid(row=2, sticky='EW')
+        
+        # Create frame to hold shot selector row:
+        self.shot_frame = ShotFrame(self)
+        self.shot_frame.grid(row=3, sticky='EW')
+        
+        # Create frame to hold signal/coordinate selection menus:
+        self.signal_coordinate_frame = SignalCoordinateFrame(self)
+        self.signal_coordinate_frame.grid(row=4, sticky='EW')
+        
+        # Create frame to hold signal selection check buttons:
+        self.system_frame = SystemFrame(self)
+        self.system_frame.grid(row=5, sticky='W')
+        
+        # Allow columns to grow:
+        self.grid_columnconfigure(0, weight=1)
+        
+        # Set default conditions:
+        self.tree_file_frame.tree_button.invoke()
+    
+    def update_source(self):
+        if self.tree_file_frame.source_state.get() == self.tree_file_frame.TREE_MODE:
+            self.tree_file_frame.path_entry.config(state=tk.DISABLED)
+            self.tree_file_frame.choose_file_button.config(state=tk.DISABLED)
+            for w in self.variable_name_frame.winfo_children():
+                w.config(state=tk.DISABLED)
+            self.signal_coordinate_frame.signal_label.config(state=tk.NORMAL)
+            self.signal_coordinate_frame.signal_menu.config(state=tk.NORMAL)
+            for b in self.system_frame.buttons:
+                b.button.config(state=tk.NORMAL)
+        elif self.tree_file_frame.source_state.get() == self.tree_file_frame.FILE_MODE:
+            self.tree_file_frame.path_entry.config(state=tk.NORMAL)
+            self.tree_file_frame.choose_file_button.config(state=tk.NORMAL)
+            for w in self.variable_name_frame.winfo_children():
+                w.config(state=tk.NORMAL)
+            self.signal_coordinate_frame.signal_label.config(state=tk.DISABLED)
+            self.signal_coordinate_frame.signal_menu.config(state=tk.DISABLED)
+            for b in self.system_frame.buttons:
+                b.button.config(state=tk.DISABLED)
+    
+    def update_signal(self, signal):
+        self.system_frame.update_systems(signal)
+
+class TimeWindowFrame(tk.Frame):
+    WINDOW_MODE = 1
+    POINT_MODE = 2
+    
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create radio buttons to select between window and points:
+        self.method_state = tk.IntVar(self)
+        self.window_button = tk.Radiobutton(self,
+                                            text="time window:",
+                                            variable=self.method_state,
+                                            value=self.WINDOW_MODE,
+                                            command=self.update_method)
+        self.point_button = tk.Radiobutton(self,
+                                           text="time points:",
+                                           variable=self.method_state,
+                                           value=self.POINT_MODE,
+                                           command=self.update_method)
+        self.window_button.grid(row=0, column=0, sticky='W')
+        self.point_button.grid(row=1, column=0, sticky='W')
+        
+        # Create labels and fields to hold time window:
+        self.t_min_box = tk.Entry(self, width=6)
+        self.t_min_box.grid(row=0, column=1, sticky='EW')
+        self.t_max_box = tk.Entry(self, width=6)
+        self.t_max_box.grid(row=0, column=3, sticky='EW')
+        self.t_min_units = tk.Label(self, text="s to")
+        self.t_min_units.grid(row=0, column=2)
+        self.t_max_units = tk.Label(self, text="s")
+        self.t_max_units.grid(row=0, column=4)
+        
+        # Create labels and fields to hold time points:
+        self.times_box = tk.Entry(self)
+        self.times_box.grid(row=1, column=1, columnspan=4, sticky='EW')
+        
+        # Allow elements to resize:
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+    
+    def update_method(self):
+        if self.method_state.get() == self.WINDOW_MODE:
+            self.times_box.config(state=tk.DISABLED)
+            self.t_min_box.config(state=tk.NORMAL)
+            self.t_min_units.config(state=tk.NORMAL)
+            self.t_max_box.config(state=tk.NORMAL)
+            self.t_max_units.config(state=tk.NORMAL)
         else:
-            print("No coordinate specified. Disabling core and edge constraints.")
-            args.no_edge_constraint = True
-            args.no_core_constraint = True
+            self.times_box.config(state=tk.NORMAL)
+            self.t_min_box.config(state=tk.DISABLED)
+            self.t_min_units.config(state=tk.DISABLED)
+            self.t_max_box.config(state=tk.DISABLED)
+            self.t_max_units.config(state=tk.DISABLED)
+
+class MethodFrame(tk.Frame):
+    METHOD_OPTIONS = ['conventional', 'robust', 'all points']
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create label for method:
+        self.method_label = tk.Label(self, text="averaging method:")
+        self.method_label.grid(row=0, column=0, sticky='E')
+        
+        # Create option menu for methods:
+        self.method_var = tk.StringVar(self)
+        self.method_var.set(self.METHOD_OPTIONS[0])
+        self.method_menu = tk.OptionMenu(self, self.method_var, *self.METHOD_OPTIONS)
+        self.method_menu.grid(row=0, column=1, sticky='W')
+        
+class AveragingFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        self.frame_label = tk.Label(self, text="Time Points/Averaging", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label.grid(row=0, sticky='W')
+        
+        # Create frame to hold time window selection:
+        self.time_window_frame = TimeWindowFrame(self)
+        self.time_window_frame.grid(row=1, sticky='EW')
+        
+        # Create frame to hold averaging selection:
+        self.method_frame = MethodFrame(self)
+        self.method_frame.grid(row=2, sticky='W')
+        
+        # Allow elements to resize:
+        self.grid_columnconfigure(0, weight=1)
+        
+        # Set default conditions:
+        self.time_window_frame.window_button.invoke()
+
+class OutlierFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        self.frame_label = tk.Label(self, text="Outlier Rejection", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label.grid(row=0, sticky='W')
+        
+        # Create checkbuttons to select types:
+        self.extreme_state = tk.IntVar(self)
+        self.extreme_button = tk.Checkbutton(self,
+                                             text="extreme change",
+                                             variable=self.extreme_state,
+                                             command=self.update_extreme)
+        self.extreme_button.grid(row=1, column=0, sticky='W')
+        self.outlier_state = tk.IntVar(self)
+        self.outlier_button = tk.Checkbutton(self,
+                                             text="distance from fit",
+                                             variable=self.outlier_state,
+                                             command=self.update_outlier)
+        self.outlier_button.grid(row=2, column=0, sticky='W')
+        
+        # Create boxes and labels to specify thresholds:
+        self.extreme_thresh_label = tk.Label(self, text="threshold:")
+        self.extreme_thresh_label.grid(row=1, column=1)
+        self.extreme_thresh_box = tk.Entry(self, width=6)
+        self.extreme_thresh_box.insert(tk.END, '9')
+        self.extreme_thresh_box.grid(row=1, column=2, sticky='EW')
+        self.extreme_thresh_unit_label = tk.Label(self, text=u"\u03C3")
+        self.extreme_thresh_unit_label.grid(row=1, column=3, sticky='W')
+        
+        self.outlier_thresh_label = tk.Label(self, text="threshold:")
+        self.outlier_thresh_label.grid(row=2, column=1)
+        self.outlier_thresh_box = tk.Entry(self, width=6)
+        self.outlier_thresh_box.insert(tk.END, '3')
+        self.outlier_thresh_box.grid(row=2, column=2, sticky='EW')
+        self.outlier_thresh_unit_label = tk.Label(self, text=u"\u03C3")
+        self.outlier_thresh_unit_label.grid(row=2, column=3, sticky='W')
+        
+        self.update_extreme()
+        self.update_outlier()
     
-    # Get shot number to enable constraints to be fetched. Only bother user if
-    # the edge constraint is enabled or the core constraint is enabled and the
-    # coordinate is not normalized.    
-    if (
-        not hasattr(p, 'shot') and
-        not args.shot and
-        not args.no_edge_constraint or
-        (
-            not args.no_core_constraint and
-            'norm' not in args.coordinate and
-            'r/a' not in args.coordinate
-        )
-    ):
-        shot = ''
-        if not args.full_auto:
-            shot = raw_input(
-                "What shot number is input file %s from?\n\n"
-                "This is needed to apply constraints on the core and the edge. "
-                "Leave the line blank and press return to disable these "
-                "constraints.\n\n"
-                "shot = " % (args.input_filename)
-            )
-        if shot:
-            args.shot = int(shot)
+    def update_extreme(self):
+        if self.extreme_state.get():
+            self.extreme_thresh_label.config(state=tk.NORMAL)
+            self.extreme_thresh_box.config(state=tk.NORMAL)
+            self.extreme_thresh_unit_label.config(state=tk.NORMAL)
         else:
-            print("No shot specified. Disabling edge constraint.")
-            args.no_edge_constraint = True
-            if ('norm' not in args.coordinate) and ('r/a' not in args.coordinate):
-                print("No shot specified and coordinate is not normalized. "
-                      "Disabling core constraint.")
-                args.no_core_constraint = True
+            self.extreme_thresh_label.config(state=tk.DISABLED)
+            self.extreme_thresh_box.config(state=tk.DISABLED)
+            self.extreme_thresh_unit_label.config(state=tk.DISABLED)
     
-    # Get t_min and t_max or t_points. Only bother user if the edge constraint
-    # is enabled or the core constraint is enabled and the coordinate is not
-    # normalized.
-    if (
-        not hasattr(p, 't_min') and
-        not hasattr(p, 't_max') and
-        not hasattr(p, 'times') and
-        not args.t_min and
-        not args.t_max and
-        not args.t_points and
-        (
-            not args.no_edge_constraint or
-            (
-                not args.no_core_constraint and
-                'norm' not in args.coordinate and
-                'r/a' not in args.coordinate
-            )
-        )
-    ):
-        res = ''
-        if not args.full_auto:
-            res = raw_input(
-                "What time window or single time slice does your profile "
-                "correspond to?\n\n"
-                "This is needed to apply constraints on the core and edge.\n\n"
-                "Leave the line blank and press return to disable these "
-                "constraints. Enter a single time (in seconds) to use the slice "
-                "at that time. Enter two times (in seconds) separated by a space "
-                "to average over the window defined by the two times.\n\n"
-                "time(s) = "
-            )
-        if res:
-            res_split = res.split()
-            if len(res_split) == 1:
-                args.t_points = [float(res_split[0])]
+    def update_outlier(self):
+        if self.outlier_state.get():
+            self.outlier_thresh_label.config(state=tk.NORMAL)
+            self.outlier_thresh_box.config(state=tk.NORMAL)
+            self.outlier_thresh_unit_label.config(state=tk.NORMAL)
+        else:
+            self.outlier_thresh_label.config(state=tk.DISABLED)
+            self.outlier_thresh_box.config(state=tk.DISABLED)
+            self.outlier_thresh_unit_label.config(state=tk.DISABLED)
+
+HYPERPARAMETERS = collections.OrderedDict([
+    ('gibbstanh', collections.OrderedDict([(u"\u03C3f", "signal variance"),
+                                          (u"\u21131", "core covariance length scale"),
+                                          (u"\u21132", "edge covariance length scale"),
+                                          (u"\u2113w", "core/edge transition width"),
+                                          (u"x0", "core/edge transition location")])),
+    ('SE', collections.OrderedDict([(u"\u03C3f", "signal variance"),
+                                   (u"\u2113", "covariance length scale")])),
+])
+
+class KernelTypeFrame(tk.Frame):    
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create label for type:
+        self.k_label = tk.Label(self, text="kernel type:")
+        self.k_label.grid(row=0, column=0, sticky='E')
+        
+        # Create option menu for type:
+        self.k_var = tk.StringVar(self)
+        self.k_var.set(HYPERPARAMETERS.keys()[0])
+        self.k_menu = tk.OptionMenu(self, self.k_var, *HYPERPARAMETERS.keys(), command=self.master.update_kernel)
+        self.k_menu.grid(row=0, column=1, sticky='W')
+        
+        # Create check button to select only core data:
+        self.core_only_state = tk.IntVar(self)
+        self.core_only_button = tk.Checkbutton(self,
+                                               text="core only",
+                                               variable=self.core_only_state)
+        self.core_only_button.grid(row=0, column=2, sticky='W')
+
+class KernelBoundsFrame(tk.Frame):    
+    def __init__(self, hyperparameters, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.hyperparameters = hyperparameters
+        
+        self.labels = []
+        self.lower_bounds = []
+        self.to_labels = []
+        self.upper_bounds = []
+        
+        for k, hp in zip(xrange(0, len(self.hyperparameters)), self.hyperparameters):
+            self.labels.append(tk.Label(self,
+                                        text="%s, %s:" % (self.hyperparameters[hp], hp,)))
+            self.lower_bounds.append(tk.Entry(self, width=6))
+            self.to_labels.append(tk.Label(self, text="to"))
+            self.upper_bounds.append(tk.Entry(self, width=6))
+            
+            self.labels[k].grid(row=k, column=0, sticky='E')
+            self.lower_bounds[k].grid(row=k, column=1, sticky='EW')
+            self.to_labels[k].grid(row=k, column=2)
+            self.upper_bounds[k].grid(row=k, column=3, sticky='EW')
+        
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+
+class ConstraintsFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Checkbox for core constraint:
+        self.core_state = tk.IntVar(self)
+        self.core_button = tk.Checkbutton(self,
+                                          text="core constraint",
+                                          variable=self.core_state,
+                                          command=self.update_core)
+        self.core_button.grid(row=0, column=0, sticky='W')
+        
+        # Checkbox for edge constraint:
+        self.edge_state = tk.IntVar(self)
+        self.edge_button = tk.Checkbutton(self,
+                                          text="edge constraint",
+                                          variable=self.edge_state,
+                                          command=self.update_edge)
+        self.edge_button.grid(row=1, column=0, sticky='W')
+        
+        # Label for core location:
+        self.core_label = tk.Label(self, text="location:")
+        self.core_label.grid(row=0, column=1, sticky='E')
+        
+        # Label for edge locations:
+        self.edge_label = tk.Label(self, text="locations:")
+        self.edge_label.grid(row=1, column=1, sticky='E')
+        
+        # Box for core location:
+        self.core_loc = tk.Entry(self)
+        self.core_loc.grid(row=0, column=2, sticky='EW')
+        
+        # Box for edge location:
+        self.edge_loc = tk.Entry(self)
+        self.edge_loc.grid(row=1, column=2, sticky='EW')
+        
+        # Allow boxes to expand:
+        self.grid_columnconfigure(2, weight=1)
+    
+    def update_core(self):
+        if self.core_state.get():
+            self.core_label.config(state=tk.NORMAL)
+            self.core_loc.config(state=tk.NORMAL)
+        else:
+            self.core_label.config(state=tk.DISABLED)
+            self.core_loc.config(state=tk.DISABLED)
+    
+    def update_edge(self):
+        if self.edge_state.get():
+            self.edge_label.config(state=tk.NORMAL)
+            self.edge_loc.config(state=tk.NORMAL)
+        else:
+            self.edge_label.config(state=tk.DISABLED)
+            self.edge_loc.config(state=tk.DISABLED)
+
+class KernelFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        self.frame_label = tk.Label(self, text="Covariance Kernel", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label.grid(row=0, sticky='W')
+        
+        # Create frame to hold kernel type:
+        self.kernel_type_frame = KernelTypeFrame(self)
+        self.kernel_type_frame.grid(row=1, sticky='W')
+        self.k = self.kernel_type_frame.k_var.get()
+        
+        # Create frame to hold hyperparameter bounds:
+        self.bounds_label = tk.Label(self, text="hyperparameter bounds:")
+        self.bounds_label.grid(row=2, sticky='W')
+        self.bounds_frame = KernelBoundsFrame(HYPERPARAMETERS[self.kernel_type_frame.k_var.get()], self)
+        self.bounds_frame.grid(row=3, sticky='EW')
+        
+        # Create frame to hold constraint checkboxes:
+        self.constraints_frame = ConstraintsFrame(self)
+        self.constraints_frame.grid(row=4, sticky='EW')
+        
+        # Allow boxes to expand:
+        self.grid_columnconfigure(0, weight=1)
+        
+        # Initial settings:
+        self.constraints_frame.core_button.invoke()
+        self.constraints_frame.edge_button.invoke()
+    
+    def update_kernel(self, k):
+        if k != self.k:
+            self.bounds_frame.destroy()
+            self.bounds_frame = KernelBoundsFrame(HYPERPARAMETERS[k], self)
+            self.bounds_frame.grid(row=3, sticky='EW')
+            self.k = k
+
+class FittingMethodFrame(tk.Frame):
+    USE_MAP = 1
+    USE_MCMC = 2
+    
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create radio buttons to select MAP versus MCMC:
+        self.method_state = tk.IntVar(self)
+        self.MAP_button = tk.Radiobutton(self,
+                                         text="MAP",
+                                         variable=self.method_state,
+                                         value=self.USE_MAP,
+                                         command=self.master.update_method)
+        self.MCMC_button = tk.Radiobutton(self,
+                                          text="MCMC",
+                                          variable=self.method_state,
+                                          value=self.USE_MCMC,
+                                          command=self.master.update_method)
+        self.MAP_button.grid(row=0, column=0)
+        self.MCMC_button.grid(row=0, column=3)
+        
+        # Create label and box to set number of random starts:
+        self.starts_label = tk.Label(self, text="random starts:")
+        self.starts_label.grid(row=0, column=1, sticky='E')
+        self.starts_box = tk.Entry(self, width=6)
+        self.starts_box.grid(row=0, column=2, sticky='EW')
+
+class MCMCFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.walker_label = tk.Label(self, text="walkers:")
+        self.walker_label.grid(row=0, column=0, sticky='E')
+        self.walker_box = tk.Entry(self, width=4)
+        self.walker_box.insert(tk.END, '200')
+        self.walker_box.grid(row=0, column=1, sticky='EW')
+        
+        self.sample_label = tk.Label(self, text="samples:")
+        self.sample_label.grid(row=0, column=2, sticky='E')
+        self.sample_box = tk.Entry(self, width=4)
+        self.sample_box.insert(tk.END, '500')
+        self.sample_box.grid(row=0, column=3, sticky='EW')
+        
+        self.burn_label = tk.Label(self, text="burn:")
+        self.burn_label.grid(row=0, column=4, sticky='E')
+        self.burn_box = tk.Entry(self, width=4)
+        self.burn_box.insert(tk.END, '100')
+        self.burn_box.grid(row=0, column=5, sticky='EW')
+        
+        self.thin_label = tk.Label(self, text="thin:")
+        self.thin_label.grid(row=0, column=6, sticky='E')
+        self.thin_box = tk.Entry(self, width=4)
+        self.thin_box.insert(tk.END, '150')
+        self.thin_box.grid(row=0, column=7, sticky='EW')
+        
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+        self.grid_columnconfigure(5, weight=1)
+        self.grid_columnconfigure(7, weight=1)
+
+class MCMCConstraintFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.full_MC_state = tk.IntVar(self)
+        self.full_MC_button = tk.Checkbutton(self,
+                                             text="use full Monte Carlo",
+                                             variable=self.full_MC_state,
+                                             command=self.update_full_MC)
+        self.full_MC_button.grid(row=0, column=0, sticky='W')
+        
+        self.pos_state = tk.IntVar(self)
+        self.pos_button = tk.Checkbutton(self,
+                                         text="reject negative samples",
+                                         variable=self.pos_state)
+        self.pos_button.grid(row=1, column=0, sticky='W')
+        
+        self.mono_state = tk.IntVar(self)
+        self.mono_button = tk.Checkbutton(self,
+                                          text="reject non-monotonic samples",
+                                          variable=self.mono_state)
+        self.mono_button.grid(row=2, column=0, sticky='W')
+            
+    def update_full_MC(self):
+        if self.full_MC_state.get():
+            self.mono_button.config(state=tk.NORMAL)
+            self.pos_button.config(state=tk.NORMAL)
+        else:
+            self.mono_button.config(state=tk.DISABLED)
+            self.pos_button.config(state=tk.DISABLED)
+
+class FittingFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        self.frame_label = tk.Label(self, text="Fitting Method", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label.grid(row=0, sticky='W')
+        
+        # Create frame to hold fitting method selection:
+        self.method_frame = FittingMethodFrame(self)
+        self.method_frame.grid(row=1, sticky='W')
+        
+        # Create frame to hold MCMC parameters:
+        self.MCMC_frame = MCMCFrame(self)
+        self.MCMC_frame.grid(row=2, sticky='EW')
+        
+        # Create frame to hold MCMC constraint options:
+        self.MCMC_constraint_frame = MCMCConstraintFrame(self)
+        self.MCMC_constraint_frame.grid(row=3, sticky='W')
+        
+        self.grid_columnconfigure(0, weight=1)
+        
+        self.method_frame.MAP_button.invoke()
+    
+    def update_method(self):
+        if self.method_frame.method_state.get() == self.method_frame.USE_MAP:
+            self.method_frame.starts_label.config(state=tk.NORMAL)
+            self.method_frame.starts_box.config(state=tk.NORMAL)
+            for w in self.MCMC_frame.winfo_children():
+                w.config(state=tk.DISABLED)
+            for w in self.MCMC_constraint_frame.winfo_children():
+                w.config(state=tk.DISABLED)
+        else:
+            self.method_frame.starts_label.config(state=tk.DISABLED)
+            self.method_frame.starts_box.config(state=tk.DISABLED)
+            for w in self.MCMC_frame.winfo_children():
+                w.config(state=tk.NORMAL)
+            self.MCMC_constraint_frame.full_MC_button.config(state=tk.NORMAL)
+            self.MCMC_constraint_frame.update_full_MC()
+
+class EvaluationFrame(tk.Frame):
+    UNIFORM_GRID = 1
+    POINTS = 2
+    
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        self.frame_label = tk.Label(self, text="Evaluation", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label.grid(row=0, sticky='W')
+        
+        # Create radio buttons for uniform grid versus specific points:
+        self.method_state = tk.IntVar(self)
+        self.uniform_button = tk.Radiobutton(self,
+                                             text="uniform grid:",
+                                             variable=self.method_state,
+                                             value=self.UNIFORM_GRID,
+                                             command=self.update_method)
+        self.points_button = tk.Radiobutton(self,
+                                            text="specific points:",
+                                            variable=self.method_state,
+                                            value=self.POINTS,
+                                            command=self.update_method)
+        self.uniform_button.grid(row=1, column=0, sticky='W')
+        self.points_button.grid(row=2, column=0, sticky='W')
+        
+        # Create labels and boxes for setting parameters:
+        self.npts_box = tk.Entry(self, width=4)
+        self.npts_box.grid(row=1, column=1, sticky='EW')
+        self.npts_label = tk.Label(self, text="points from")
+        self.npts_label.grid(row=1, column=2)
+        self.x_min_box = tk.Entry(self, width=4)
+        self.x_min_box.grid(row=1, column=3, sticky='EW')
+        self.to_label = tk.Label(self, text="to")
+        self.to_label.grid(row=1, column=4)
+        self.x_max_box = tk.Entry(self, width=4)
+        self.x_max_box.grid(row=1, column=5, sticky='EW')
+        
+        self.x_points_box = tk.Entry(self)
+        self.x_points_box.grid(row=2, column=1, columnspan=5, sticky='EW')
+        
+        # Create checkbox to select whether or not a/L is computed:
+        self.a_L_state = tk.IntVar(self)
+        self.a_L_button = tk.Checkbutton(self,
+                                         text="compute a/L",
+                                         variable=self.a_L_state)
+        self.a_L_button.grid(row=3, column=0, sticky='W', columnspan=6)
+        
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+        self.grid_columnconfigure(5, weight=1)
+        
+        self.uniform_button.invoke()
+        self.a_L_button.select()
+    
+    def update_method(self):
+        if self.method_state.get() == self.UNIFORM_GRID:
+            self.npts_box.config(state=tk.NORMAL)
+            self.npts_label.config(state=tk.NORMAL)
+            self.x_min_box.config(state=tk.NORMAL)
+            self.to_label.config(state=tk.NORMAL)
+            self.x_max_box.config(state=tk.NORMAL)
+            self.x_points_box.config(state=tk.DISABLED)
+        else:
+            self.npts_box.config(state=tk.DISABLED)
+            self.npts_label.config(state=tk.DISABLED)
+            self.x_min_box.config(state=tk.DISABLED)
+            self.to_label.config(state=tk.DISABLED)
+            self.x_max_box.config(state=tk.DISABLED)
+            self.x_points_box.config(state=tk.NORMAL)
+
+class StatusBox(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        # self.frame_label = tk.Label(self, text="Status", font=tkFont.Font(weight=tkFont.BOLD))
+        # self.frame_label.grid(row=0, sticky='W')
+        
+        self.history_box = tk.Text(self,
+                                   width=30,
+                                   height=6,
+                                   # font=tkFont.Font(size=8)
+                                  )
+        self.history_box.grid(row=1, sticky='EWNS')
+        self.history_box.insert(tk.END,
+                                'This is fit_profile version {ver}, launched at {time}. {cores} cores detected.\n' \
+                                .format(ver=__version__,
+                                        time=time.strftime(DATE_FORMAT),
+                                        cores=multiprocessing.cpu_count()))
+        self.history_box.config(state=tk.DISABLED)
+        self.history_scroll = tk.Scrollbar(self)
+        self.history_scroll.grid(row=1, column=1, sticky='NS')
+        self.history_scroll.config(command=self.history_box.yview)
+        self.history_box.config(yscrollcommand=self.history_scroll.set)
+        
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+    
+    def add_line(self, s):
+        self.history_box.config(state=tk.NORMAL)
+        self.history_box.insert(tk.END, s + '\n')
+        self.history_box.config(state=tk.DISABLED)
+        self.history_box.yview(tk.END)
+        self.history_box.update()
+
+class ControlBox(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        # Create main label for frame:
+        # self.frame_label = tk.Label(self, text="Control", font=tkFont.Font(weight=tkFont.BOLD))
+        # self.frame_label.grid(row=0, sticky='W')
+        
+        # Create buttons:
+        self.load_button = tk.Button(self, text="load data", command=self.master.master.load_data)
+        self.load_button.grid(row=1, column=0)
+        self.avg_button = tk.Button(self, text="plot data", command=self.master.master.average_data)
+        self.avg_button.grid(row=1, column=1)
+        self.fit_button = tk.Button(self, text="fit data", command=self.master.master.fit_data)
+        self.fit_button.grid(row=1, column=2)
+        self.save_button = tk.Button(self, text="save fit", command=self.master.master.save_fit)
+        self.save_button.grid(row=1, column=3)
+        self.exit_button = tk.Button(self, text="exit", command=self.master.master.exit)
+        self.exit_button.grid(row=1, column=4)
+
+class PlotFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.f = Figure()
+        self.a_val = self.f.add_subplot(3, 1, 1)
+        self.a_grad = self.f.add_subplot(3, 1, 2, sharex=self.a_val)
+        self.a_a_L = self.f.add_subplot(3, 1, 3, sharex=self.a_val)
+        self.canvas = FigureCanvasTkAgg(self.f, master=self)
+        self.canvas.show()
+        self.canvas.get_tk_widget().grid(row=0, column=0, sticky='NESW')
+        
+        self.toolbar_frame = tk.Frame(self)
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.toolbar_frame)
+        self.toolbar.update()
+        # self.canvas._tkcanvas.grid(row=1, column=0, sticky='EW')
+        self.toolbar_frame.grid(row=1, column=0, sticky='EW')
+        
+        self.canvas.mpl_connect('button_press_event', lambda event: self.canvas._tkcanvas.focus_set())
+        self.canvas.mpl_connect('key_press_event', self.on_key_event)
+        
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        
+    def on_key_event(self, evt):
+        key_press_handler(evt, self.canvas, self.toolbar)
+
+class ControlFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        frame_params = {'relief': tk.RAISED, 'borderwidth': 2}
+        
+        self.data_source_frame = DataSourceFrame(self, **frame_params)
+        self.data_source_frame.grid(row=0, sticky='EW')
+
+        self.averaging_frame = AveragingFrame(self, **frame_params)
+        self.averaging_frame.grid(row=1, sticky='EW')
+
+        self.outlier_frame = OutlierFrame(self, **frame_params)
+        self.outlier_frame.grid(row=2, sticky='EW')
+
+        self.kernel_frame = KernelFrame(self, **frame_params)
+        self.kernel_frame.grid(row=3, sticky='EW')
+
+        self.fitting_frame = FittingFrame(self, **frame_params)
+        self.fitting_frame.grid(row=4, sticky='EW')
+
+        self.eval_frame = EvaluationFrame(self, **frame_params)
+        self.eval_frame.grid(row=5, sticky='EW')
+
+        self.status_frame = StatusBox(self, **frame_params)
+        self.status_frame.grid(row=6, sticky='EWNS')
+
+        self.control_frame = ControlBox(self)
+        self.control_frame.grid(row=7, sticky='EW')
+        
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(6, weight=1)
+
+class FitWindow(tk.Tk):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Tk.__init__(self, *args, **kwargs)
+        
+        self.wm_title("fit_profile %s" % (__version__,))
+
+        self.control_frame = ControlFrame(self)
+        self.control_frame.grid(row=0, column=1, sticky='NESW')
+
+        self.plot_frame = PlotFrame(self)
+        self.plot_frame.grid(row=0, column=0, sticky='NESW')
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        
+        self.master_p = None
+        self.p = None
+        self.combined_p = None
+        
+        self.l = []
+        self.e = []
+        
+        self.X = None
+        self.res = None
+    
+    def load_data(self):
+        self.master_p = collections.OrderedDict()
+        
+        if (self.control_frame.data_source_frame.tree_file_frame.source_state.get() ==
+                self.control_frame.data_source_frame.tree_file_frame.TREE_MODE):
+            try:
+                shot = int(self.control_frame.data_source_frame.shot_frame.shot_box.get())
+                self.control_frame.status_frame.add_line("Loading data from shot number %d..." % (shot,))
+            except ValueError:
+                self.control_frame.status_frame.add_line("Invalid shot number! Loading of data from tree failed.")
+                return
+            include = [b.system for b in self.control_frame.data_source_frame.system_frame.buttons if b.state_var.get()]
+            signal = self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get()
+            for system in include:
+                self.control_frame.status_frame.add_line("Loading data from %s..." % (system,))
+                try:
+                    if signal == 'ne':
+                        self.master_p[system] = profiletools.ne(shot, include=[system])
+                    elif signal == 'Te':
+                        self.master_p[system] = profiletools.Te(shot, include=[system], remove_ECE_edge=False)
+                    else:
+                        self.control_frame.status_frame.add_line("Unsupported signal %s." % (signal,))
+                except MDSplus.TreeException as e:
+                    self.control_frame.status_frame.add_line(
+                        "Could not fetch data from the tree for system %s. "
+                        "Exception was: %s" % (system, e,)
+                    )
+            if not self.master_p:
+                self.control_frame.status_frame.add_line("No systems loaded! Loading of data from tree failed.")
+                return
+        else:
+            path = self.control_frame.data_source_frame.tree_file_frame.path_entry.get()
+            root, ext = os.path.splitext(path)
+            path = os.path.abspath(os.path.expanduser(path))
+            base = os.path.basename(path)
+            if not os.path.isfile(path):
+                self.control_frame.status_frame.add_line(
+                    "File %s does not exist or is not a file! Loading of data "
+                    "from file failed." % (path,)
+                )
+                return
+            time_name = self.control_frame.data_source_frame.variable_name_frame.time_box.get()
+            space_name = self.control_frame.data_source_frame.variable_name_frame.space_box.get()
+            data_name = self.control_frame.data_source_frame.variable_name_frame.data_box.get()
+            if space_name:
+                if time_name:
+                    X_names = [time_name, space_name]
+                else:
+                    X_names = [space_name]
             else:
-                args.t_min = float(res_split[0])
-                args.t_max = float(res_split[1])
-        else:
-            print("No time(s) specified. Disabling edge constraint.")
-            args.no_edge_constraint = True
-            if ('norm' not in args.coordinate) and ('r/a' not in args.coordinate):
-                print("No time(s) specified and coordinate is not normalized. "
-                      "Disabling core constraint.")
-                args.no_core_constraint = True
+                X_names = None
+            if not data_name:
+                data_name = None
+            if ext.lower() == '.csv':
+                metadata_lines = self.control_frame.data_source_frame.variable_name_frame.meta_box.get()
+                try:
+                    metadata_lines = int(metadata_lines)
+                except ValueError:
+                    if metadata_lines == '':
+                        self.control_frame.status_frame.add_line(
+                            "No metadata indicated to be in file. Make sure to "
+                            "specify number of lines of metadata if any are "
+                            "present."
+                        )
+                        metadata_lines = 0
+                    else:
+                        self.control_frame.status_frame.add_line(
+                            "Invalid number of metadata lines! Loading of data from "
+                            "file failed."
+                        )
+                        return
+                self.control_frame.status_frame.add_line("Loading data from CSV file %s..." % (path,))
+                self.master_p[base] = profiletools.read_plasma_csv(path,
+                                                                     X_names=X_names,
+                                                                     y_name=data_name,
+                                                                     metadata_lines=metadata_lines)
+            else:
+                if X_names is None or data_name is None:
+                    self.control_frame.status_frame.add_line(
+                        "Must specify variable names when reading from a NetCDF "
+                        "file! Loading of data from file failed."
+                    )
+                    return
+                self.control_frame.status_frame.add_line("Loading data from NetCDF file %s..." % (path,))
+                self.master_p[base] = profiletools.read_plasma_NetCDF(path,
+                                                                      X_names,
+                                                                      data_name)
+            if hasattr(self.master_p[base], 'shot'):
+                self.control_frame.data_source_frame.shot_frame.shot_box.delete(0, tk.END)
+                self.control_frame.data_source_frame.shot_frame.shot_box.insert(0, str(self.master_p[base].shot))
+            if hasattr(self.master_p[base], 't_min'):
+                self.control_frame.averaging_frame.time_window_frame.window_button.invoke()
+                self.control_frame.averaging_frame.time_window_frame.t_min_box.delete(0, tk.END)
+                self.control_frame.averaging_frame.time_window_frame.t_min_box.insert(0, str(self.master_p[base].t_min))
+            if hasattr(self.master_p[base], 't_max'):
+                self.control_frame.averaging_frame.time_window_frame.window_button.invoke()
+                self.control_frame.averaging_frame.time_window_frame.t_max_box.delete(0, tk.END)
+                self.control_frame.averaging_frame.time_window_frame.t_max_box.insert(0, str(self.master_p[base].t_max))
+            if hasattr(self.master_p[base], 'times'):
+                self.control_frame.averaging_frame.time_window_frame.point_button.invoke()
+                self.control_frame.averaging_frame.time_window_frame.times_box.delete(0, tk.END)
+                self.control_frame.averaging_frame.time_window_frame.times_box.insert(0, str(self.master_p[base].times)[1:-1])
+            # Set the coordinate selector
+            self.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.set(self.master_p[base].abscissa)
+            
+        self.control_frame.status_frame.add_line("Loading of data complete.")
     
-    if not hasattr(p, 'shot'):
-        p.shot = args.shot
-        if args.shot:
-            p.efit_tree = eqtools.CModEFITTree(args.shot)
-    if not hasattr(p, 'abscissa'):
-        p.abscissa = args.coordinate
-    if not hasattr(p, 'times') and args.t_points:
-        p.times = args.t_points
-        if not hasattr(p, 't_min'):
-            p.t_min = min(p.times)
-        if not hasattr(p, 't_max'):
-            p.t_max = max(p.times)
-    if not hasattr(p.t_min):
-        p.t_min = args.t_min
-    if not hasattr(p.t_max):
-        p.t_max = args.t_max
-else:
-    # Create relevant object:
-    profile_kwargs = {}
+    def average_data(self):
+        markercycle = itertools.cycle('o^sDH*')
+        
+        self.control_frame.status_frame.add_line("Averaging and plotting data...")
+        if not self.master_p:
+            self.control_frame.status_frame.add_line("Cannot proceed until data have been loaded!")
+            return
+        
+        self.plot_frame.a_val.clear()
+        self.plot_frame.a_grad.clear()
+        self.plot_frame.a_a_L.clear()
+        
+        method = self.control_frame.averaging_frame.method_frame.method_var.get()
+        abscissa = self.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.get()
+        
+        window_mode = (self.control_frame.averaging_frame.time_window_frame.method_state.get() ==
+                       self.control_frame.averaging_frame.time_window_frame.WINDOW_MODE)
+        
+        core_only = self.control_frame.kernel_frame.kernel_type_frame.core_only_state.get()
+        
+        times = []
+        
+        if window_mode:
+            try:
+                t_min = float(self.control_frame.averaging_frame.time_window_frame.t_min_box.get())
+            except ValueError:
+                t_min = None
+                self.control_frame.status_frame.add_line("Invalid value for t_min. No lower bound applied.")
+            try:
+                t_max = float(self.control_frame.averaging_frame.time_window_frame.t_max_box.get())
+            except ValueError:
+                t_max = None
+                self.control_frame.status_frame.add_line("Invalid value for t_max. No upper bound applied.")
+        else:
+            s_times = re.findall(r'([0-9.]+)[^0-9.]*',
+                                 self.control_frame.averaging_frame.time_window_frame.times_box.get())
+            for t in s_times:
+                try:
+                    times.append(float(t))
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid value %s in time points, will be ignored." % (t,)
+                    )
+            if not times:
+                self.control_frame.status_frame.add_line("No valid points in time points. No bounding applied.")
+        
+        self.p = copy.deepcopy(self.master_p)
+        for k, p in self.p.iteritems():
+            self.control_frame.status_frame.add_line("Processing data from %s..." % (k,))
+            # Restrict data to desired time points:
+            if p.X_dim > 1:
+                if window_mode:
+                    if t_min is not None:
+                        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
+                    if t_max is not None:
+                        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
+                else:
+                    if times:
+                        p.keep_times(times)
+                # Convert abscissa if needed:
+                # TODO: This will need to be moved outside of the X_dim>1 test once convert_abscissa supports already-averaged data!
+                try:
+                    p.convert_abscissa(abscissa)
+                except:
+                    self.control_frame.status_frame.add_line(
+                        "Conversion to coordinate %s from %s failed for system %s."
+                        % (abscissa, p.abscissa, k)
+                    )
+                if 'GPC' in k or 'ECE' in k or core_only:
+                    p.remove_edge_points()
+                if len(times) == 1 or method == "all points":
+                    p.drop_axis(0)
+                else:
+                    p.time_average(robust=(method == "robust"))
+            else:
+                if 'GPC' in k or 'ECE' in k or core_only:
+                    p.remove_edge_points()
+        
+            p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
+        
+        self.control_frame.status_frame.add_line("Combining profiles...")
+        
+        p_list = []
+        for p in self.p.values():
+            p_list.append(p)
+        self.combined_p = copy.deepcopy(p_list.pop())
+        for p_other in p_list:
+            self.combined_p.add_profile(p_other)
+        
+        if self.control_frame.outlier_frame.extreme_state.get():
+            self.control_frame.status_frame.add_line("Removing points that exhibit extreme changes...")
+            try:
+                X_bad_c, y_bad_c, err_X_bad_c, err_y_bad_c = \
+                    self.combined_p.remove_extreme_changes(thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get()))
+                X_bad_c = scipy.asarray(X_bad_c).flatten()
+                err_X_bad_c = scipy.asarray(err_X_bad_c).flatten()
+                self.control_frame.status_frame.add_line("Removed %d points with extreme changes." % (len(y_bad_c),))
+                
+                if len(y_bad_c) > 0:
+                    self.plot_frame.a_val.plot(X_bad_c, y_bad_c, 'mx',
+                                               label='extreme change', ms=14)
+            except ValueError:
+                self.control_frame.status_frame.add_line("Invalid threshold for extreme change rejection!")
+        
+        self.plot_frame.a_val.set_ylabel(
+            "%s [%s]" % (self.combined_p.y_label, self.combined_p.y_units,) if self.combined_p.y_units
+            else self.combined_p.y_label)
+        self.plot_frame.a_val.set_xlim((self.combined_p.X.min(), self.combined_p.X.max()))
+        self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
+        self.plot_frame.canvas.draw()
+        self.plot_frame.canvas._tkcanvas.focus_set()
+        self.control_frame.status_frame.add_line("Averaging and plotting of data complete.")
+    
+    def fit_data(self):
+        if not self.combined_p:
+            self.control_frame.status_frame.add_line("Cannot fit data until they have been loaded and plotted!")
+        self.control_frame.status_frame.add_line("Creating Gaussian process...")
+        self.combined_p.create_gp(k=self.control_frame.kernel_frame.kernel_type_frame.k_var.get(),
+                                  constrain_slope_on_axis=False,
+                                  constrain_at_limiter=False,
+                                  upper_factor=args.upper_factor,
+                                  lower_factor=args.lower_factor)
+        # Process core constraint:
+        if self.control_frame.kernel_frame.constraints_frame.core_state.get():
+            s_core_loc = self.control_frame.kernel_frame.constraints_frame.core_loc.get()
+            if s_core_loc == '':
+                self.combined_p.constrain_slope_on_axis()
+            else:
+                try:
+                    core_loc = float(s_core_loc)
+                    self.combined_p.gp.add_data(core_loc, 0, err_y=0, n=1)
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid core constraint location %s, constraint will not be applied!" % (s_core_loc,)
+                    )
+        # Process edge constraint:
+        if self.control_frame.kernel_frame.constraints_frame.edge_state.get():
+            s_edge_locs = self.control_frame.kernel_frame.constraints_frame.edge_loc.get()
+            if s_edge_locs == '':
+                self.combined_p.constrain_at_limiter()
+            else:
+                s_edge_locs = re.findall(r'([0-9.]+)[^0-9.]*', s_edge_locs)
+                edge_locs = []
+                for loc in s_edge_locs:
+                    try:
+                        edge_locs.append(float(loc))
+                    except ValueError:
+                        self.control_frame.status_frame.add_line(
+                            "Invalid edge constraint location %s in edge locations, will be ignored." % (loc,)
+                        )
+                if len(edge_locs) == 0:
+                    self.control_frame.status_frame.add_line(
+                        "No valid edge constraint locations, constraint will not be applied!"
+                    )
+                else:
+                    self.combined_p.gp.add_data(edge_locs, 0, err_y=0.01, n=0)
+                    self.combined_p.gp.add_data(edge_locs, 0, err_y=0.1, n=1)
+        # Process bounds:
+        for k, l, u in zip(range(0, len(self.combined_p.gp.k.hyperprior.bounds)),
+                           self.control_frame.kernel_frame.bounds_frame.lower_bounds,
+                           self.control_frame.kernel_frame.bounds_frame.upper_bounds):
+            old_bounds = self.combined_p.gp.k.hyperprior.bounds[k]
+            new_bounds = list(old_bounds)
+            
+            new_lb = l.get()
+            try:
+                new_bounds[0] = float(new_lb)
+            except ValueError:
+                if new_lb == '':
+                    l.insert(0, str(old_bounds[0]))
+                else:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid lower bound %s, will use default value instead." % (new_lb,)
+                    )
+                
+            new_ub = u.get()
+            try:
+                new_bounds[1] = float(new_ub)
+            except ValueError:
+                if new_ub == '':
+                    u.insert(0, str(old_bounds[1]))
+                else:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid upper bound %s, will use default value instead." % (new_ub,)
+                    )
+            
+            self.combined_p.gp.k.hyperprior.bounds[k] = new_bounds
+        
+        self.control_frame.status_frame.add_line("Gaussian process created.")
+        
+        # Process outliers:
+        if self.control_frame.outlier_frame.outlier_state.get():
+            self.control_frame.status_frame.add_line("Finding outliers...")
+            self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
+            self.find_MAP()
+            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = \
+                self.combined_p.remove_outliers(thresh=float(self.control_frame.outlier_frame.outlier_thresh_box.get()))
+            X_bad_o = scipy.asarray(X_bad_o).flatten()
+            err_X_bad_o = scipy.asarray(err_X_bad_o).flatten()
+            self.control_frame.status_frame.add_line("Removed %d outliers." % (len(y_bad_o),))
+            if len(y_bad_o) > 0:
+                self.plot_frame.a_val.plot(X_bad_o, y_bad_o, 'rx',
+                                           label='outlier', ms=14)
+        
+        # Do the voodoo:
+        if (self.control_frame.fitting_frame.method_frame.method_state.get() == \
+                self.control_frame.fitting_frame.method_frame.USE_MAP):
+            self.control_frame.status_frame.add_line("Finding MAP estimate...")
+            self.find_MAP()
+        else:
+            # TODO: Handle MCMC!
+            raise NotImplementedError("MCMC support not done!")
+        
+        # Evaluate:
+        self.control_frame.status_frame.add_line("Evaluating fit...")
+        if (self.control_frame.eval_frame.method_state.get() ==
+                self.control_frame.eval_frame.UNIFORM_GRID):
+            try:
+                X_min = float(self.control_frame.eval_frame.x_min_box.get())
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid lower bound for uniform grid!"
+                )
+                return
+            try:
+                X_max = float(self.control_frame.eval_frame.x_max_box.get())
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid upper bound for uniform grid!"
+                )
+                return
+            try:
+                npts = int(self.control_frame.eval_frame.npts_box.get())
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid number of points for uniform grid!"
+                )
+                return
+            X = scipy.linspace(X_min, X_max, npts)
+        else:
+            X = []
+            s_points = re.findall(r'([0-9.]+)[^0-9.]*',
+                                  self.control_frame.eval_frame.x_points_box.get())
+            for p in s_points:
+                try:
+                    X.append(float(p))
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid value %s in evaluation points, will be ignored." % (p,)
+                    )
+            if not X:
+                self.control_frame.status_frame.add_line("No valid points in evaluation points!")
+                return
+        
+        if self.control_frame.eval_frame.a_L_state.get():
+            res = self.combined_p.compute_a_over_L(X, use_MCMC=False, return_prediction=True)
+        else:
+            res = self.combined_p.smooth(X, n=0, use_MCMC=False, full_output=True)
+            res['mean_val'] = res.pop('mean')
+            res['std_val'] = res.pop('std')
+        
+        self.res = res
+        self.X = X
+        
+        for line in self.l:
+            try:
+                line.remove()
+            except ValueError:
+                pass
+        for env in self.e:
+            try:
+                env.remove()
+            except ValueError:
+                pass
+        
+        self.l, self.e = gptools.univariate_envelope_plot(X, res['mean_val'], res['std_val'], ax=self.plot_frame.a_val, color='b')
+        if self.control_frame.eval_frame.a_L_state.get():
+            color = plt.getp(self.l[0], 'color')
+            l, e = gptools.univariate_envelope_plot(X, res['mean_grad'], res['std_grad'], ax=self.plot_frame.a_grad, color=color)
+            self.l.extend(l)
+            self.e.extend(e)
+            l, e = gptools.univariate_envelope_plot(X, res['mean_a_L'], res['std_a_L'], ax=self.plot_frame.a_a_L, color=color)
+            self.l.extend(l)
+            self.e.extend(e)
+        
+        self.plot_frame.a_grad.set_xlabel(self.plot_frame.a_val.get_xlabel())
+        self.plot_frame.a_a_L.set_xlabel(self.plot_frame.a_val.get_xlabel())
+        
+        y_units = self.combined_p.y_units
+        if not y_units:
+            y_units = '1'
+        X_units = self.combined_p.X_units[0]
+        if X_units:
+            X_units = '/' + X_units
+        combined_units = y_units + X_units
+        if combined_units != '1':
+            label = "$d%s/d%s$ [%s]" % (self.combined_p.y_label.strip('$'), self.combined_p.X_labels[0].strip('$'), combined_units)
+        else:
+            label = "$d%s/d%s$" % (self.combined_p.y_label.strip('$'), self.combined_p.X_labels[0])
+        self.plot_frame.a_grad.set_ylabel(label)
+        
+        self.plot_frame.a_a_L.set_ylabel("$a/L_{%s}$" % (self.combined_p.y_label.strip('$'),))
+        
+        self.plot_frame.a_val.set_xlim((min(X), max(X)))
+        self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
+        self.plot_frame.canvas.draw()
+        self.plot_frame.canvas._tkcanvas.focus_set()
+        self.control_frame.status_frame.add_line("Fitting complete.")
+    
+    def find_MAP(self):
+        res_min, complete = self.combined_p.find_gp_MAP_estimate(
+            random_starts=int(self.control_frame.fitting_frame.method_frame.starts_box.get()),
+            verbose=True
+        )
+        self.control_frame.status_frame.add_line(
+            "MAP estimate complete. Result is:"
+        )
+        k_nk = self.combined_p.gp.k + self.combined_p.gp.noise_k
+        for v, l in zip(k_nk.free_params, k_nk.free_param_names):
+            self.control_frame.status_frame.add_line("%s\t%.3e" % (l.translate(None, '\\'), v))
+        if complete < 4:
+            self.control_frame.status_frame.add_line(
+                "Less than 4 completed starts were obtained. Try increasing "
+                "the number of random starts, or adjusting the hyperparameter "
+                "bounds."
+            )
+        if not res_min.success:
+            self.control_frame.status_frame.add_line(
+                "Optimizer reports failure, selected hyperparameters "
+                "are likely NOT optimal. Status: %d, Message: '%s'. "
+                "Try adjusting bounds, initial guesses or the number "
+                "of random starts used."
+                % (res_min.status, res_min.message)
+            )
+        bounds = scipy.asarray(k_nk.free_param_bounds)
+        if ((res_min.x <= 1.001 * bounds[:, 0]).any() or
+            (res_min.x >= 0.999 * bounds[:, 1]).any()):
+            self.control_frame.status_frame.add_line(
+                "Optimizer appears to have hit/exceeded the bounds. Try "
+                "adjusting bounds, initial guesses or the number of random "
+                "starts used."
+            )
+    
+    def save_fit(self):
+        if self.res is None:
+            self.control_frame.status_frame.add_line(
+                "Cannot save result until data have been fit!"
+            )
+            return
+        if not args.output_filename:
+            path = tkFileDialog.asksaveasfilename()
+        else:
+            path = args.output_filename
+        root, ext = os.path.splitext(path)
+        history = (
+            "Created by user {user} on {host} with {module} version {ver} on {time}.\n".format(
+                host=socket.gethostname(), user=getpass.getuser(),
+                module=inspect.stack()[0][1], ver=__version__, time=time.asctime()
+            )
+        )
+        if ext.lower() == '.csv':
+            self.control_frame.status_frame.add_line(
+                "Writing results to CSV file %s..." % os.path.basename(path)
+            )
+            X_name = self.combined_p.X_labels[0] + ' [' + self.combined_p.X_units[0] + ']' if self.combined_p.X_units[0] else self.combined_p.X_labels[0]
+            y_name = self.combined_p.y_label + ' [' + self.combined_p.y_units + ']' if self.combined_p.y_units else self.combined_p.y_label
+            with open(os.path.expanduser(path), 'wb') as outfile:
+                # Write metadata:
+                outfile.write(history)
+                try:
+                    outfile.write("shot %d\n" % (self.combined_p.shot))
+                except AttributeError:
+                    pass
+                try:
+                    outfile.write("t_min %f\n" % (self.combined_p.t_min))
+                except AttributeError:
+                    pass
+                try:
+                    outfile.write("t_max %f\n" % (self.combined_p.t_max))
+                except AttributeError:
+                    pass
+                if hasattr(self.combined_p, 'times'):
+                    times = list(self.combined_p.times)
+                    outfile.write("times %f" % (times.pop()))
+                    for t in times:
+                        outfile.write(",%f" % (t,))
+                    outfile.write("\n")
+                try:
+                    outfile.write("coordinate %s\n" % (self.combined_p.abscissa))
+                except AttributeError:
+                    pass
+                    
+                writer = csv.writer(outfile)
+                if 'mean_a_L' in self.res:
+                    writer.writerow([X_name,
+                                     y_name, 'err_' + y_name,
+                                     'D' + y_name, 'err_D' + y_name,
+                                     'a_L' + y_name, 'err_a_L' + y_name])
+                    writer.writerows(zip(self.X,
+                                         self.res['mean_val'], self.res['std_val'],
+                                         self.res['mean_grad'], self.res['std_grad'],
+                                         self.res['mean_a_L'], self.res['std_a_L']))
+                else:
+                    writer.writerow([X_name, y_name, 'err_' + y_name])
+                    writer.writerows(zip(self.X, self.res['mean_val'], self.res['std_val']))
+        else:
+            self.control_frame.status_frame.add_line(
+                "Writing results to NetCDF file %s..." % os.path.basename(path)
+            )
+            X_name = self.combined_p.X_labels[0].translate(None, '\\$')
+            X_units = self.combined_p.X_units[0]
+            y_name = self.combined_p.y_label.translate(None, '\\$')
+            y_units = self.combined_p.y_units
+            
+            with scipy.io.netcdf.netcdf_file(os.path.expanduser(path), mode='w') as f:
+                f.history = history
+                try:
+                    f.shot = self.combined_p.shot
+                except AttributeError:
+                    pass
+                try:
+                    f.t_min = self.combined_p.t_min
+                except AttributeError:
+                    pass
+                try:
+                    f.t_max  = self.combined_p.t_max
+                except AttributeError:
+                    pass
+                try:
+                    f.times = list(self.combined_p.times)
+                except AttributeError:
+                    pass
+                try:
+                    f.coordinate = self.combined_p.abscissa
+                except AttributeError:
+                    pass
+                f.createDimension(X_name, len(self.X))
+                v_X = f.createVariable(X_name, float, (X_name,))
+                v_X[:] = self.X
+                v_X.units = X_units
+                v_y = f.createVariable(y_name, float, (X_name,))
+                v_y[:] = self.res['mean_val']
+                v_y.units = y_units
+                v_err_y = f.createVariable('err_'+y_name, float, (X_name,))
+                v_err_y[:] = self.res['std_val']
+                v_err_y.units = y_units
+                if 'mean_a_L' in self.res:
+                    v_grad = f.createVariable("d%s/d%s" % (y_name, X_name), float, (X_name,))
+                    v_grad[:] = self.res['mean_grad']
+                    v_grad.units = y_units + '/' + X_units
+                    v_err_grad = f.createVariable("err_d%s/d%s" % (y_name, X_name), float, (X_name,))
+                    v_err_grad[:] = self.res['std_grad']
+                    v_err_grad.units = y_units + '/' + X_units
+                    
+                    v_a_L = f.createVariable("a_L%s" % (y_name,), float, (X_name,))
+                    v_a_L[:] = self.res['mean_a_L']
+                    v_a_L.units = ''
+                    v_err_a_L = f.createVariable("err_a_L%s" % (y_name,), float, (X_name,))
+                    v_err_a_L[:] = self.res['std_a_L']
+                    v_err_a_L.units = ''
+        
+        self.control_frame.status_frame.add_line(
+            "Done writing results."
+        )
+    
+    def exit(self):
+        self.destroy()
+
+if __name__ == "__main__":
+    root = FitWindow()
+    
+    # Populate the GUI with parameters from args:
+    # TODO: Put some clever defaults here!
+    # Turn off edge constraint for --core-only:
+    if args.core_only:
+        args.no_edge_constraint = True
+        args.kernel = 'SE'
+
+    # Bump random starts up to 4 for low processor count machines:
+    if not args.random_starts:
+        num_proc = multiprocessing.cpu_count()
+        if num_proc < 4:
+            root.status_frame.add_line(
+                "Number of processors available is less than 4. Setting random_starts "
+                "to 4 to help ensure convergence of MAP estimation. You can override "
+                "this by setting the number of random starts explicitly. Running on "
+                "a computer with more cores will make this run much faster."
+            )
+            args.random_starts = 4
+        else:
+            args.random_starts = num_proc
+    
+    if args.signal:
+        root.control_frame.data_source_frame.signal_coordinate_frame.signal_var.set(args.signal)
+        root.control_frame.data_source_frame.update_signal(args.signal)
+    if args.shot is not None:
+        root.control_frame.data_source_frame.shot_frame.shot_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.shot_frame.shot_box.insert(0, str(args.shot))
+    if args.t_min is not None:
+        root.control_frame.averaging_frame.time_window_frame.t_min_box.delete(0, tk.END)
+        root.control_frame.averaging_frame.time_window_frame.t_min_box.insert(0, str(args.t_min))
+    if args.t_max is not None:
+        root.control_frame.averaging_frame.time_window_frame.t_max_box.delete(0, tk.END)
+        root.control_frame.averaging_frame.time_window_frame.t_max_box.insert(0, str(args.t_max))
+    if args.t_points:
+        root.control_frame.averaging_frame.time_window_frame.point_button.invoke()
+        root.control_frame.averaging_frame.time_window_frame.times_box.delete(0, tk.END)
+        root.control_frame.averaging_frame.time_window_frame.times_box.insert(0, str(args.t_points)[1:-1])
+    if args.npts is not None:
+        root.control_frame.eval_frame.npts_box.delete(0, tk.END)
+        root.control_frame.eval_frame.npts_box.insert(0, str(args.npts))
+    if args.x_min is not None:
+        root.control_frame.eval_frame.x_min_box.delete(0, tk.END)
+        root.control_frame.eval_frame.x_min_box.insert(0, str(args.x_min))
+    if args.x_max is not None:
+        root.control_frame.eval_frame.x_max_box.delete(0, tk.END)
+        root.control_frame.eval_frame.x_max_box.insert(0, str(args.x_max))
+    if args.x_pts:
+        root.control_frame.eval_frame.points_button.invoke()
+        root.control_frame.eval_frame.x_points_box.delete(0, tk.END)
+        root.control_frame.eval_frame.x_points_box.insert(0, str(args.x_pts)[1:-1])
     if args.system:
         systems = set(args.system)
         if 'TS' in systems:
             systems.remove('TS')
             systems.add('ETS')
             systems.add('CTS')
-        profile_kwargs['include'] = systems
-    print("Fetching data from tree...")
-    if args.signal == 'ne':
-        p = profiletools.ne(args.shot, abscissa=args.coordinate,
-                            t_min=args.t_min, t_max=args.t_max, **profile_kwargs)
-    elif args.signal == 'Te':
-        p = profiletools.Te(args.shot, abscissa=args.coordinate,
-                            t_min=args.t_min, t_max=args.t_max, **profile_kwargs)
-
-# Take care of averaging:
-if p.X_dim > 1:
-    if args.t_points:
-        p.keep_times(args.t_points)
-        if len(args.t_points) == 1 or args.all_points:
-            p.drop_axis(0)
-        else:
-            p.time_average(robust=args.robust)
-    else:
-        if args.all_points:
-            p.drop_axis(0)
-        else:
-            p.time_average(robust=args.robust)
-
-if args.core_only:
-    print("Removing edge points...")
-    p.remove_edge_points()
-
-if args.change_threshold:
-    print("Removing points that exhibit extreme changes...")
-    X_bad_c, y_bad_c, err_X_bad_c, err_y_bad_c = \
-        p.remove_extreme_changes(thresh=args.change_threshold)
-    X_bad_c = scipy.asarray(X_bad_c).flatten()
-    err_X_bad_c = scipy.asarray(err_X_bad_c).flatten()
-    print("Removed %d points with extreme changes." % (len(y_bad_c),))
-
-print("Creating Gaussian process...")
-p.create_gp(k=args.kernel,
-            constrain_slope_on_axis=not args.no_core_constraint,
-            constrain_at_limiter=not args.no_edge_constraint,
-            upper_factor=args.upper_factor, lower_factor=args.lower_factor)
-if args.core_constraint_location:
-    p.gp.add_data(args.core_constraint_location, 0, err_y=0, n=1)
-if args.edge_constraint_locations:
-    p.gp.add_data(args.edge_constraint_locations, 0, err_y=0.01, n=0)
-    p.gp.add_data(args.edge_constraint_locations, 0, err_y=0.1, n=1)
-if args.bounds:
-    new_bounds = scipy.asarray(args.bounds)
-    if len(new_bounds) != len(p.gp.k.hyperprior.bounds.flatten()):
-        print("Incorrect number of lower, upper bound pairs!")
-        sys.exit(1)
-    p.gp.k.hyperprior.bounds = new.bounds.reshape((-1, 2))
-print("Finding MAP estimate of hyperparameters...")
-p.find_gp_MAP_estimate(random_starts=args.random_starts, verbose=True)
-if args.outlier_threshold:
-    print("Removing outliers...")
-    X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = \
-        p.remove_outliers(thresh=args.outlier_threshold)
-    X_bad_o = scipy.asarray(X_bad_o).flatten()
-    err_X_bad_o = scipy.asarray(err_X_bad_o).flatten()
-    print("Removed %d outliers." % (len(y_bad_o),))
-    print("Finding MAP estimate of hyperparameters with outliers removed...")
-    p.find_gp_MAP_estimate(random_starts=args.random_starts, verbose=True)
-
-f = plt.figure()
-gs = mplgs.GridSpec(3, 2, width_ratios=[8, 1])
-a_val = f.add_subplot(gs[:, 0])
-# a_grad = f.add_subplot(gs[1, 0], sharex=a_val)
-# a_a_L = f.add_subplot(gs[2, 0], sharex=a_val)
-# a_adjust = f.add_subplot(gs[0, 1])
-a_reject = f.add_subplot(gs[1, 1])
-a_accept = f.add_subplot(gs[2, 1])
-
-print("Plotting data...")
-p.plot_data(ax=a_val)
-
-if args.change_threshold:
-    a_val.errorbar(X_bad_c, y_bad_c, yerr=err_y_bad_c, xerr=err_X_bad_c,
-                   fmt='mx', label='extreme change')
-if args.outlier_threshold:
-    a_val.errorbar(X_bad_o, y_bad_o, yerr=err_y_bad_o, xerr=err_X_bad_o,
-                   fmt='rx', label='outlier')
-
-print("Evaluating at desired points and plotting result...")
-if args.x_pts:
-    X = args.x_pts
-else:
-    X = scipy.linspace(args.x_min, args.x_max, args.npts)
-ax, mean, std = p.plot_gp(ax=a_val, X=X, label='MAP', return_prediction=True)
-
-a_val.legend(loc='best')
-
-# Create reject button:
-def reject_and_quit(evt):
-    print("Rejecting fit and exiting without writing file.")
-    sys.exit(2)
-b_reject = mplw.Button(a_reject, 'reject and exit')
-b_reject.on_clicked(reject_and_quit)
-
-# Create accept button:
-def accept_and_quit(evt):
-    if not args.output_filename:
-        args.output_filename = raw_input(
-            "Please type the file name/path for the file you want to save the "
-            "fit to. If the file exists, it will be overwritten without warning.\n\n"
-            "filename = "
-        )
-    root, ext = os.path.splitext(args.output_filename)
-    history = (
-        "Created by user {user} on {host} with {module} version {ver} on {time}. "
-        "Command used was:\n{argv}\n".format(
-            host=socket.gethostname(), user=getpass.getuser(),
-            module=inspect.stack()[0][1], ver=__version__, time=time.asctime(),
-            argv=sys.argv
-        )
-    )
-    X_name = p.X_labels[0] + ' [' + p.X_units[0] + ']' if p.X_units[0] else p.X_labels[0]
-    y_name = p.y_label + ' [' + p.y_units + ']' if p.y_units else p.y_label
-    if ext.lower() == '.csv':
-        with open(os.path.expanduser(args.output_filename), 'wb') as outfile:
-            outfile.write(history)
-            writer = csv.writer(outfile)
-            writer.writerow([X_name, y_name, 'err_' + y_name])
-            writer.writerows(zip(X, mean, std))
-    else:
-        with scipy.io.netcdf.netcdf_file(os.path.expanduser(args.output_filename), mode='w') as f:
-            f.history = history
-            f.createDimension(X_name, len(X))
-            v_X = f.createVariable(X_name, float, (X_name,))
-            v_X[:] = X
-            v_y = f.createVariable(y_name, float, (X_name,))
-            v_y[:] = mean
-            v_err_y = f.createVariable('err_'+y_name, float, (X_name,))
-            v_err_y[:] = std
-    sys.exit(0)
-b_accept = mplw.Button(a_accept, 'accept, save and exit')
-b_accept.on_clicked(accept_and_quit)
-
-print("Done.")
-
-plt.show()
+        for b in root.control_frame.data_source_frame.system_frame.buttons:
+            if b.system in systems:
+                b.button.select()
+            else:
+                b.button.deselect()
+    if args.kernel:
+        root.control_frame.kernel_frame.kernel_type_frame.k_var.set(args.kernel)
+        root.control_frame.kernel_frame.update_kernel(args.kernel)
+    if args.coordinate:
+        root.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.set(args.coordinate)
+    if args.core_constraint_location is not None:
+        root.control_frame.kernel_frame.constraints_frame.core_loc.delete(0, tk.END)
+        root.control_frame.kernel_frame.constraints_frame.core_loc.insert(0, str(args.core_constraint_location))
+    if args.edge_constraint_locations:
+        root.control_frame.kernel_frame.constraints_frame.edge_loc.delete(0, tk.END)
+        root.control_frame.kernel_frame.constraints_frame.edge_loc.insert(0, str(args.edge_constraint_locations)[1:-1])
+    if args.no_core_constraint:
+        root.control_frame.kernel_frame.constraints_frame.core_button.deselect()
+        root.control_frame.kernel_frame.constraints_frame.update_core()
+    if args.no_edge_constraint:
+        root.control_frame.kernel_frame.constraints_frame.edge_button.deselect()
+        root.control_frame.kernel_frame.constraints_frame.update_edge()
+    if args.core_only:
+        root.control_frame.kernel_frame.kernel_type_frame.core_only_button.select()
+    if args.robust:
+        root.control_frame.averaging_frame.method_frame.method_var.set('robust')
+    if args.all_points:
+        root.control_frame.averaging_frame.method_frame.method_var.set('all points')
+    if args.change_threshold is not None:
+        root.control_frame.outlier_frame.extreme_button.invoke()
+        root.control_frame.outlier_frame.extreme_thresh_box.delete(0, tk.END)
+        root.control_frame.outlier_frame.extreme_thresh_box.insert(0, str(args.change_threshold))
+    if args.outlier_threshold is not None:
+        root.control_frame.outlier_frame.outlier_button.invoke()
+        root.control_frame.outlier_frame.outlier_thresh_box.delete(0, tk.END)
+        root.control_frame.outlier_frame.outlier_thresh_box.insert(0, str(args.outlier_threshold))
+    if args.random_starts is not None:
+        root.control_frame.fitting_frame.method_frame.starts_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.method_frame.starts_box.insert(0, str(args.random_starts))
+    if args.bounds:
+        for k in xrange(0, len(root.control_frame.kernel_frame.bounds_frame.lower_bounds)):
+            root.control_frame.kernel_frame.bounds_frame.lower_bounds[k].delete(0, tk.END)
+            root.control_frame.kernel_frame.bounds_frame.lower_bounds[k].insert(0, str(args.bounds[2*k]))
+            root.control_frame.kernel_frame.bounds_frame.upper_bounds[k].delete(0, tk.END)
+            root.control_frame.kernel_frame.bounds_frame.upper_bounds[k].insert(0, str(args.bounds[2*k+1]))
+    if args.input_filename:
+        root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
+        root.control_frame.data_source_frame.tree_file_frame.path_entry.delete(0, tk.END)
+        root.control_frame.data_source_frame.tree_file_frame.path_entry.insert(0, args.input_filename)
+    if args.abscissa_name:
+        root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
+        if len(args.abscissa_name) == 2:
+            root.control_frame.data_source_frame.variable_name_frame.time_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.variable_name_frame.time_box.insert(0, str(args.abscissa_name[0]))
+        root.control_frame.data_source_frame.variable_name_frame.space_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.variable_name_frame.space_box.insert(0, str(args.abscissa_name[-1]))
+    if args.ordinate_name:
+        root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
+        root.control_frame.data_source_frame.variable_name_frame.data_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.variable_name_frame.data_box.insert(0, str(args.ordinate_name))
+    if args.metadata_lines is not None:
+        root.control_frame.data_source_frame.variable_name_frame.meta_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.variable_name_frame.meta_box.insert(0, str(args.metadata_lines))
+    if args.use_MCMC:
+        root.control_frame.fitting_frame.method_frame.MCMC_button.invoke()
+    if args.walkers is not None:
+        root.control_frame.fitting_frame.MCMC_frame.walker_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.MCMC_frame.walker_box.insert(0, str(args.walkers))
+    if args.MCMC_samp is not None:
+        root.control_frame.fitting_frame.MCMC_frame.sample_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.MCMC_frame.sample_box.insert(0, str(args.MCMC_samp))
+    if args.burn is not None:
+        root.control_frame.fitting_frame.MCMC_frame.burn_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.MCMC_frame.burn_box.insert(0, str(args.burn))
+    if args.thin is not None:
+        root.control_frame.fitting_frame.MCMC_frame.thin_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.MCMC_frame.thin_box.insert(0, str(args.thin))
+    if args.full_monte_carlo:
+        root.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_button.select()
+        root.control_frame.fitting_frame.MCMC_constraint_frame.update_full_MC()
+    if args.reject_negative:
+        root.control_frame.fitting_frame.MCMC_constraint_frame.pos_button.select()
+    if args.reject_non_monotonic:
+        root.control_frame.fitting_frame.MCMC_constraint_frame.mono_button.select()
+    if args.no_a_over_L:
+        root.control_frame.eval_frame.a_L_button.deselect()
+    
+    if args.full_auto:
+        root.load_data()
+        root.average_data()
+        root.fit_data()
+        
+    
+    root.mainloop()

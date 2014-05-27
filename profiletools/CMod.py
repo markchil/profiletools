@@ -441,7 +441,7 @@ class BivariatePlasmaProfile(Profile):
             # Get geometry from EFIT:
             t_efit = self.efit_tree.getTimeBase()
             if hasattr(self, 'times'):
-                ok_idxs = self.efit_tree._getNearestIdx(self.times, t_EFIT)
+                ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
             elif self.t_min != self.t_max:
                 ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
             else:
