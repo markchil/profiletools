@@ -1671,13 +1671,14 @@ class FitWindow(tk.Tk):
                 self.control_frame.status_frame.add_line("No valid points in evaluation points!")
                 return
         
-        print("Begin eval")
         if self.control_frame.eval_frame.a_L_state.get():
             res = self.combined_p.compute_a_over_L(X, use_MCMC=False, return_prediction=True)
         else:
             res = self.combined_p.smooth(X, n=0, use_MCMC=False, full_output=True)
             res['mean_val'] = res.pop('mean')
             res['std_val'] = res.pop('std')
+        
+        print("eval complete")
         
         self.res = res
         self.X = X
