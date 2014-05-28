@@ -1493,9 +1493,7 @@ class FitWindow(tk.Tk):
                 else:
                     p.time_average(robust=(method == "robust"))
             if 'GPC' in k or 'ECE' in k or core_only:
-                print("removing edge")
                 p.remove_edge_points()
-                print('done')
         
             p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
         
@@ -1733,6 +1731,7 @@ class FitWindow(tk.Tk):
             random_starts=int(self.control_frame.fitting_frame.method_frame.starts_box.get()),
             verbose=True
         )
+        print("MAP returned.")
         self.control_frame.status_frame.add_line(
             "MAP estimate complete. Result is:"
         )
