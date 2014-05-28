@@ -393,6 +393,14 @@ parser.add_argument('--full-auto',
 args = parser.parse_args()
 
 # Set up the GUI:
+import sys
+import socket
+# Hackishly augment the path for now:
+if 'juggernaut' not in socket.gethostname().lower():
+    sys.path.append("/home/markchil/codes/gptools")
+    sys.path.append("/home/markchil/codes/profiletools")
+    sys.path.append("/home/markchil/codes/efit/development/EqTools")
+
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
@@ -414,7 +422,6 @@ import re
 import scipy
 import scipy.io
 import itertools
-import socket
 import getpass
 import inspect
 import csv
@@ -1677,9 +1684,7 @@ class FitWindow(tk.Tk):
             res = self.combined_p.smooth(X, n=0, use_MCMC=False, full_output=True)
             res['mean_val'] = res.pop('mean')
             res['std_val'] = res.pop('std')
-        
-        print("eval complete")
-        
+                
         self.res = res
         self.X = X
         
