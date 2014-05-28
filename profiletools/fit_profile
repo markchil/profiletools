@@ -1760,6 +1760,7 @@ class FitWindow(tk.Tk):
                 "adjusting bounds, initial guesses or the number of random "
                 "starts used."
             )
+        print("Exit MAP.")
     
     def save_fit(self):
         if self.res is None:
