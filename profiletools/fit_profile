@@ -410,6 +410,7 @@ import matplotlib.pyplot as plt
 import Tkinter as tk
 import tkFileDialog
 import tkFont
+import ttk
 import collections
 import time
 import multiprocessing
@@ -1267,32 +1268,53 @@ class ControlFrame(tk.Frame):
         
         frame_params = {'relief': tk.RAISED, 'borderwidth': 2}
         
-        self.data_source_frame = DataSourceFrame(self, **frame_params)
+        self.note = ttk.Notebook(self)
+        
+        self.data_time_frame = tk.Frame(self)
+        self.fit_eval_frame = tk.Frame(self)
+        
+        self.data_source_frame = DataSourceFrame(self.data_time_frame, **frame_params)
         self.data_source_frame.grid(row=0, sticky='EW')
 
-        self.averaging_frame = AveragingFrame(self, **frame_params)
+        self.averaging_frame = AveragingFrame(self.data_time_frame, **frame_params)
         self.averaging_frame.grid(row=1, sticky='EW')
+        
+        self.outlier_frame = OutlierFrame(self.data_time_frame, **frame_params)
+        self.outlier_frame.grid(row=2, sticky='NSEW')
 
-        self.outlier_frame = OutlierFrame(self, **frame_params)
-        self.outlier_frame.grid(row=2, sticky='EW')
+        self.data_time_frame.grid_columnconfigure(0, weight=1)
+        self.data_time_frame.grid_rowconfigure(2, weight=1)
 
         self.kernel_frame = KernelFrame(self, **frame_params)
-        self.kernel_frame.grid(row=3, sticky='EW')
+        # self.kernel_frame.grid(row=0, sticky='EW')
 
-        self.fitting_frame = FittingFrame(self, **frame_params)
-        self.fitting_frame.grid(row=4, sticky='EW')
+        self.fitting_frame = FittingFrame(self.fit_eval_frame, **frame_params)
+        self.fitting_frame.grid(row=0, sticky='EW')
 
-        self.eval_frame = EvaluationFrame(self, **frame_params)
-        self.eval_frame.grid(row=5, sticky='EW')
+        self.eval_frame = EvaluationFrame(self.fit_eval_frame, **frame_params)
+        self.eval_frame.grid(row=1, sticky='NSEW')
+        
+        self.fit_eval_frame.grid_columnconfigure(0, weight=1)
+        self.fit_eval_frame.grid_rowconfigure(1, weight=1)
+
+
+        self.note.add(self.data_time_frame,
+                      text="Data")
+        self.note.add(self.kernel_frame,
+                      text="Kernel")
+        self.note.add(self.fit_eval_frame,
+                      text="Fit")
+        
+        self.note.grid(row=0, sticky='EWNS')
 
         self.status_frame = StatusBox(self, **frame_params)
-        self.status_frame.grid(row=6, sticky='EWNS')
+        self.status_frame.grid(row=1, sticky='EWNS')
 
         self.control_frame = ControlBox(self)
-        self.control_frame.grid(row=7, sticky='EW')
+        self.control_frame.grid(row=2, sticky='EW')
         
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(6, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
 class FitWindow(tk.Tk):
     def __init__(self, *args, **kwargs):
