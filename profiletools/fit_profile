@@ -1921,38 +1921,45 @@ class FitWindow(tk.Tk):
         self.control_frame.status_frame.add_line("Fitting complete.")
     
     def find_MAP(self):
-        res_min, complete = self.combined_p.find_gp_MAP_estimate(
-            random_starts=int(self.control_frame.fitting_frame.method_frame.starts_box.get()),
-            verbose=True
-        )
-        self.control_frame.status_frame.add_line(
-            "MAP estimate complete. Result is:"
-        )
-        k_nk = self.combined_p.gp.k + self.combined_p.gp.noise_k
-        for v, l in zip(k_nk.free_params, k_nk.free_param_names):
-            self.control_frame.status_frame.add_line("%s\t%.3e" % (l.translate(None, '\\'), v))
-        if complete < 4:
-            self.control_frame.status_frame.add_line(
-                "Less than 4 completed starts were obtained. Try increasing "
-                "the number of random starts, or adjusting the hyperparameter "
-                "bounds."
+        try:
+            res_min, complete = self.combined_p.find_gp_MAP_estimate(
+                random_starts=int(self.control_frame.fitting_frame.method_frame.starts_box.get()),
+                verbose=True
             )
-        if not res_min.success:
+        except ValueError:
             self.control_frame.status_frame.add_line(
-                "Optimizer reports failure, selected hyperparameters "
-                "are likely NOT optimal. Status: %d, Message: '%s'. "
-                "Try adjusting bounds, initial guesses or the number "
-                "of random starts used."
-                % (res_min.status, res_min.message)
+                "MAP estimate failed. Hyperparameters should not be trusted! Try "
+                "re-running the fit with more random starts."
             )
-        bounds = scipy.asarray(k_nk.free_param_bounds)
-        if ((res_min.x <= 1.001 * bounds[:, 0]).any() or
-            (res_min.x >= 0.999 * bounds[:, 1]).any()):
+        else:
             self.control_frame.status_frame.add_line(
-                "Optimizer appears to have hit/exceeded the bounds. Try "
-                "adjusting bounds, initial guesses or the number of random "
-                "starts used."
+                "MAP estimate complete. Result is:"
             )
+            k_nk = self.combined_p.gp.k + self.combined_p.gp.noise_k
+            for v, l in zip(k_nk.free_params, k_nk.free_param_names):
+                self.control_frame.status_frame.add_line("%s\t%.3e" % (l.translate(None, '\\'), v))
+            if complete < 4:
+                self.control_frame.status_frame.add_line(
+                    "Less than 4 completed starts were obtained. Try increasing "
+                    "the number of random starts, or adjusting the hyperparameter "
+                    "bounds."
+                )
+            if not res_min.success:
+                self.control_frame.status_frame.add_line(
+                    "Optimizer reports failure, selected hyperparameters "
+                    "are likely NOT optimal. Status: %d, Message: '%s'. "
+                    "Try adjusting bounds, initial guesses or the number "
+                    "of random starts used."
+                    % (res_min.status, res_min.message)
+                )
+            bounds = scipy.asarray(k_nk.free_param_bounds)
+            if ((res_min.x <= 1.001 * bounds[:, 0]).any() or
+                (res_min.x >= 0.999 * bounds[:, 1]).any()):
+                self.control_frame.status_frame.add_line(
+                    "Optimizer appears to have hit/exceeded the bounds. Try "
+                    "adjusting bounds, initial guesses or the number of random "
+                    "starts used."
+                )
     
     def run_MCMC_sampler(self):
         try:
