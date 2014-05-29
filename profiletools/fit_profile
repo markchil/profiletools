@@ -306,11 +306,13 @@ parser.add_argument('--burn',
                          "MCMC chain. This will usually need to be on the order "
                          "of a few hundred. If your chains are taking too long "
                          "to mix, try narrowing the bounds on the hyperparameters.")
-parser.add_argument('--thin',
+parser.add_argument('--keep',
                     type=int,
-                    default=150,
-                    help="The amount by which the MCMC samples are thinned before "
-                         "evaluating the profile at each sample.")
+                    default=200,
+                    help="The number of MCMC samples to keep when fitting the "
+                         "profiles. This lets you get a full picture of the "
+                         "parameter space but only fit on the number of profiles "
+                         "needed.")
 parser.add_argument('--full-monte-carlo',
                     action='store_true',
                     help="Set this flag to compute these mean samples using a "
@@ -382,12 +384,14 @@ parser.add_argument('-y', '--ordinate-name',
                          "when using a NetCDF file.")
 parser.add_argument('--metadata-lines',
                     type=int,
-                    default=0,
                     help="Number of lines of metadata at the start of your CSV "
                          "file to read. You can include the shot, times and "
                          "coordinate in the CSV file itself in this manner. See "
                          "the documentation on profiletools.CMod.read_plasma_csv "
-                         "for more details.")
+                         "for more details. If you leave this blank, the program "
+                         "will check to see if the first line of your file is of "
+                         "the form 'metadata LINES', where LINES is the number of "
+                         "lines of metadata present.")
 parser.add_argument('--full-auto',
                     action='store_true',
                     help="Set this flag to disable all prompting for missing/"
@@ -412,6 +416,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.backend_bases import key_press_handler
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as mplgs
 import Tkinter as tk
 import tkFileDialog
 import tkFont
@@ -1027,11 +1032,11 @@ class MCMCFrame(tk.Frame):
         self.burn_box.insert(tk.END, '100')
         self.burn_box.grid(row=0, column=5, sticky='EW')
         
-        self.thin_label = tk.Label(self, text="thin:")
-        self.thin_label.grid(row=0, column=6, sticky='E')
-        self.thin_box = tk.Entry(self, width=4)
-        self.thin_box.insert(tk.END, '150')
-        self.thin_box.grid(row=0, column=7, sticky='EW')
+        self.keep_label = tk.Label(self, text="keep:")
+        self.keep_label.grid(row=0, column=6, sticky='E')
+        self.keep_box = tk.Entry(self, width=4)
+        self.keep_box.insert(tk.END, '200')
+        self.keep_box.grid(row=0, column=7, sticky='EW')
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(3, weight=1)
@@ -1290,12 +1295,12 @@ class PlotFrame(tk.Frame):
     def on_key_event(self, evt):
         key_press_handler(evt, self.canvas, self.toolbar)
 
+frame_params = {'relief': tk.RAISED, 'borderwidth': 2}
+
 class ControlFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
         tk.Frame.__init__(self, *args, **kwargs)
-        
-        frame_params = {'relief': tk.RAISED, 'borderwidth': 2}
         
         self.note = ttk.Notebook(self)
         
@@ -1430,12 +1435,7 @@ class FitWindow(tk.Tk):
                     metadata_lines = int(metadata_lines)
                 except ValueError:
                     if metadata_lines == '':
-                        self.control_frame.status_frame.add_line(
-                            "No metadata indicated to be in file. Make sure to "
-                            "specify number of lines of metadata if any are "
-                            "present."
-                        )
-                        metadata_lines = 0
+                        metadata_lines = None
                     else:
                         self.control_frame.status_frame.add_line(
                             "Invalid number of metadata lines! Loading of data from "
@@ -1588,9 +1588,82 @@ class FitWindow(tk.Tk):
         self.plot_frame.canvas._tkcanvas.focus_set()
         self.control_frame.status_frame.add_line("Averaging and plotting of data complete.")
     
+    def process_bounds(self):
+        for k, l, u in zip(range(0, len(self.combined_p.gp.k.hyperprior.bounds)),
+                           self.control_frame.kernel_frame.bounds_frame.lower_bounds,
+                           self.control_frame.kernel_frame.bounds_frame.upper_bounds):
+            old_bounds = self.combined_p.gp.k.hyperprior.bounds[k]
+            new_bounds = list(old_bounds)
+            
+            new_lb = l.get()
+            try:
+                new_bounds[0] = float(new_lb)
+            except ValueError:
+                if new_lb == '':
+                    l.insert(0, str(old_bounds[0]))
+                else:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid lower bound %s for %s, will use default value "
+                        "instead." % (new_lb, k,)
+                    )
+                
+            new_ub = u.get()
+            try:
+                new_bounds[1] = float(new_ub)
+            except ValueError:
+                if new_ub == '':
+                    u.insert(0, str(old_bounds[1]))
+                else:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid upper bound %s for %s, will use default value "
+                        "instead." % (new_ub, k,)
+                    )
+            
+            self.combined_p.gp.k.hyperprior.bounds[k] = new_bounds
+    
     def fit_data(self):
         if not self.combined_p:
             self.average_data()
+        
+        if (self.control_frame.eval_frame.method_state.get() ==
+                self.control_frame.eval_frame.UNIFORM_GRID):
+            try:
+                X_min = float(self.control_frame.eval_frame.x_min_box.get())
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid lower bound for uniform grid!"
+                )
+                return
+            try:
+                X_max = float(self.control_frame.eval_frame.x_max_box.get())
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid upper bound for uniform grid!"
+                )
+                return
+            try:
+                npts = int(self.control_frame.eval_frame.npts_box.get())
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid number of points for uniform grid!"
+                )
+                return
+            X = scipy.linspace(X_min, X_max, npts)
+        else:
+            X = []
+            s_points = re.findall(r'([0-9.]+)[^0-9.]*',
+                                  self.control_frame.eval_frame.x_points_box.get())
+            for p in s_points:
+                try:
+                    X.append(float(p))
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid value %s in evaluation points, will be ignored." % (p,)
+                    )
+            if not X:
+                self.control_frame.status_frame.add_line("No valid points in evaluation points!")
+                return
+        
         self.control_frame.status_frame.add_line("Creating Gaussian process...")
         self.combined_p.create_gp(k=self.control_frame.kernel_frame.kernel_type_frame.k_var.get(),
                                   constrain_slope_on_axis=False,
@@ -1633,40 +1706,14 @@ class FitWindow(tk.Tk):
                     self.combined_p.gp.add_data(edge_locs, 0, err_y=0.01, n=0)
                     self.combined_p.gp.add_data(edge_locs, 0, err_y=0.1, n=1)
         # Process bounds:
-        for k, l, u in zip(range(0, len(self.combined_p.gp.k.hyperprior.bounds)),
-                           self.control_frame.kernel_frame.bounds_frame.lower_bounds,
-                           self.control_frame.kernel_frame.bounds_frame.upper_bounds):
-            old_bounds = self.combined_p.gp.k.hyperprior.bounds[k]
-            new_bounds = list(old_bounds)
-            
-            new_lb = l.get()
-            try:
-                new_bounds[0] = float(new_lb)
-            except ValueError:
-                if new_lb == '':
-                    l.insert(0, str(old_bounds[0]))
-                else:
-                    self.control_frame.status_frame.add_line(
-                        "Invalid lower bound %s, will use default value instead." % (new_lb,)
-                    )
-                
-            new_ub = u.get()
-            try:
-                new_bounds[1] = float(new_ub)
-            except ValueError:
-                if new_ub == '':
-                    u.insert(0, str(old_bounds[1]))
-                else:
-                    self.control_frame.status_frame.add_line(
-                        "Invalid upper bound %s, will use default value instead." % (new_ub,)
-                    )
-            
-            self.combined_p.gp.k.hyperprior.bounds[k] = new_bounds
+        self.process_bounds()
         
         self.control_frame.status_frame.add_line("Gaussian process created.")
         
         # Process outliers:
-        if self.control_frame.outlier_frame.outlier_state.get():
+        # TODO: Put points back in if fit fails!
+        remove_outliers = self.control_frame.outlier_frame.outlier_state.get()
+        if remove_outliers:
             self.control_frame.status_frame.add_line("Finding outliers...")
             self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
             self.find_MAP()
@@ -1689,54 +1736,15 @@ class FitWindow(tk.Tk):
         
         # Evaluate:
         self.control_frame.status_frame.add_line("Evaluating fit...")
-        if (self.control_frame.eval_frame.method_state.get() ==
-                self.control_frame.eval_frame.UNIFORM_GRID):
-            try:
-                X_min = float(self.control_frame.eval_frame.x_min_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid lower bound for uniform grid!"
-                )
-                return
-            try:
-                X_max = float(self.control_frame.eval_frame.x_max_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid upper bound for uniform grid!"
-                )
-                return
-            try:
-                npts = int(self.control_frame.eval_frame.npts_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid number of points for uniform grid!"
-                )
-                return
-            X = scipy.linspace(X_min, X_max, npts)
-        else:
-            X = []
-            s_points = re.findall(r'([0-9.]+)[^0-9.]*',
-                                  self.control_frame.eval_frame.x_points_box.get())
-            for p in s_points:
-                try:
-                    X.append(float(p))
-                except ValueError:
-                    self.control_frame.status_frame.add_line(
-                        "Invalid value %s in evaluation points, will be ignored." % (p,)
-                    )
-            if not X:
-                self.control_frame.status_frame.add_line("No valid points in evaluation points!")
-                return
         
         full_MC = self.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_state.get()
         compute_a_L = self.control_frame.eval_frame.a_L_state.get()
         if full_MC:
             positivity_constraint = self.control_frame.fitting_frame.MCMC_constraint_frame.pos_state.get()
             monotonicity_constraint = compute_a_L and self.control_frame.fitting_frame.MCMC_constraint_frame.mono_state.get()
-        
-            # TODO: Make this mask more clever for different coordinates!
+            
             rejection_func = profiletools.RejectionFunc(
-                X <= 1.1,
+                X <= self.combined_p.X.max(),
                 positivity=positivity_constraint,
                 monotonicity=monotonicity_constraint
             )
@@ -1755,48 +1763,42 @@ class FitWindow(tk.Tk):
         else:
             num_samples = 1
             rejection_func = None
-            
+        
+        self.sampler = None
+        
         if use_MCMC:
-            try:
-                walkers = int(self.control_frame.fitting_frame.MCMC_frame.walker_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid number of MCMC walkers! Evaluation failed."
-                )
-                return
-            try:
-                samples = int(self.control_frame.fitting_frame.MCMC_frame.sample_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid number of MCMC samples! Evaluation failed."
-                )
-                return
-            try:
-                burn = int(self.control_frame.fitting_frame.MCMC_frame.burn_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid value for burn! Evaluation failed."
-                )
-                return
-            try:
-                thin = int(self.control_frame.fitting_frame.MCMC_frame.thin_box.get())
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid value for thin! Evaluation failed."
-                )
-                return
             self.control_frame.status_frame.add_line(
                 "Running MCMC sampler..."
             )
-            sampler = self.combined_p.gp.sample_hyperparameter_posterior(nsamp=samples)
-            sampler.pool.close()
-            self.MCMC_ok = False
-            MCMC_results_window = MCMCWindow(sampler, self)
+            self.run_MCMC_sampler()
+            
+            MCMC_results_window = MCMCWindow(self)
             # MCMC_results_window.transient(self)
             MCMC_results_window.grab_set()
             self.wait_window(MCMC_results_window)
-            MCMC_results_window.destroy()
-            if self.MCMC_ok:
+            # MCMC_results_window.destroy()
+            if self.sampler:
+                self.sampler.pool.close()
+                try:
+                    burn = int(self.control_frame.fitting_frame.MCMC_frame.burn_box.get())
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid value for burn! Evaluation failed."
+                    )
+                    return
+                if burn >= self.sampler.chain.shape[1]:
+                    burn = 0
+                    self.control_frame.status_frame.add_line(
+                        "Not enough points, setting burn to 0!"
+                    )
+                try:
+                    thin = max(self.sampler.chain.shape[0] * (self.sampler.chain.shape[1] - burn) // int(self.control_frame.fitting_frame.MCMC_frame.keep_box.get()), 1)
+                    print(thin)
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid value for keep! Evaluation failed."
+                    )
+                    return
                 self.control_frame.status_frame.add_line(
                     "MCMC sampling complete.\nComputing profile from samples..."
                 )
@@ -1808,13 +1810,12 @@ class FitWindow(tk.Tk):
         else:
             burn = None
             thin = None
-            sampler = None
         try:
             if compute_a_L:
                 res = self.combined_p.compute_a_over_L(
                     X,
                     use_MCMC=use_MCMC,
-                    sampler=sampler,
+                    sampler=self.sampler,
                     return_prediction=True,
                     full_MC=full_MC,
                     rejection_func=rejection_func,
@@ -1827,7 +1828,7 @@ class FitWindow(tk.Tk):
                     X,
                     n=0,
                     use_MCMC=use_MCMC,
-                    sampler=sampler,
+                    sampler=self.sampler,
                     full_output=True,
                     full_MC=full_MC,
                     rejection_func=rejection_func,
@@ -1846,7 +1847,7 @@ class FitWindow(tk.Tk):
         
         if full_MC:
             self.control_frame.status_frame.add_line(
-                "Got %d samples that met the constraints." % (res['samp'].shape[1])
+                "Got %d samples that met the constraints." % (res['samp'].shape[1],)
             )
         
         self.res = res
@@ -1866,10 +1867,31 @@ class FitWindow(tk.Tk):
         self.l, self.e = gptools.univariate_envelope_plot(X, res['mean_val'], res['std_val'], ax=self.plot_frame.a_val, color='b')
         if self.control_frame.eval_frame.a_L_state.get():
             color = plt.getp(self.l[0], 'color')
-            l, e = gptools.univariate_envelope_plot(X, res['mean_grad'], res['std_grad'], ax=self.plot_frame.a_grad, color=color)
+            core_mask = X <= 1
+            l, e = gptools.univariate_envelope_plot(
+                X,
+                res['mean_grad'],
+                res['std_grad'],
+                ax=self.plot_frame.a_grad,
+                color=color
+            )
+            self.plot_frame.a_grad.set_ylim(
+                bottom=(res['mean_grad'][core_mask] - 3 * res['std_grad'][core_mask]).min(),
+                top=(res['mean_grad'][core_mask] + 3 * res['std_grad'][core_mask]).max()
+            )
             self.l.extend(l)
             self.e.extend(e)
-            l, e = gptools.univariate_envelope_plot(X, res['mean_a_L'], res['std_a_L'], ax=self.plot_frame.a_a_L, color=color)
+            l, e = gptools.univariate_envelope_plot(
+                X,
+                res['mean_a_L'],
+                res['std_a_L'],
+                ax=self.plot_frame.a_a_L,
+                color=color
+            )
+            self.plot_frame.a_a_L.set_ylim(
+                bottom=(res['mean_a_L'][core_mask] - 3 * res['std_a_L'][core_mask]).min(),
+                top=(res['mean_a_L'][core_mask] + 3 * res['std_a_L'][core_mask]).max()
+            )
             self.l.extend(l)
             self.e.extend(e)
         
@@ -1932,6 +1954,29 @@ class FitWindow(tk.Tk):
                 "starts used."
             )
     
+    def run_MCMC_sampler(self):
+        try:
+            walkers = int(self.control_frame.fitting_frame.MCMC_frame.walker_box.get())
+        except ValueError:
+            self.control_frame.status_frame.add_line(
+                "Invalid number of MCMC walkers! Evaluation failed."
+            )
+            self.sampler = None
+            return
+        try:
+            samples = int(self.control_frame.fitting_frame.MCMC_frame.sample_box.get())
+        except ValueError:
+            self.control_frame.status_frame.add_line(
+                "Invalid number of MCMC samples! Evaluation failed."
+            )
+            self.sampler = None
+            return
+        self.sampler = self.combined_p.gp.sample_hyperparameter_posterior(
+            nsamp=samples,
+            nwalkers=walkers,
+            sampler=self.sampler
+        )
+    
     def save_fit(self):
         if self.res is None:
             self.fit_data()
@@ -1955,36 +2000,42 @@ class FitWindow(tk.Tk):
                 y_name = self.combined_p.y_label + ' [' + self.combined_p.y_units + ']' if self.combined_p.y_units else self.combined_p.y_label
                 with open(os.path.expanduser(path), 'wb') as outfile:
                     # Write metadata:
-                    outfile.write(history)
+                    metadata = history
                     try:
-                        outfile.write("shot %d\n" % (self.combined_p.shot))
+                        metadata += "shot %d\n" % (self.combined_p.shot)
                     except AttributeError:
                         pass
                     try:
-                        outfile.write("t_min %f\n" % (self.combined_p.t_min))
+                        metadata += "t_min %f\n" % (self.combined_p.t_min)
                     except AttributeError:
                         pass
                     try:
-                        outfile.write("t_max %f\n" % (self.combined_p.t_max))
+                        metadata += "t_max %f\n" % (self.combined_p.t_max)
                     except AttributeError:
                         pass
                     if hasattr(self.combined_p, 'times'):
                         times = list(self.combined_p.times)
-                        outfile.write("times %f" % (times.pop()))
+                        metadata += "times %f" % (times.pop())
                         for t in times:
-                            outfile.write(",%f" % (t,))
-                        outfile.write("\n")
+                            metadata += ",%f" % (t,)
+                        metadata += "\n"
                     try:
-                        outfile.write("coordinate %s\n" % (self.combined_p.abscissa))
+                        metadata += "coordinate %s\n" % (self.combined_p.abscissa)
                     except AttributeError:
                         pass
                     
+                    outfile.write(
+                        "metadata %d\n" % (len(metadata.splitlines()) + 1,) + metadata
+                    )
+                    
                     writer = csv.writer(outfile)
                     if 'mean_a_L' in self.res:
-                        writer.writerow([X_name,
-                                         y_name, 'err_' + y_name,
-                                         'D' + y_name, 'err_D' + y_name,
-                                         'a_L' + y_name, 'err_a_L' + y_name])
+                        writer.writerow(
+                            [X_name,
+                             y_name, 'err_' + y_name,
+                             'D' + self.combined_p.y_label, 'err_D' + self.combined_p.y_label,
+                             'a_L' + self.combined_p.y_label, 'err_a_L' + self.combined_p.y_label]
+                        )
                         writer.writerows(zip(self.X,
                                              self.res['mean_val'], self.res['std_val'],
                                              self.res['mean_grad'], self.res['std_grad'],
@@ -2056,43 +2107,33 @@ class FitWindow(tk.Tk):
         self.destroy()
 
 class MCMCResultsFrame(tk.Frame):
-    def __init__(self, sampler, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         tk.Frame.__init__(self, *args, **kwargs)
         
-        # TODO: Need to burn the chain!
+        sampler = self.master.master.sampler
         k = sampler.flatchain.shape[1]
+        
         self.f = Figure()
+        gs1 = mplgs.GridSpec(k, k)
+        gs2 = mplgs.GridSpec(1, k)
+        gs1.update(bottom=0.275, top=0.98)
+        gs2.update(bottom=0.1, top=0.2)
         self.axes = []
+        # j is the row, i is the column.
         for j in xrange(0, k + 1):
             row = []
             for i in xrange(0, k):
-                sharey = row[-1] if i > 0 and i < j and j < k else None
-                sharex = self.axes[-1][i] if j > i and j < k else (row[-1] if i > 0 and j == k else None)
-                row.append(self.f.add_subplot(k + 1, k, i + k * j + 1, sharey=sharey, sharex=sharex))
+                if i > j:
+                    row.append(None)
+                else:
+                    sharey = row[-1] if i > 0 and i < j and j < k else None
+                    sharex = self.axes[-1][i] if j > i and j < k else \
+                        (row[-1] if i > 0 and j == k else None)
+                    gs = gs1[j, i] if j < k else gs2[:, i]
+                    row.append(self.f.add_subplot(gs, sharey=sharey, sharex=sharex))
             self.axes.append(row)
         self.axes = scipy.asarray(self.axes)
-        # j is the row, i is the column.
-        # Loosely based on triangle.py
-        burn = int(self.master.master.control_frame.fitting_frame.MCMC_frame.burn_box.get())
-        for i in xrange(0, k):
-            self.axes[i, i].hist(sampler.flatchain[:, i], bins=50)
-            if i < k - 1:
-                plt.setp(self.axes[i, i].get_xticklabels(), visible=False)
-            plt.setp(self.axes[i, i].get_yticklabels(), visible=False)
-            for j in xrange(0, i):
-                self.axes[j, i].set_visible(False)
-                self.axes[j, i].set_frame_on(False)
-            for j in xrange(i + 1, k):
-                ct, x, y, im = self.axes[j, i].hist2d(sampler.flatchain[:, i], sampler.flatchain[:, j], bins=50)
-                # xmid = 0.5 * (x[1:] + x[:-1])
-                # ymid = 0.5 * (y[1:] + y[:-1])
-                # self.axes[j, i].contour(xmid, ymid, ct.T, colors='k')
-                if j < k - 1:
-                    plt.setp(self.axes[j, i].get_xticklabels(), visible=False)
-                if i != 0:
-                    plt.setp(self.axes[j, i].get_yticklabels(), visible=False)
-            self.axes[-1, i].plot(sampler.chain[:, :, i].T)
-            self.axes[-1, i].axvline(burn, color='r', linewidth=3)
+        
         self.canvas = FigureCanvasTkAgg(self.f, master=self)
         self.canvas.show()
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky='NESW')
@@ -2108,23 +2149,85 @@ class MCMCResultsFrame(tk.Frame):
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        
+        self.refresh()
 
     def on_key_event(self, evt):
         key_press_handler(evt, self.canvas, self.toolbar)
+    
+    def print_stats(self, box):
+        sampler = self.master.master.sampler
+        try:
+            box.add_line("MCMC sampler autocorrelation times:\n%s" % (sampler.acor,))
+        except RuntimeError:
+            box.add_line("Could not compute MCMC sampler autocorrelation times.")
+        box.add_line("MCMC sampler mean acceptance fraction: %.2f%%" % (100*scipy.mean(sampler.acceptance_fraction),))
+    
+    def refresh(self, print_stats=True):
+        sampler = self.master.master.sampler
+        
+        if sampler:
+            if print_stats:
+                self.print_stats(self.master.MCMC_control_frame.help_box)
+            labels = ['$%s$' % (l,) for l in self.master.master.combined_p.gp.k.free_param_names]
+            k = sampler.flatchain.shape[1]
+        
+            try:
+                burn = int(self.master.master.control_frame.fitting_frame.MCMC_frame.burn_box.get())
+            except ValueError:
+                self.master.MCMC_control_frame.help_box.add_line("Invalid value for burn! Defaulting to 0.")
+                burn = 0
+            if burn >= sampler.chain.shape[1]:
+                burn = 0
+        
+            flat_trace = sampler.chain[:, burn:, :]
+            flat_trace = flat_trace.reshape((-1, k))
+        
+            # j is the row, i is the column.
+            # Loosely based on triangle.py
+            for i in xrange(0, k):
+                self.axes[i, i].clear()
+                self.axes[i, i].hist(flat_trace[:, i], bins=50)
+                if i == k - 1:
+                    self.axes[i, i].set_xlabel(labels[i])
+                if i < k - 1:
+                    plt.setp(self.axes[i, i].get_xticklabels(), visible=False)
+                plt.setp(self.axes[i, i].get_yticklabels(), visible=False)
+                # for j in xrange(0, i):
+                #     self.axes[j, i].set_visible(False)
+                #     self.axes[j, i].set_frame_on(False)
+                for j in xrange(i + 1, k):
+                    self.axes[j, i].clear()
+                    ct, x, y, im = self.axes[j, i].hist2d(flat_trace[:, i], flat_trace[:, j], bins=50)
+                    # xmid = 0.5 * (x[1:] + x[:-1])
+                    # ymid = 0.5 * (y[1:] + y[:-1])
+                    # self.axes[j, i].contour(xmid, ymid, ct.T, colors='k')
+                    if j < k - 1:
+                        plt.setp(self.axes[j, i].get_xticklabels(), visible=False)
+                    if i != 0:
+                        plt.setp(self.axes[j, i].get_yticklabels(), visible=False)
+                    if i == 0:
+                        self.axes[j, i].set_ylabel(labels[j])
+                    if j == k - 1:
+                        self.axes[j, i].set_xlabel(labels[i])
+                self.axes[-1, i].clear()
+                self.axes[-1, i].plot(sampler.chain[:, :, i].T)
+                self.axes[-1, i].axvline(burn, color='r', linewidth=3)
+                self.axes[-1, i].set_ylabel(labels[i])
+                self.axes[-1, i].set_xlabel('step')
+        
+            self.canvas.draw()
+        else:
+            self.master.MCMC_control_frame.help_box.add_line("Sampler is invalid, please set valid parameter values and resample!")
 
 class MCMCControlFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
         tk.Frame.__init__(self, *args, **kwargs)
         
-        self.help_box = tk.Text(self,
-                                width=53,
-                                height=6,
-                                # font=tkFont.Font(size=8)
-                               )
-        self.help_box.grid(row=0, column=0, columnspan=3, sticky='EWNS')
-        self.help_box.insert(
-            tk.END,
-            """Check to make sure the output of the MCMC sampler
+        self.help_box = StatusBox(self, **frame_params)
+        self.help_box.grid(row=0, column=0, sticky='EWNS')
+        self.help_box.add_line(
+"""\nCheck to make sure the output of the MCMC sampler
 looks correct.
 
 1.) The chains (bottom plots) should be well mixed:
@@ -2143,41 +2246,156 @@ looks correct.
 3.) The bivariate marginals should also be unimodal.
 """
         )
-        self.help_box.config(state=tk.DISABLED)
-        # self.help_scroll = tk.Scrollbar(self)
-        # self.help_scroll.grid(row=2, column=1, sticky='NS')
-        # self.help_scroll.config(command=self.help_box.yview)
-        # self.help_box.config(yscrollcommand=self.help_scroll.set)
         
-        self.accept_button = tk.Button(self, text="continue", command=self.continue_)
-        self.accept_button.grid(row=1, column=0, sticky='W')
+        self.control_frame = tk.Frame(self)
         
-        self.reject_button = tk.Button(self, text="abort", command=self.abort)
-        self.reject_button.grid(row=1, column=1, sticky='W')
+        self.resample_button = tk.Button(self.control_frame, text="resample", command=self.resample)
+        self.resample_button.grid(row=0, column=0, sticky='W')
+        
+        self.add_sample_button = tk.Button(self.control_frame, text="add samples", command=self.add_samples)
+        self.add_sample_button.grid(row=0, column=1)
+        
+        self.burn_button = tk.Button(self.control_frame, text="apply burn", command=self.apply_burn)
+        self.burn_button.grid(row=0, column=2)
+        
+        self.reject_button = tk.Button(self.control_frame, text="abort", command=self.abort)
+        self.reject_button.grid(row=0, column=3, sticky='W')
+        
+        self.accept_button = tk.Button(self.control_frame, text="continue", command=self.continue_)
+        self.accept_button.grid(row=0, column=4, sticky='W')
+        
+        self.control_frame.grid(row=3, column=0, sticky='EW')
         
         # TODO: Put in ability to change burn on-the-fly!
         
+        self.entry_frame = MCMCFrame(self, **frame_params)
+        self.entry_frame.grid(row=1, column=0, columnspan=5, sticky='EW')
+        
+        # Update from master frame:
+        self.entry_frame.walker_box.delete(0, tk.END)
+        self.entry_frame.walker_box.insert(0, self.master.master.control_frame.fitting_frame.MCMC_frame.walker_box.get())
+        self.entry_frame.sample_box.delete(0, tk.END)
+        self.entry_frame.sample_box.insert(0, self.master.master.control_frame.fitting_frame.MCMC_frame.sample_box.get())
+        self.entry_frame.burn_box.delete(0, tk.END)
+        self.entry_frame.burn_box.insert(0, self.master.master.control_frame.fitting_frame.MCMC_frame.burn_box.get())
+        self.entry_frame.keep_box.delete(0, tk.END)
+        self.entry_frame.keep_box.insert(0, self.master.master.control_frame.fitting_frame.MCMC_frame.keep_box.get())
+        
+        # Input hyperparameter bounds:
+        self.bounds_meta_frame = tk.Frame(self, **frame_params)
+        self.bounds_label = tk.Label(self.bounds_meta_frame, text="hyperparameter bounds:")
+        self.bounds_label.grid(row=0, column=0, sticky='W')
+        
+        self.bounds_frame = KernelBoundsFrame(HYPERPARAMETERS[self.master.master.control_frame.kernel_frame.kernel_type_frame.k_var.get()], self.bounds_meta_frame)
+        self.bounds_frame.grid(row=1, column=0, sticky='EW')
+        
+        self.bounds_meta_frame.grid(row=2, column=0, sticky='EW')
+        
         self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        
+        self.process_bounds()
+    
+    def process_bounds(self):
+        for k, l, u in zip(range(0, len(self.master.master.combined_p.gp.k.hyperprior.bounds)),
+                           self.bounds_frame.lower_bounds,
+                           self.bounds_frame.upper_bounds):
+            # We know that by the point this gets called, the hyperprior has the right bounds as set in the main window:
+            old_bounds = self.master.master.combined_p.gp.k.hyperprior.bounds[k]
+            new_bounds = list(old_bounds)
+            
+            new_lb = l.get()
+            try:
+                new_bounds[0] = float(new_lb)
+            except ValueError:
+                if new_lb == '':
+                    l.insert(0, str(old_bounds[0]))
+                else:
+                    self.help_box.add_line(
+                        "Invalid lower bound %s for %s, will use default value "
+                        "instead." % (new_lb, k,)
+                    )
+                
+            new_ub = u.get()
+            try:
+                new_bounds[1] = float(new_ub)
+            except ValueError:
+                if new_ub == '':
+                    u.insert(0, str(old_bounds[1]))
+                else:
+                    self.help_box.add_line(
+                        "Invalid upper bound %s for %s, will use default value "
+                        "instead." % (new_ub, k,)
+                    )
+            
+            self.master.master.combined_p.gp.k.hyperprior.bounds[k] = new_bounds
+        
+        # Propagate the bounds back to the main window:
+        for l, u in zip(self.master.master.control_frame.kernel_frame.bounds_frame.lower_bounds,
+                        self.master.master.control_frame.kernel_frame.bounds_frame.upper_bounds):
+            l.delete(0, tk.END)
+            u.delete(0, tk.END)
+        self.master.master.process_bounds()
+    
+    def update_MCMC_params(self, walkers=True, sample=True, burn=True, thin=True):
+        if walkers:
+            self.master.master.control_frame.fitting_frame.MCMC_frame.walker_box.delete(0, tk.END)
+            self.master.master.control_frame.fitting_frame.MCMC_frame.walker_box.insert(0, self.entry_frame.walker_box.get())
+        if sample:
+            self.master.master.control_frame.fitting_frame.MCMC_frame.sample_box.delete(0, tk.END)
+            self.master.master.control_frame.fitting_frame.MCMC_frame.sample_box.insert(0, self.entry_frame.sample_box.get())
+        if burn:
+            self.master.master.control_frame.fitting_frame.MCMC_frame.burn_box.delete(0, tk.END)
+            self.master.master.control_frame.fitting_frame.MCMC_frame.burn_box.insert(0, self.entry_frame.burn_box.get())
+        if thin:
+            self.master.master.control_frame.fitting_frame.MCMC_frame.keep_box.delete(0, tk.END)
+            self.master.master.control_frame.fitting_frame.MCMC_frame.keep_box.insert(0, self.entry_frame.keep_box.get())
     
     def continue_(self):
-        self.master.master.MCMC_ok = True
+        self.help_box.add_line("Continuing...")
+        self.process_bounds()
+        self.update_MCMC_params()
         self.master.destroy()
     
     def abort(self):
-        self.master.master.MCMC_ok = False
+        self.help_box.add_line("Aborting evaluation...")
+        self.process_bounds()
+        self.master.master.sampler.pool.close()
+        self.master.master.sampler = None
         self.master.destroy()
+    
+    def resample(self):
+        self.help_box.add_line("Re-running MCMC sampler...")
+        self.process_bounds()
+        self.update_MCMC_params()
+        self.master.master.sampler.pool.close()
+        self.master.master.sampler = None
+        self.master.master.run_MCMC_sampler()
+        self.master.MCMC_frame.refresh()
+        self.help_box.add_line("Done resampling.")
+    
+    def add_samples(self):
+        self.help_box.add_line("Adding new samples...")
+        self.update_MCMC_params(walkers=False)
+        self.master.master.run_MCMC_sampler()
+        self.master.MCMC_frame.refresh()
+        self.help_box.add_line("Done sampling.")
+    
+    def apply_burn(self):
+        self.update_MCMC_params(walkers=False, sample=False, thin=False)
+        self.master.MCMC_frame.refresh(print_stats=False)
 
 class MCMCWindow(tk.Toplevel):
-    def __init__(self, sampler, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         tk.Toplevel.__init__(self, *args, **kwargs)
         
         self.wm_title("fit_profile %s: MCMC results" % (__version__,))
         
-        self.MCMC_frame = MCMCResultsFrame(sampler, self)
-        self.MCMC_frame.grid(row=0, column=0, sticky='NSEW')
-        
         self.MCMC_control_frame = MCMCControlFrame(self)
+        
+        self.MCMC_frame = MCMCResultsFrame(self)
+        
+        self.MCMC_frame.grid(row=0, column=0, sticky='NSEW')
         self.MCMC_control_frame.grid(row=0, column=1, sticky='NSEW')
         
         self.grid_columnconfigure(0, weight=1)
@@ -2316,9 +2534,9 @@ if __name__ == "__main__":
     if args.burn is not None:
         root.control_frame.fitting_frame.MCMC_frame.burn_box.delete(0, tk.END)
         root.control_frame.fitting_frame.MCMC_frame.burn_box.insert(0, str(args.burn))
-    if args.thin is not None:
-        root.control_frame.fitting_frame.MCMC_frame.thin_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_frame.thin_box.insert(0, str(args.thin))
+    if args.keep is not None:
+        root.control_frame.fitting_frame.MCMC_frame.keep_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.MCMC_frame.keep_box.insert(0, str(args.keep))
     if args.full_monte_carlo:
         root.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_button.select()
         root.control_frame.fitting_frame.MCMC_constraint_frame.update_full_MC()

@@ -810,6 +810,7 @@ class Profile(object):
             Path of the file to write. If the file exists, it will be
             overwritten without warning.
         """
+        # TODO: Add metadata!
         filename = os.path.expanduser(filename)
         with open(filename, 'wb') as outfile:
             writer = csv.writer(outfile)
@@ -823,7 +824,7 @@ class Profile(object):
                                 [x for x in self.err_X[k, :]] +
                                 [self.y[k], self.err_y[k]])
     
-def read_csv(filename, X_names=None, y_name=None, metadata_lines=0):
+def read_csv(filename, X_names=None, y_name=None, metadata_lines=None):
     """Reads a CSV file into a :py:class:`Profile`.
     
     If names are not provided for the columns holding the `X` and `y` values and
@@ -869,13 +870,23 @@ def read_csv(filename, X_names=None, y_name=None, metadata_lines=0):
     err_y = []
     metadata = []
     with open(filename, 'rb') as infile:
-        # Capture metadata:
+        # Capture metadata, if present:
+        if metadata_lines is None:
+            first_line = infile.readline()
+            if first_line.startswith("metadata"):
+                try:
+                    metadata_lines = int(first_line.split(None, 1)[1])
+                except ValueError:
+                    metadata_lines = 1
+            else:
+                metadata_lines = 0
+            infile.seek(0)
         for k in xrange(0, metadata_lines):
             metadata.append(infile.readline())
         if not (X_names and y_name):
             X_names = infile.readline().split(',')
-            X_names = [name for name in names if not name.startswith('err_')]
-            y_name = names.pop(-1)
+            X_names = [name for name in X_names if not name.startswith('err_')]
+            y_name = X_names.pop(-1)
             infile.seek(0)
             # Need to skip the metadata again:
             for k in xrange(0, metadata_lines):
