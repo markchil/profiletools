@@ -426,6 +426,7 @@ class BivariatePlasmaProfile(Profile):
                          return_prediction=False, **predict_kwargs):
         # TODO: Add ability to just compute value.
         # TODO: Make finer-grained control over what to return.
+        # TODO: Add proper support for full_MC keyword!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not use_MCMC:
@@ -499,16 +500,26 @@ class BivariatePlasmaProfile(Profile):
                 var_dX_dRmid = scipy.var(dX_dRmid, ddof=1, axis=1)
                 var_dX_dRmid[scipy.isnan(var_dX_dRmid)] = 0
             
-            # Compute using error propagation:
-            mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
-            std_a_L = scipy.sqrt(
-                var_a * (mean_grad * mean_dX_dRmid / mean_val)**2 +
-                var_val * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
-                var_grad * (mean_a * mean_dX_dRmid / mean_val)**2 +
-                var_dX_dRmid * (mean_a * mean_grad / mean_val)**2 +
-                cov_val_grad * ((-mean_a * mean_grad * mean_dX_dRmid / mean_val**2) *
-                                (mean_a * mean_dX_dRmid / mean_val))
-            )
+            if predict_kwargs.get('full_MC', False):
+                # TODO: Doesn't include uncertainty in EFIT quantities!
+                # Use samples:
+                val_samps = out['samp'][:len(X)]
+                grad_samps = out['samp'][len(X):]
+                dX_dRmid = scipy.tile(mean_dX_dRmid, (val_samps.shape[1], 1)).T
+                a_L_samps = -mean_a * grad_samps * dX_dRmid / val_samps
+                mean_a_L = scipy.mean(a_L_samps, axis=1)
+                std_a_L = scipy.std(a_L_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
+            else:
+                # Compute using error propagation:
+                mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
+                std_a_L = scipy.sqrt(
+                    var_a * (mean_grad * mean_dX_dRmid / mean_val)**2 +
+                    var_val * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
+                    var_grad * (mean_a * mean_dX_dRmid / mean_val)**2 +
+                    var_dX_dRmid * (mean_a * mean_grad / mean_val)**2 +
+                    cov_val_grad * ((-mean_a * mean_grad * mean_dX_dRmid / mean_val**2) *
+                                    (mean_a * mean_dX_dRmid / mean_val))
+                )
             # Plot result:
             if plot:
                 ax = plot_kwargs.pop('ax', None)
@@ -535,13 +546,17 @@ class BivariatePlasmaProfile(Profile):
                              "X_dim=%d!" % (self.X_dim,))
         
         if return_prediction:
-            return {'mean_val': mean_val,
-                    'std_val': scipy.sqrt(var_val),
-                    'mean_grad': mean_grad,
-                    'std_grad': scipy.sqrt(var_grad),
-                    'mean_a_L': mean_a_L,
-                    'std_a_L': std_a_L,
-                    'out': out}
+            retval = {'mean_val': mean_val,
+                      'std_val': scipy.sqrt(var_val),
+                      'mean_grad': mean_grad,
+                      'std_grad': scipy.sqrt(var_grad),
+                      'mean_a_L': mean_a_L,
+                      'std_a_L': std_a_L,
+                      'out': out,
+                     }
+            if predict_kwargs.get('full_MC', False):
+                retval['samp'] = out['samp']
+            return retval
         else:
             return (mean_a_L, std_a_L)
 

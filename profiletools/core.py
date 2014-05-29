@@ -1108,3 +1108,32 @@ def get_nearest_idx(v, a):
         return scipy.array([(scipy.absolute(a - val)).argmin() for val in v])
     except TypeError:
         return (scipy.absolute(a - v)).argmin()
+
+class RejectionFunc(object):
+    """Rejection function for use with `full_MC` mode of :py:func:`GaussianProcess.predict`.
+    
+    Parameters
+    ----------
+    mask : array of bool
+        Mask for the values to include in the test.
+    positivity : bool, optional
+        Set this to True to impose a positivity constraint on the sample.
+        Default is True.
+    monotonicity : bool, optional
+        Set this to True to impose a positivity constraint on the samples.
+        Default is True.
+    """
+    def __init__(self, mask, positivity=True, monotonicity=True):
+        self.mask = mask
+        self.positivity = positivity
+        self.monotonicity = monotonicity
+    
+    def __call__(self, samp):
+        """Returns True if the sample meets the constraints, False otherwise.
+        """
+        k = len(self.mask)
+        if ((self.positivity and (samp[:k][self.mask].min() < 0)) or 
+                (self.monotonicity and (samp[k:][self.mask].max() > 0))):
+            return False
+        else:
+            return True
