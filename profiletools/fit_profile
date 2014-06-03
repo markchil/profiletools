@@ -426,6 +426,7 @@ import time
 import multiprocessing
 import profiletools
 import gptools
+import eqtools
 import MDSplus
 import os.path
 import copy
@@ -1378,12 +1379,14 @@ class FitWindow(tk.Tk):
     
     def load_data(self):
         self.master_p = collections.OrderedDict()
+        self.efit_tree = None
         
         if (self.control_frame.data_source_frame.tree_file_frame.source_state.get() ==
                 self.control_frame.data_source_frame.tree_file_frame.TREE_MODE):
             try:
                 shot = int(self.control_frame.data_source_frame.shot_frame.shot_box.get())
                 self.control_frame.status_frame.add_line("Loading data from shot number %d..." % (shot,))
+                self.efit_tree = eqtools.CModEFITTree(shot)
             except ValueError:
                 self.control_frame.status_frame.add_line("Invalid shot number! Loading of data from tree failed.")
                 return
@@ -1393,9 +1396,18 @@ class FitWindow(tk.Tk):
                 self.control_frame.status_frame.add_line("Loading data from %s..." % (system,))
                 try:
                     if signal == 'ne':
-                        self.master_p[system] = profiletools.ne(shot, include=[system])
+                        self.master_p[system] = profiletools.ne(
+                            shot,
+                            include=[system],
+                            efit_tree=self.efit_tree
+                        )
                     elif signal == 'Te':
-                        self.master_p[system] = profiletools.Te(shot, include=[system], remove_ECE_edge=False)
+                        self.master_p[system] = profiletools.Te(
+                            shot,
+                            include=[system],
+                            remove_ECE_edge=False,
+                            efit_tree=self.efit_tree
+                        )
                     else:
                         self.control_frame.status_frame.add_line("Unsupported signal %s." % (signal,))
                 except MDSplus.TreeException as e:
@@ -1461,6 +1473,7 @@ class FitWindow(tk.Tk):
             if hasattr(self.master_p[base], 'shot'):
                 self.control_frame.data_source_frame.shot_frame.shot_box.delete(0, tk.END)
                 self.control_frame.data_source_frame.shot_frame.shot_box.insert(0, str(self.master_p[base].shot))
+                self.efit_tree = self.master_p[base].efit_tree
             if hasattr(self.master_p[base], 't_min'):
                 self.control_frame.averaging_frame.time_window_frame.window_button.invoke()
                 self.control_frame.averaging_frame.time_window_frame.t_min_box.delete(0, tk.END)
@@ -1526,6 +1539,8 @@ class FitWindow(tk.Tk):
         self.p = copy.deepcopy(self.master_p)
         for k, p in self.p.iteritems():
             self.control_frame.status_frame.add_line("Processing data from %s..." % (k,))
+            # Restore the master tree so they can all share data:
+            p.efit_tree = self.efit_tree
             # Restrict data to desired time points:
             if p.X_dim > 1:
                 if window_mode:
@@ -1540,11 +1555,12 @@ class FitWindow(tk.Tk):
                 # TODO: This will need to be moved outside of the X_dim>1 test once convert_abscissa supports already-averaged data!
                 try:
                     p.convert_abscissa(abscissa)
-                except:
+                except Exception as e:
                     self.control_frame.status_frame.add_line(
                         "Conversion to coordinate %s from %s failed for system %s."
                         % (abscissa, p.abscissa, k)
                     )
+                    print(e)
                 if len(times) == 1 or method == "all points":
                     p.drop_axis(0)
                 else:
