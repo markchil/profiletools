@@ -1555,11 +1555,12 @@ class FitWindow(tk.Tk):
                 # TODO: This will need to be moved outside of the X_dim>1 test once convert_abscissa supports already-averaged data!
                 try:
                     p.convert_abscissa(abscissa)
-                except:
+                except Exception as e:
                     self.control_frame.status_frame.add_line(
                         "Conversion to coordinate %s from %s failed for system %s."
                         % (abscissa, p.abscissa, k)
                     )
+                    print(e)
                 if len(times) == 1 or method == "all points":
                     p.drop_axis(0)
                 else:

@@ -57,7 +57,7 @@ class BivariatePlasmaProfile(Profile):
     second column is `R` and the third is `Z`. Otherwise the second column is
     the desired abscissa (psinorm, etc.).
     """
-    def convert_abscissa(self, new_abscissa):
+    def convert_abscissa(self, new_abscissa, drop_nan=True):
         """Convert the internal representation of the abscissa to new coordinates.
 
         Right now, only limited mappings are supported, and must be performed
@@ -88,6 +88,9 @@ class BivariatePlasmaProfile(Profile):
         ----------
         new_abscissa : str
             The new abscissa to convert to. Valid options are defined above.
+        drop_nan : bool, optional
+            Set this to True to drop any elements whose value is NaN following
+            the conversion. Default is True (drop NaN elements).
         """
         # TODO: This assumes the data haven't been averaged along t yet!
         # TODO: NEEDS A LOT OF WORK!
@@ -124,11 +127,18 @@ class BivariatePlasmaProfile(Profile):
                                                  each_t=False)
         else:
             raise NotImplementedError("Conversion from that abscissa is not supported!")
-        self.X = scipy.hstack((self.X[:, 0], new_rho))
+        self.X = scipy.hstack((scipy.atleast_2d(self.X[:, 0]).T, scipy.atleast_2d(new_rho).T))
         self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
         self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
-        self.err_X = scipy.hstack((self.err_X[:, 0], scipy.zeros_like(self.X[:, 0])))
+        self.err_X = scipy.hstack(
+            (
+                scipy.atleast_2d(self.err_X[:, 0]).T,
+                scipy.atleast_2d(scipy.zeros_like(self.X[:, 0])).T
+            )
+        )
         self.abscissa = new_abscissa
+        if drop_nan:
+            self.remove_points(scipy.isnan(self.X).any(axis=1))
 
     def time_average(self, **kwargs):
         """Compute the time average of the quantity.

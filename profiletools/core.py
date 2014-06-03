@@ -175,7 +175,7 @@ class Profile(object):
             raise ValueError("All elements of err_y must be non-negative!")
         
         # Handle scalar independent variable or convert array input into matrix.
-        X = scipy.asmatrix(X, dtype=float)
+        X = scipy.atleast_2d(scipy.asarray(X, dtype=float))
         # Correct single-dimension inputs:
         if self.X_dim == 1 and X.shape[0] == 1:
             X = X.T
@@ -190,10 +190,10 @@ class Profile(object):
         except TypeError:
             err_X = err_X * scipy.ones_like(X, dtype=float)
         else:
-            err_X = scipy.asarray(err_X)
+            err_X = scipy.asarray(err_X, dtype=float)
             if err_X.ndim == 1 and self.X_dim != 1:
                 err_X = scipy.tile(err_X, (X.shape[0], 1))
-        err_X = scipy.asmatrix(err_X, dtype=float)
+        err_X = scipy.atleast_2d(scipy.asarray(err_X, dtype=float))
         if self.X_dim == 1 and err_X.shape[0] == 1:
             err_X = err_X.T
         if err_X.shape != X.shape:
@@ -213,9 +213,9 @@ class Profile(object):
                 d_channels = channels
                 channels = X.copy()
                 for idx in d_channels:
-                    channels[:, idx] = scipy.atleast_2d(d_channels[idx]).T
+                    channels[:, idx] = d_channels[idx]
             else:
-                channels = scipy.asmatrix(channels)
+                channels = scipy.asarray(channels)
                 if channels.shape != X.shape:
                     raise ValueError("Shape of channels and X must be the same!")
         
@@ -295,15 +295,16 @@ class Profile(object):
         new_err_y = []
         new_channels = []
         
-        axis_channels = scipy.asarray(self.channels[:, axis]).flatten()
+        axis_channels = self.channels[:, axis].flatten()
         
         reduced_channels = scipy.delete(self.channels, axis, axis=1)
         channels = unique_rows(reduced_channels)
         
         for ch in channels:
-            channel_idxs = (scipy.asarray(reduced_channels) ==
-                         scipy.asarray(ch).flatten()).all(axis=1)
-            ch_axis_X = scipy.asarray(self.X[channel_idxs, axis]).flatten()
+            channel_idxs = (
+                reduced_channels == ch.flatten()
+            ).all(axis=1)
+            ch_axis_X = self.X[channel_idxs, axis].flatten()
             keep_idxs = scipy.unique(get_nearest_idx(vals, ch_axis_X))
             
             new_X.extend(self.X[channel_idxs, :][keep_idxs, :])
@@ -349,8 +350,9 @@ class Profile(object):
         err_X = scipy.zeros_like(X)
         err_y = scipy.zeros_like(y)
         for i, chan in zip(range(0, len(channels)), channels):
-            chan_mask = (scipy.asarray(reduced_channels) ==
-                         scipy.asarray(chan).flatten()).all(axis=1)
+            chan_mask = (
+                reduced_channels == chan.flatten()
+            ).all(axis=1)
             if not robust:
                 y[i] = scipy.mean(self.y[chan_mask])
                 err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
@@ -415,8 +417,8 @@ class Profile(object):
             kwargs['fmt'] = 'o'
         
         if self.X_dim == 1:
-            ax.errorbar(scipy.asarray(self.X).flatten(), self.y,
-                        yerr=self.err_y, xerr=scipy.asarray(self.err_X).flatten(),
+            ax.errorbar(self.X.flatten(), self.y,
+                        yerr=self.err_y, xerr=self.err_X.flatten(),
                         **kwargs)
             if label_axes:
                 ax.set_xlabel(
@@ -428,10 +430,8 @@ class Profile(object):
                     else self.y_label
                 )
         elif self.X_dim == 2:
-            X_arr = scipy.asarray(self.X)
-            err_X_arr = scipy.asarray(self.err_X)
-            errorbar3d(ax, X_arr[:, 0], X_arr[:, 1], self.y,
-                       xerr=err_X_arr[:, 0], yerr=err_X_arr[:, 1], zerr=self.err_y,
+            errorbar3d(ax, self.X[:, 0], self.X[:, 1], self.y,
+                       xerr=self.err_X[:, 0], yerr=self.err_X[:, 1], zerr=self.err_y,
                        **kwargs)
             if label_axes:
                 ax.set_xlabel(
@@ -568,7 +568,7 @@ class Profile(object):
         if self.X_dim != 1:
             raise NotImplementedError("Extreme change removal is not supported "
                                       "for X_dim = %d" % (self.X_dim,))
-        sort_idx = scipy.asarray(self.X).flatten().argsort()
+        sort_idx = self.X.flatten().argsort()
         y_sort = self.y[sort_idx]
         err_y_sort = self.err_y[sort_idx]
         forward_diff = y_sort[:-1] - y_sort[1:]
