@@ -600,7 +600,7 @@ class BivariatePlasmaProfile(Profile):
         else:
             return (mean_a_L, std_a_L)
     
-    def _make_volume_averaging_matrix(self, npts, method='simp'):
+    def _make_volume_averaging_matrix(self, npts):
         if self.X_dim == 1:
             vol_grid = scipy.linspace(0, 1, npts)
             
@@ -617,8 +617,36 @@ class BivariatePlasmaProfile(Profile):
             rho_grid = self.efit_tree.rho2rho('volnorm', self.abscissa, vol_grid, times, each_t=True)
             rho_grid = scipy.mean(rho_grid, axis=0)
             
+            N = npts - 1
+            a = 0
+            b = 1
+            
+            # Use the trapezoid rule:
+            weights = 2 * scipy.ones_like(vol_grid)
+            weights[0] = 1
+            weights[-1] = 1
+            weights *= (b - a) / (2.0 * N)
+            weights = scipy.atleast_2d(weights)
+            
+            return (rho_grid, weights)
         else:
             raise NotImplementedError("Volume averaging not yet supported for X_dim > 1!")
+    
+    def compute_volume_average(self, npts=400, force_update=False, use_MCMC=False,
+                               gp_kwargs={}, MAP_kwargs={}, **predict_kwargs):
+        # TODO: Documentation!
+        if self.X_dim == 1:
+            if force_update or self.gp is None:
+                self.create_gp(**gp_kwargs)
+                if not use_MCMC:
+                    self.find_gp_MAP_estimate(**MAP_kwargs)
+            rho_grid, weights = self._make_volume_averaging_matrix(npts)
+        
+            return self.gp.predict(rho_grid, output_transform=weights, use_MCMC=use_MCMC, **predict_kwargs)
+        else:
+            raise NotImplementedError("Volume averaging not yet supported for X_dim > 1!")
+    
+    # TODO: Peaking!
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):

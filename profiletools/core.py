@@ -741,7 +741,7 @@ class Profile(object):
         return self.gp.plot(**kwargs)
     
     def smooth(self, X, n=0, force_update=False, use_MCMC=False, plot=False,
-               gp_kwargs={}, MAP_kwargs={}, MCMC_kwargs={}, **kwargs):
+               gp_kwargs={}, MAP_kwargs={}, **kwargs):
         """Evaluate the underlying smooth curve at a given set of points using Gaussian process regression.
         
         If this :py:class:`Profile` instance does not already have a Gaussian
