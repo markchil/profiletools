@@ -57,21 +57,11 @@ class BivariatePlasmaProfile(Profile):
     second column is `R` and the third is `Z`. Otherwise the second column is
     the desired abscissa (psinorm, etc.).
     """
-    def convert_abscissa(self, new_abscissa, drop_nan=True):
+    def convert_abscissa(self, new_abscissa, drop_nan=True, ddof=1):
         """Convert the internal representation of the abscissa to new coordinates.
-
-        Right now, only limited mappings are supported, and must be performed
-        BEFORE any time averaging has been carried out.
-
-        Supported original abscissae are:
-
-            ==== =====================================================
-            RZ   (R, Z) ordered pairs in physical machine coordinates.
-            Rmid Mapped midplane major radius
-            ==== =====================================================
-
-        The target abcissae are what are supported by `rz2rho` and `rmid2rho`
-        from the `eqtools` package. Namely,
+        
+        The target abcissae are what are supported by `rho2rho` from the
+        `eqtools` package. Namely,
 
             ======= ========================
             psinorm Normalized poloidal flux
@@ -81,8 +71,8 @@ class BivariatePlasmaProfile(Profile):
             r/a     Normalized minor radius
             ======= ========================
                 
-        Additionally, each valid option may be prepended with 'sqrt'
-        to return the square root of the desired normalized unit.
+        Additionally, each valid option may be prepended with 'sqrt' to return
+        the square root of the desired normalized unit.
 
         Parameters
         ----------
@@ -91,43 +81,91 @@ class BivariatePlasmaProfile(Profile):
         drop_nan : bool, optional
             Set this to True to drop any elements whose value is NaN following
             the conversion. Default is True (drop NaN elements).
+        ddof : int, optional
+            Degree of freedom correction to use when time-averaging a conversion.
         """
-        # TODO: This assumes the data haven't been averaged along t yet!
-        # TODO: NEEDS A LOT OF WORK!
         if self.abscissa == new_abscissa:
             return
-        elif self.X_labels[0] != '$t$':
-            raise ValueError("Can't convert abscissa after time-averaging!")
-        elif self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-            new_rho = scipy.power(self.X[:, 1], 2)
-        elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-            new_rho = scipy.power(self.X[:, 1], 0.5)
-        elif self.abscissa == 'RZ':
-            # Need to handle this case separately because of the extra column:
-            new_rho = self.efit_tree.rz2rho(new_abscissa,
-                                            self.X[:, 1],
-                                            self.X[:, 2],
-                                            self.X[:, 0],
-                                            each_t=False)
-            self.channels = self.channels[:, 0:2]                
-            self.X_dim = 2
+        elif self.X_dim == 1 or (self.X_dim == 2 and self.abscissa == 'RZ'):
+            # TODO: Handle the sqrt cases elegantly!
+            if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
+                new_rho = scipy.power(self.X[:, 0], 2)
+                # Approximate form from uncertainty propagation:
+                err_new_rho = self.err_X[:, 0] * 2 * self.X[:, 0]
+            elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
+                new_rho = scipy.power(self.X[:, 0], 0.5)
+                # Approximate form from uncertainty propagation:
+                err_new_rho = self.err_X[:, 0] / (2 * scipy.sqrt(self.X[:, 0]))
+            else:
+                # Handle case where we need to average:
+                t_efit = self.efit_tree.getTimeBase()
+                if hasattr(self, 'times'):
+                    ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
+                elif self.t_min != self.t_max:
+                    ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+                else:
+                    ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
+            
+                times = t_efit[ok_idxs]
+            
+                if self.abscissa == 'RZ':
+                    new_rhos = self.efit_tree.rz2rho(
+                        new_abscissa,
+                        self.X[:, 0],
+                        self.X[:, 1],
+                        times,
+                        each_t=True
+                    )
+                    self.X_dim = 1
+                else:
+                    new_rhos = self.efit_tree.rho2rho(
+                        self.abscissa,
+                        new_abscissa,
+                        self.X[:, 0],
+                        times,
+                        each_t=True
+                    )
+                new_rho = scipy.mean(new_rhos, axis=0)
+                err_new_rho = scipy.std(new_rhos, axis=0, ddof=ddof)
+                err_new_rho[scipy.isnan(err_new_rho)] = 0
+            
+            self.X = scipy.atleast_2d(new_rho).T
+            self.X_labels = [_X_label_mapping[new_abscissa]]
+            self.X_units = [_X_unit_mapping[new_abscissa]]
+            self.err_X = scipy.atleast_2d(err_new_rho).T
         else:
-            new_rho = self.efit_tree.rho2rho(
-                self.abscissa,
-                new_abscissa,
-                self.X[:, 1],
-                self.X[:, 0],
-                each_t=False
+            if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
+                new_rho = scipy.power(self.X[:, 1], 2)
+            elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
+                new_rho = scipy.power(self.X[:, 1], 0.5)
+            elif self.abscissa == 'RZ':
+                # Need to handle this case separately because of the extra column:
+                new_rho = self.efit_tree.rz2rho(new_abscissa,
+                                                self.X[:, 1],
+                                                self.X[:, 2],
+                                                self.X[:, 0],
+                                                each_t=False)
+                self.channels = self.channels[:, 0:2]                
+                self.X_dim = 2
+            else:
+                new_rho = self.efit_tree.rho2rho(
+                    self.abscissa,
+                    new_abscissa,
+                    self.X[:, 1],
+                    self.X[:, 0],
+                    each_t=False
+                )
+            err_new_rho = scipy.zeros_like(self.X[:, 0])
+        
+            self.X = scipy.hstack((scipy.atleast_2d(self.X[:, 0]).T, scipy.atleast_2d(new_rho).T))
+            self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
+            self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
+            self.err_X = scipy.hstack(
+                (
+                    scipy.atleast_2d(self.err_X[:, 0]).T,
+                    scipy.atleast_2d(err_new_rho).T
+                )
             )
-        self.X = scipy.hstack((scipy.atleast_2d(self.X[:, 0]).T, scipy.atleast_2d(new_rho).T))
-        self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
-        self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
-        self.err_X = scipy.hstack(
-            (
-                scipy.atleast_2d(self.err_X[:, 0]).T,
-                scipy.atleast_2d(scipy.zeros_like(self.X[:, 0])).T
-            )
-        )
         self.abscissa = new_abscissa
         if drop_nan:
             self.remove_points(scipy.isnan(self.X).any(axis=1))
@@ -141,8 +179,8 @@ class BivariatePlasmaProfile(Profile):
         """
         self.t_min = self.X[:, 0].min()
         self.t_max = self.X[:, 0].max()
-        if self.abscissa == 'RZ':
-            self.drop_axis(1)
+        # if self.abscissa == 'RZ':
+        #     self.drop_axis(1)
         self.average_data(axis=0, **kwargs)
     
     def drop_axis(self, axis):
@@ -561,6 +599,26 @@ class BivariatePlasmaProfile(Profile):
             return retval
         else:
             return (mean_a_L, std_a_L)
+    
+    def _make_volume_averaging_matrix(self, npts, method='simp'):
+        if self.X_dim == 1:
+            vol_grid = scipy.linspace(0, 1, npts)
+            
+            t_efit = self.efit_tree.getTimeBase()
+            if hasattr(self, 'times'):
+                ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
+            elif self.t_min != self.t_max:
+                ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+            else:
+                ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
+            
+            times = t_efit[ok_idxs]
+            
+            rho_grid = self.efit_tree.rho2rho('volnorm', self.abscissa, vol_grid, times, each_t=True)
+            rho_grid = scipy.mean(rho_grid, axis=0)
+            
+        else:
+            raise NotImplementedError("Volume averaging not yet supported for X_dim > 1!")
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):
