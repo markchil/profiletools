@@ -100,6 +100,7 @@ class BivariatePlasmaProfile(Profile):
         elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
             new_rho = scipy.power(self.X[:, 1], 0.5)
         elif self.abscissa == 'RZ':
+            # Need to handle this case separately because of the extra column:
             new_rho = self.efit_tree.rz2rho(new_abscissa,
                                             self.X[:, 1],
                                             self.X[:, 2],
@@ -107,23 +108,14 @@ class BivariatePlasmaProfile(Profile):
                                             each_t=False)
             self.channels = self.channels[:, 0:2]                
             self.X_dim = 2
-        elif self.abscissa == 'Rmid':
-            new_rho = self.efit_tree.rmid2rho(new_abscissa,
-                                              self.X[:, 1],
-                                              self.X[:, 0],
-                                              each_t=False)
-        elif self.abscissa == 'psinorm':
-            new_rho = self.efit_tree.psinorm2rho(new_abscissa,
-                                                 self.X[:, 1],
-                                                 self.X[:, 0],
-                                                 each_t=False)
-        elif self.abscissa == 'sqrtpsinorm':
-            new_rho = self.efit_tree.psinorm2rho(new_abscissa,
-                                                 scipy.power(self.X[:, 1], 2),
-                                                 self.X[:, 0],
-                                                 each_t=False)
         else:
-            raise NotImplementedError("Conversion from that abscissa is not supported!")
+            new_rho = self.efit_tree.rho2rho(
+                self.abscissa,
+                new_abscissa,
+                self.X[:, 1],
+                self.X[:, 0],
+                each_t=False
+            )
         self.X = scipy.hstack((self.X[:, 0], new_rho))
         self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
         self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
