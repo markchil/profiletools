@@ -2130,6 +2130,31 @@ class FitWindow(tk.Tk):
         if path:
             root, ext = os.path.splitext(path)
             if save_plot:
+                title = 'fit_profile ' + __version__
+                try:
+                    title += " shot %d" % (self.combined_p.shot)
+                except AttributeError:
+                    pass
+                try:
+                    title += " t_min %f" % (self.combined_p.t_min)
+                except AttributeError:
+                    pass
+                try:
+                    title += " t_max %f" % (self.combined_p.t_max)
+                except AttributeError:
+                    pass
+                if hasattr(self.combined_p, 'times'):
+                    times = list(self.combined_p.times)
+                    title += " times %f" % (times.pop())
+                    for t in times:
+                        title += ",%f" % (t,)
+                try:
+                    title += " coordinate %s" % (self.combined_p.abscissa)
+                except AttributeError:
+                    pass
+                
+                self.plot_frame.f.suptitle(title)
+                
                 self.plot_frame.f.savefig(
                     os.path.expanduser(root) + '.pdf',
                     format='pdf'
