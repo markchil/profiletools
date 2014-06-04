@@ -25,6 +25,7 @@ from .core import Profile, read_csv, read_NetCDF
 import MDSplus
 import scipy
 import scipy.interpolate
+import scipy.stats
 import eqtools
 import gptools
 import warnings
@@ -461,24 +462,74 @@ class BivariatePlasmaProfile(Profile):
         if constrain_at_limiter:
             self.constrain_at_limiter(**limiter_constraint_kwargs)
     
-    def compute_a_over_L(self, X, force_update=False, use_MCMC=True, plot=False,
+    def compute_a_over_L(self, X, force_update=False, plot=False,
                          gp_kwargs={}, MAP_kwargs={}, plot_kwargs={},
-                         return_prediction=False, **predict_kwargs):
+                         return_prediction=False, special_vals=0,
+                         special_X_vals=0, **predict_kwargs):
+        """Compute the normalized inverse gradient scale length.
+        
+        Only works on data that have already been time-averaged at the moment.
+        
+        Parameters
+        ----------
+        X : array-like
+            The points to evaluate a/L at.
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        plot : bool, optional
+            If True, a plot of a/L is produced. Default is False (no plot).
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        MAP_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
+        plot_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to `plot` when
+            plotting the mean of a/L. Default is {}.
+        return_prediction : bool, optional
+            If True, the full prediction of the value and gradient are returned
+            in a dictionary. Default is False (just return value and stddev of
+            a/L).
+        special_vals : int, optional
+            The number of special return values incorporated into
+            `output_transform` that should be dropped before computing a/L. This
+            is used so that things like volume averages can be efficiently
+            computed at the same time as a/L. Default is 0 (no extra values).
+        special_X_vals : int, optional
+            The number of special points included in the abscissa that should
+            not be included in the evaluation of a/L. Default is 0 (no extra
+            values).
+        **predict_kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`predict` method.
+        """
         # TODO: Add ability to just compute value.
         # TODO: Make finer-grained control over what to return.
-        # TODO: Add proper support for full_MC keyword!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
-            if not use_MCMC:
+            if not predict_kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         if self.X_dim == 1:
             # Get GP fit:
-            XX = scipy.concatenate((X, X))
-            n = scipy.concatenate((scipy.zeros_like(X), scipy.ones_like(X)))
-            out = self.gp.predict(XX, n=n, use_MCMC=use_MCMC, full_output=True,
+            XX = scipy.concatenate((X, X[special_X_vals:]))
+            n = scipy.concatenate((scipy.zeros_like(X), scipy.ones_like(X[special_X_vals:])))
+            out = self.gp.predict(XX, n=n, full_output=True,
                                   **predict_kwargs)
             mean = out['mean']
             cov = out['cov']
+            
+            # Ditch the special values:
+            special_mean = mean[:special_vals]
+            special_cov = cov[:special_vals, :special_vals]
+            X = X[special_X_vals:]
+            
+            cov = cov[special_vals:, special_vals:]
+            mean = mean[special_vals:]
+            
             var = scipy.diagonal(cov)
             mean_val = mean[:len(X)]
             var_val = var[:len(X)]
@@ -543,8 +594,8 @@ class BivariatePlasmaProfile(Profile):
             if predict_kwargs.get('full_MC', False):
                 # TODO: Doesn't include uncertainty in EFIT quantities!
                 # Use samples:
-                val_samps = out['samp'][:len(X)]
-                grad_samps = out['samp'][len(X):]
+                val_samps = out['samp'][special_vals:len(X)+special_vals]
+                grad_samps = out['samp'][len(X)+special_vals:]
                 dX_dRmid = scipy.tile(mean_dX_dRmid, (val_samps.shape[1], 1)).T
                 a_L_samps = -mean_a * grad_samps * dX_dRmid / val_samps
                 mean_a_L = scipy.mean(a_L_samps, axis=1)
@@ -592,7 +643,10 @@ class BivariatePlasmaProfile(Profile):
                       'std_grad': scipy.sqrt(var_grad),
                       'mean_a_L': mean_a_L,
                       'std_a_L': std_a_L,
+                      'cov': cov,
                       'out': out,
+                      'special_mean': special_mean,
+                      'special_cov': special_cov
                      }
             if predict_kwargs.get('full_MC', False):
                 retval['samp'] = out['samp']
@@ -600,53 +654,250 @@ class BivariatePlasmaProfile(Profile):
         else:
             return (mean_a_L, std_a_L)
     
-    def _make_volume_averaging_matrix(self, npts):
+    def _get_efit_times_to_average(self):
+        """Get the EFIT times to average over for a profile that has already been time-averaged.
+        
+        If this instance has a :py:attr:`times` attribute, the nearest indices
+        to those times are used. Failing that, if :py:attr:`t_min` and
+        :py:attr:`t_max` are distinct, all points between them are used. Failing
+        that, the nearest index to t_min is used.
+        """
+        t_efit = self.efit_tree.getTimeBase()
+        if hasattr(self, 'times'):
+            ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
+        elif self.t_min != self.t_max:
+            ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+            # TODO: What happens if there is no point between the two?
+        else:
+            ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
+    
+        return t_efit[ok_idxs]
+    
+    def _make_volume_averaging_matrix(self, rho_grid=None, npts=400):
+        """Generate a matrix of weights to find the volume average using the trapezoid rule.
+        
+        At present, this only supports data that have already been time-averaged.
+        
+        Parameters
+        ----------
+        rho_grid : array-like, optional
+            The points (of the instance's abscissa) to use as the quadrature
+            points. If these aren't provided, a grid of points uniformly spaced
+            in volnorm will be produced. Default is None (produce uniform
+            volnorm grid).
+        npts : int, optional
+            The number of points to use when producing a uniform volnorm grid.
+            Default is 400.
+        
+        Returns
+        -------
+        rho_grid : array, (`npts`,)
+            The quadrature points to be used on the instance's abscissa.
+        weights : array, (1, `npts`)
+            The matrix of weights to multiply the values at each location in
+            `rho_grid` by to get the volume average.
+        """
         if self.X_dim == 1:
-            vol_grid = scipy.linspace(0, 1, npts)
+            times = self._get_efit_times_to_average()
             
-            t_efit = self.efit_tree.getTimeBase()
-            if hasattr(self, 'times'):
-                ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
-            elif self.t_min != self.t_max:
-                ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
+            if rho_grid is None:
+                vol_grid = scipy.linspace(0, 1, npts)
+                
+                if 'volnorm' not in self.abscissa:
+                    rho_grid = self.efit_tree.rho2rho(
+                        'volnorm',
+                        self.abscissa,
+                        vol_grid,
+                        times,
+                        each_t=True
+                    )
+                    rho_grid = scipy.mean(rho_grid, axis=0)
+                else:
+                    if self.abscissa.startswith('sqrt'):
+                        rho_grid = scipy.sqrt(vol_grid)
+                    else:
+                        rho_grid = vol_grid
+            
+                N = npts - 1
+                a = 0
+                b = 1
+            
+                # Use the trapezoid rule:
+                weights = 2 * scipy.ones_like(vol_grid)
+                weights[0] = 1
+                weights[-1] = 1
+                weights *= (b - a) / (2.0 * N)
             else:
-                ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
+                if 'volnorm' not in self.abscissa:
+                    vol_grid = self.efit_tree.rho2rho(self.abscissa, 'volnorm', rho_grid, times, each_t=True)
+                else:
+                    if self.abscissa.startswith('sqrt'):
+                        vol_grid = scipy.asarray(rho_grid)**2
+                    else:
+                        vol_grid = rho_grid
+                # Use nanmean in case there is a value which is teetering -- we
+                # want to keep it in.
+                vol_grid = scipy.stats.nanmean(vol_grid, axis=0)
+                ok_mask = ~scipy.isnan(vol_grid)
+                delta_vol = scipy.diff(vol_grid[ok_mask])
+                weights = scipy.zeros_like(vol_grid)
+                weights[ok_mask] = 0.5 * (scipy.insert(delta_vol, 0, 0) + scipy.insert(delta_vol, -1, 0))
             
-            times = t_efit[ok_idxs]
-            
-            rho_grid = self.efit_tree.rho2rho('volnorm', self.abscissa, vol_grid, times, each_t=True)
-            rho_grid = scipy.mean(rho_grid, axis=0)
-            
-            N = npts - 1
-            a = 0
-            b = 1
-            
-            # Use the trapezoid rule:
-            weights = 2 * scipy.ones_like(vol_grid)
-            weights[0] = 1
-            weights[-1] = 1
-            weights *= (b - a) / (2.0 * N)
             weights = scipy.atleast_2d(weights)
-            
             return (rho_grid, weights)
         else:
             raise NotImplementedError("Volume averaging not yet supported for X_dim > 1!")
     
-    def compute_volume_average(self, npts=400, force_update=False, use_MCMC=False,
-                               gp_kwargs={}, MAP_kwargs={}, **predict_kwargs):
-        # TODO: Documentation!
+    def compute_volume_average(self, return_std=True, grid=None, npts=400,
+                               force_update=False, gp_kwargs={}, MAP_kwargs={},
+                               **predict_kwargs):
+        """Compute the volume average of the profile.
+        
+        Right now only supports data that have already been time-averaged.
+        
+        Parameters
+        ----------
+        return_std : bool, optional
+            If True, the standard deviation of the volume average is computed
+            and returned. Default is True (return mean and stddev of volume average).
+        grid : array-like, optional
+            The quadrature points to use when finding the volume average. If
+            these are not provided, a uniform grid over volnorm will be used.
+            Default is None (use uniform volnorm grid).
+        npts : int, optional
+            The number of uniformly-spaced volnorm points to use if `grid` is
+            not specified. Default is 400.
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        MAP_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
+        **predict_kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`predict` method.
+        
+        Returns
+        -------
+        mean : float
+            The mean of the volume average.
+        std : float
+            The standard deviation of the volume average. Only returned if
+            `return_std` is True. Note that this is only sufficient as an error
+            estimate if you separately verify that the integration error is less
+            than this!
+        """
         if self.X_dim == 1:
             if force_update or self.gp is None:
                 self.create_gp(**gp_kwargs)
-                if not use_MCMC:
+                if not predict_kwargs.get('use_MCMC', False):
                     self.find_gp_MAP_estimate(**MAP_kwargs)
-            rho_grid, weights = self._make_volume_averaging_matrix(npts)
+            rho_grid, weights = self._make_volume_averaging_matrix(rho_grid=grid, npts=npts)
         
-            return self.gp.predict(rho_grid, output_transform=weights, use_MCMC=use_MCMC, **predict_kwargs)
+            res = self.gp.predict(
+                rho_grid,
+                output_transform=weights,
+                return_std=return_std,
+                return_cov=False,
+                full_output=False,
+                **predict_kwargs
+            )
+            if return_std:
+                return (res[0][0], res[1][0])
+            else:
+                return res[0]
         else:
-            raise NotImplementedError("Volume averaging not yet supported for X_dim > 1!")
+            raise NotImplementedError("Volume averaging not yet supported for "
+                                      "X_dim > 1!")
     
-    # TODO: Peaking!
+    def compute_peaking(self, return_std=True, grid=None, npts=400,
+                        force_update=False, gp_kwargs={}, MAP_kwargs={},
+                        **predict_kwargs):
+        r"""Compute the peaking of the profile.
+        
+        Right now only supports data that have already been time-averaged.
+        
+        Uses the definition from Greenwald, et al. (2007):
+        :math:`w(\psi_n=0.2)/\langle w \rangle`.
+        
+        Parameters
+        ----------
+        return_std : bool, optional
+            If True, the standard deviation of the volume average is computed
+            and returned. Default is True (return mean and stddev of peaking).
+        grid : array-like, optional
+            The quadrature points to use when finding the volume average. If
+            these are not provided, a uniform grid over volnorm will be used.
+            Default is None (use uniform volnorm grid).
+        npts : int, optional
+            The number of uniformly-spaced volnorm points to use if `grid` is
+            not specified. Default is 400.
+        force_update : bool, optional
+            If True, a new Gaussian process will be created even if one already
+            exists. Set this if you have added data or constraints since you
+            created the Gaussian process. Default is False (use current Gaussian
+            process if it exists).
+        gp_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`create_gp` if it gets called. Default is {}.
+        MAP_kwargs : dict, optional
+            The entries of this dictionary are passed as kwargs to
+            :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
+        **predict_kwargs : optional parameters
+            All other parameters are passed to the Gaussian process'
+            :py:meth:`predict` method.
+        """
+        if self.X_dim == 1:
+            if force_update or self.gp is None:
+                self.create_gp(**gp_kwargs)
+                if not predict_kwargs.get('use_MCMC', False):
+                    self.find_gp_MAP_estimate(**MAP_kwargs)
+            rho_grid, weights = self._make_volume_averaging_matrix(rho_grid=grid, npts=npts)
+            weights = scipy.append(weights, 0)
+            
+            # Find the relevant core location:
+            if 'psinorm' in self.abscissa:
+                if self.abscissa.startswith('sqrt'):
+                    core_loc = scipy.sqrt(0.2)
+                else:
+                    core_loc = 0.2
+            else:
+                times = self._get_efit_times_to_average()
+                
+                # TODO: Verify with Martin that rho really means psinorm in his 2007 paper!
+                core_loc = self.efit_tree.rho2rho('psinorm', self.abscissa, times, each_t=True)
+                core_loc = scipy.mean(core_loc)
+            
+            rho_grid = scipy.append(rho_grid, core_loc)
+            core_select = scipy.zeros_like(weights)
+            core_select[-1] = 1
+            weights = scipy.vstack((weights, core_select))
+            res = self.gp.predict(
+                rho_grid,
+                output_transform=weights,
+                return_std=return_std,
+                return_cov=return_std,
+                full_output=False,
+                **predict_kwargs
+            )
+            if return_std:
+                mean_res = res[0]
+                cov_res = res[1]
+                mean = mean_res[1] / mean_res[0]
+                std = scipy.sqrt(cov_res[1, 1] / mean_res[0]**2 +
+                                 cov_res[0, 0] * mean_res[1]**2 / mean_res[0]**4 -
+                                 cov_res[0, 1] * mean_res[1] / mean_res[0]**3)
+                return (mean, std)
+            else:
+                return res[1] / res[0]
+        else:
+            raise NotImplementedError("Computation of peaking factors not yet "
+                                      "supported for X_dim > 1!")
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False):

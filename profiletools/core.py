@@ -702,7 +702,6 @@ class Profile(object):
             All other parameters are passed to the Gaussian process'
             :py:meth:`optimize_hyperparameters` method.
         """
-        # TODO: Add more intelligent kwargs for this!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
         return self.gp.optimize_hyperparameters(**kwargs)
@@ -737,11 +736,10 @@ class Profile(object):
             self.create_gp(**gp_kwargs)
             if not kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
-        # TODO: Add a little more intelligence!
         return self.gp.plot(**kwargs)
     
-    def smooth(self, X, n=0, force_update=False, use_MCMC=False, plot=False,
-               gp_kwargs={}, MAP_kwargs={}, **kwargs):
+    def smooth(self, X, n=0, force_update=False, plot=False, gp_kwargs={},
+               MAP_kwargs={}, **kwargs):
         """Evaluate the underlying smooth curve at a given set of points using Gaussian process regression.
         
         If this :py:class:`Profile` instance does not already have a Gaussian
@@ -792,14 +790,13 @@ class Profile(object):
         # TODO: Add a lot more intelligence!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
-            if not use_MCMC:
+            if not kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         if plot:
             plot_kwargs.pop('return_prediction', True)
-            return self.gp.plot(X=X, n=n, return_prediction=True,
-                                use_MCMC=use_MCMC, **kwargs)
+            return self.gp.plot(X=X, n=n, return_prediction=True, **kwargs)
         else:
-            return self.gp.predict(X, n=n, use_MCMC=use_MCMC, **kwargs)
+            return self.gp.predict(X, n=n, **kwargs)
     
     def write_csv(self, filename):
         """Writes this profile to a CSV file.

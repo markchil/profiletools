@@ -338,6 +338,14 @@ parser.add_argument('--no-a-over-L',
                     help="Set this flag to turn off the computation of a/L, "
                          "which can save some time if you don't need gradients/"
                          "scale lengths.")
+parser.add_argument('--compute-vol-avg',
+                    action='store_true',
+                    help="Set this flag to compute the volume average of the "
+                         "profile.")
+parser.add_argument('--compute-peaking',
+                    action='store_true',
+                    help="Set this flag to compute the peaking figure of merit "
+                         "of the profile.")
 parser.add_argument('-i', '--input-filename',
                     help="Filename/path to a CSV or NetCDF file containing the "
                          "profile data to be fit. Note that if you wish to make "
@@ -1174,13 +1182,36 @@ class EvaluationFrame(tk.Frame):
         self.x_points_box = tk.Entry(self)
         self.x_points_box.grid(row=2, column=1, columnspan=5, sticky='EW')
         
+        # Create frame to hold options of things to evaluate:
+        self.eval_option_frame = tk.Frame(self)
+        
+        # Create label for compute options:
+        self.compute_label = tk.Label(self.eval_option_frame, text="compute:")
+        self.compute_label.grid(row=0, column=0, sticky='E')
+        
         # Create checkbox to select whether or not a/L is computed:
         self.a_L_state = tk.IntVar(self)
-        self.a_L_button = tk.Checkbutton(self,
-                                         text="compute a/L",
+        self.a_L_button = tk.Checkbutton(self.eval_option_frame,
+                                         text="a/L",
                                          variable=self.a_L_state,
                                          command=self.update_a_L)
-        self.a_L_button.grid(row=3, column=0, sticky='W', columnspan=6)
+        self.a_L_button.grid(row=0, column=1, sticky='W')
+        
+        # Create checkbox to select whether or not volume average is computed:
+        self.vol_avg_state = tk.IntVar(self)
+        self.vol_avg_button = tk.Checkbutton(self.eval_option_frame,
+                                             text="volume average",
+                                             variable=self.vol_avg_state)
+        self.vol_avg_button.grid(row=0, column=2, sticky='W')
+        
+        # Create checkbox to select whether or not peaking is computed:
+        self.peaking_state = tk.IntVar(self)
+        self.peaking_button = tk.Checkbutton(self.eval_option_frame,
+                                             text="peaking",
+                                             variable=self.peaking_state)
+        self.peaking_button.grid(row=0, column=3, sticky='W')
+        
+        self.eval_option_frame.grid(row=3, column=0, sticky='W', columnspan=6)
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(3, weight=1)
@@ -1745,7 +1776,8 @@ class FitWindow(tk.Tk):
         # Do the voodoo:
         use_MCMC = (
             self.control_frame.fitting_frame.method_frame.method_state.get() ==
-            self.control_frame.fitting_frame.method_frame.USE_MCMC)
+            self.control_frame.fitting_frame.method_frame.USE_MCMC
+        )
         if not use_MCMC:
             self.control_frame.status_frame.add_line("Finding MAP estimate...")
             self.find_MAP()
@@ -1827,6 +1859,51 @@ class FitWindow(tk.Tk):
             burn = None
             thin = None
         try:
+            # TODO: Implement evaluation of vol_avg and peaking here!
+            compute_vol_avg = self.control_frame.eval_frame.vol_avg_state.get()
+            compute_peaking = self.control_frame.eval_frame.peaking_state.get()
+            if compute_vol_avg or compute_peaking:
+                dum, weights = self.combined_p._make_volume_averaging_matrix(rho_grid=X)
+                if compute_a_L:
+                    weights = scipy.hstack((weights, scipy.zeros_like(weights)))
+                    output_transform = scipy.vstack((weights, scipy.eye(2 * len(X))))
+                else:
+                    output_transform = scipy.vstack((weights, scipy.eye(len(X))))
+                # This will put the volume average as the first element.
+                if compute_peaking:
+                    if 'psinorm' in self.combined_p.abscissa:
+                        if self.combined_p.abscissa.startswith('sqrt'):
+                            core_loc = scipy.sqrt(0.2)
+                        else:
+                            core_loc = 0.2
+                    else:
+                        times = self.combined_p._get_efit_times_to_average()
+                
+                        # TODO: Verify with Martin that rho really means psinorm in his 2007 paper!
+                        core_loc = self.combined_p.efit_tree.rho2rho(
+                            'psinorm',
+                            self.combined_p.abscissa,
+                            times,
+                            each_t=True
+                        )
+                        core_loc = scipy.mean(core_loc)
+                    X = scipy.insert(X, 0, core_loc)
+                    output_transform = scipy.insert(output_transform, 0, 0, axis=1)
+                    core_select = scipy.zeros(output_transform.shape[1])
+                    core_select[0] = 1
+                    output_transform = scipy.insert(output_transform, 1, core_select, axis=0)
+                    # This will put w(psinorm=0.2) as the second element and the
+                    # volume average as the first element.
+            else:
+                output_transform = None
+            
+            if compute_peaking:
+                special_vals = 2
+            elif compute_vol_avg:
+                special_vals = 1
+            else:
+                special_vals = 0
+            
             if compute_a_L:
                 res = self.combined_p.compute_a_over_L(
                     X,
@@ -1837,7 +1914,10 @@ class FitWindow(tk.Tk):
                     rejection_func=rejection_func,
                     num_samples=num_samples,
                     burn=burn,
-                    thin=thin
+                    thin=thin,
+                    output_transform=output_transform,
+                    special_vals=special_vals,
+                    special_X_vals=int(compute_peaking)
                 )
             else:
                 res = self.combined_p.smooth(
@@ -1850,16 +1930,49 @@ class FitWindow(tk.Tk):
                     rejection_func=rejection_func,
                     num_samples=num_samples,
                     burn=burn,
-                    thin=thin
+                    thin=thin,
+                    output_transform=output_transform
                 )
-                res['mean_val'] = res.pop('mean')
-                res['std_val'] = res.pop('std')
+                res['special_mean'] = res['mean'][:special_vals]
+                res['special_cov'] = res['cov'][:special_vals, :special_vals]
+                res['mean_val'] = res.pop('mean')[special_vals:]
+                res['std_val'] = res.pop('std')[special_vals:]
         except numpy.linalg.LinAlgError as e:
             self.control_frame.status_frame.add_line(
                 "Evaluation failed! Try re-running and/or adjusting bounds/number "
                 "of samples. Exception was: %s" % (e,)
             )
             return
+        
+        if compute_vol_avg or compute_peaking:
+            mean_vol_avg = res['special_mean'][0]
+            std_vol_avg = scipy.sqrt(res['special_cov'][0, 0])
+            if compute_vol_avg:
+                if self.combined_p.y_units:
+                    self.control_frame.status_frame.add_line(
+                        u"Volume average is (%f\u00b1%f) %s"
+                        % (mean_vol_avg, std_vol_avg,
+                           self.combined_p.y_units.translate(None, '\\${}'),)
+                    )
+                else:
+                    self.control_frame.status_frame.add_line(
+                        u"Volume average is %f\u00b1%f"
+                        % (mean_vol_avg, std_vol_avg,)
+                    )
+            if compute_peaking:
+                mean_w2 = res['special_mean'][1]
+                std_w2 = scipy.sqrt(res['special_cov'][1, 1])
+                cov_w2_vol_avg = res['special_cov'][0, 1]
+                mean_peaking = mean_w2 / mean_vol_avg
+                std_peaking = scipy.sqrt(std_w2 / mean_vol_avg**2 +
+                                 std_vol_avg * mean_w2**2 / mean_vol_avg**4 -
+                                 cov_w2_vol_avg * mean_w2 / mean_vol_avg**3)
+                self.control_frame.status_frame.add_line(
+                    u"Peaking is %f\u00b1%f"
+                    % (mean_peaking, std_peaking,)
+                )
+                # Delete the extra points so they don't confuse the plot/file output:
+                X = X[1:]
         
         if full_MC:
             self.control_frame.status_frame.add_line(
@@ -2575,6 +2688,10 @@ if __name__ == "__main__":
         root.control_frame.fitting_frame.MCMC_constraint_frame.mono_button.select()
     if args.no_a_over_L:
         root.control_frame.eval_frame.a_L_button.deselect()
+    if args.compute_vol_avg:
+        root.control_frame.eval_frame.vol_avg_button.select()
+    if args.compute_peaking:
+        root.control_frame.eval_frame.peaking_button.select()
     
     if args.full_auto:
         root.load_data()
