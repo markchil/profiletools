@@ -405,7 +405,14 @@ parser.add_argument('--full-auto',
                     help="Set this flag to disable all prompting for missing/"
                          "optional arguments and run fully automatically. The "
                          "program will exit with status 1 if any required "
-                         "parameters are missing.")
+                         "parameters are missing. The program will still stop to "
+                         "allow the user to assess the quality of the fit.")
+parser.add_argument('--no-interaction',
+                    action='store_true',
+                    help="Set this flag to not let the user interact with the "
+                         "GUI. The fit will be automatically run and saved, "
+                         "along with a picture of the plot, to the output file "
+                         "specified.")
 
 args = parser.parse_args()
 
@@ -2113,7 +2120,7 @@ class FitWindow(tk.Tk):
             sampler=self.sampler
         )
     
-    def save_fit(self):
+    def save_fit(self, save_plot=False):
         if self.res is None:
             self.fit_data()
         if not args.output_filename:
@@ -2122,6 +2129,11 @@ class FitWindow(tk.Tk):
             path = args.output_filename
         if path:
             root, ext = os.path.splitext(path)
+            if save_plot:
+                self.plot_frame.f.savefig(
+                    os.path.expanduser(root) + '.pdf',
+                    format='pdf'
+                )
             history = (
                 "Created by user {user} on {host} with {module} version {ver} on {time}.\n".format(
                     host=socket.gethostname(), user=getpass.getuser(),
@@ -2693,10 +2705,13 @@ if __name__ == "__main__":
     if args.compute_peaking:
         root.control_frame.eval_frame.peaking_button.select()
     
-    if args.full_auto:
+    if args.full_auto or args.no_interaction:
         root.load_data()
         root.average_data()
         root.fit_data()
+        if args.no_interaction:
+            root.save_fit(save_plot=True)
+            root.exit()
         
-    
-    root.mainloop()
+    if not args.no_interaction:
+        root.mainloop()
