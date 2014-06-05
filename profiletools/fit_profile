@@ -1833,7 +1833,10 @@ class FitWindow(tk.Tk):
             self.wait_window(MCMC_results_window)
             # MCMC_results_window.destroy()
             if self.sampler:
-                self.sampler.pool.close()
+                try:
+                    self.sampler.pool.close()
+                except AttributeError:
+                    pass
                 try:
                     burn = int(self.control_frame.fitting_frame.MCMC_frame.burn_box.get())
                 except ValueError:
