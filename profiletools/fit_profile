@@ -1955,34 +1955,42 @@ class FitWindow(tk.Tk):
             return
         
         if compute_vol_avg or compute_peaking:
-            mean_vol_avg = res['special_mean'][0]
-            std_vol_avg = scipy.sqrt(res['special_cov'][0, 0])
+            self.mean_vol_avg = res['special_mean'][0]
+            self.std_vol_avg = scipy.sqrt(res['special_cov'][0, 0])
             if compute_vol_avg:
                 if self.combined_p.y_units:
                     self.control_frame.status_frame.add_line(
                         u"Volume average is (%f\u00b1%f) %s"
-                        % (mean_vol_avg, std_vol_avg,
+                        % (self.mean_vol_avg, self.std_vol_avg,
                            self.combined_p.y_units.translate(None, '\\${}'),)
                     )
                 else:
                     self.control_frame.status_frame.add_line(
                         u"Volume average is %f\u00b1%f"
-                        % (mean_vol_avg, std_vol_avg,)
+                        % (self.mean_vol_avg, self.std_vol_avg,)
                     )
             if compute_peaking:
                 mean_w2 = res['special_mean'][1]
                 std_w2 = scipy.sqrt(res['special_cov'][1, 1])
                 cov_w2_vol_avg = res['special_cov'][0, 1]
-                mean_peaking = mean_w2 / mean_vol_avg
-                std_peaking = scipy.sqrt(std_w2 / mean_vol_avg**2 +
-                                 std_vol_avg * mean_w2**2 / mean_vol_avg**4 -
-                                 cov_w2_vol_avg * mean_w2 / mean_vol_avg**3)
+                self.mean_peaking = mean_w2 / self.mean_vol_avg
+                self.std_peaking = scipy.sqrt(
+                    std_w2 / self.mean_vol_avg**2 +
+                    self.std_vol_avg * mean_w2**2 / self.mean_vol_avg**4 -
+                    cov_w2_vol_avg * mean_w2 / self.mean_vol_avg**3
+                )
                 self.control_frame.status_frame.add_line(
                     u"Peaking is %f\u00b1%f"
-                    % (mean_peaking, std_peaking,)
+                    % (self.mean_peaking, self.std_peaking,)
                 )
                 # Delete the extra points so they don't confuse the plot/file output:
                 X = X[1:]
+            else:
+                self.mean_peaking = None
+                self.std_peaking = None
+        else:
+            self.mean_vol_avg = None
+            self.std_vol_avg = None
         
         if full_MC:
             self.control_frame.status_frame.add_line(
@@ -2200,6 +2208,11 @@ class FitWindow(tk.Tk):
                     except AttributeError:
                         pass
                     
+                    if self.mean_vol_avg:
+                        metadata += "vol_avg %f\nerr_vol_avg %f\n" % (self.mean_vol_avg, self.std_vol_avg,)
+                    if self.mean_peaking:
+                        metadata += "peaking %f\nerr_peaking %f\n" % (self.mean_peaking, self.std_peaking,)
+                    
                     outfile.write(
                         "metadata %d\n" % (len(metadata.splitlines()) + 1,) + metadata
                     )
@@ -2250,6 +2263,14 @@ class FitWindow(tk.Tk):
                         f.coordinate = self.combined_p.abscissa
                     except AttributeError:
                         pass
+                    
+                    if self.mean_vol_avg:
+                        f.vol_avg = self.mean_vol_avg
+                        f.err_vol_avg = self.std_vol_avg
+                    if self.mean_peaking:
+                        f.peaking = self.mean_peaking
+                        f.err_peaking = self.std_peaking
+                    
                     f.createDimension(X_name, len(self.X))
                     v_X = f.createVariable(X_name, float, (X_name,))
                     v_X[:] = self.X
