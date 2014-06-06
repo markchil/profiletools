@@ -2544,7 +2544,10 @@ looks correct.
         self.help_box.add_line("Re-running MCMC sampler...")
         self.process_bounds()
         self.update_MCMC_params()
-        self.master.master.sampler.pool.close()
+        try:
+            self.master.master.sampler.pool.close()
+        except AttributeError:
+            pass
         self.master.master.sampler = None
         self.master.master.run_MCMC_sampler()
         self.master.MCMC_frame.refresh()
