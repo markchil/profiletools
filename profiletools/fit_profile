@@ -1244,6 +1244,18 @@ class EvaluationFrame(tk.Frame):
             self.x_points_box.config(state=tk.NORMAL)
     
     def update_a_L(self):
+        if not self.a_L_state.get():
+            self.master.master.master.plot_frame.a_grad.set_visible(False)
+            self.master.master.master.plot_frame.a_a_L.set_visible(False)
+            self.master.master.master.plot_frame.a_val.change_geometry(1, 1, 1)
+            # plt.setp(self.master.master.master.plot_frame.a_val.get_xticklabels(), visible=True)
+        else:
+            self.master.master.master.plot_frame.a_val.change_geometry(3, 1, 1)
+            # plt.setp(self.master.master.master.plot_frame.a_val.get_xticklabels(), visible=False)
+            self.master.master.master.plot_frame.a_grad.set_visible(True)
+            self.master.master.master.plot_frame.a_a_L.set_visible(True)
+        self.master.master.master.plot_frame.canvas.draw()
+        
         if self.a_L_state.get() and self.master.master.fitting_frame.MCMC_constraint_frame.full_MC_state.get():
             self.master.master.fitting_frame.MCMC_constraint_frame.mono_button.config(state=tk.NORMAL)
         else:
@@ -1954,6 +1966,11 @@ class FitWindow(tk.Tk):
             )
             return
         
+        self.mean_peaking = None
+        self.std_peaking = None
+        self.mean_vol_avg = None
+        self.std_vol_avg = None
+        
         if compute_vol_avg or compute_peaking:
             self.mean_vol_avg = res['special_mean'][0]
             self.std_vol_avg = scipy.sqrt(res['special_cov'][0, 0])
@@ -1985,12 +2002,6 @@ class FitWindow(tk.Tk):
                 )
                 # Delete the extra points so they don't confuse the plot/file output:
                 X = X[1:]
-            else:
-                self.mean_peaking = None
-                self.std_peaking = None
-        else:
-            self.mean_vol_avg = None
-            self.std_vol_avg = None
         
         if full_MC:
             self.control_frame.status_frame.add_line(
@@ -2752,6 +2763,7 @@ if __name__ == "__main__":
         root.control_frame.fitting_frame.MCMC_constraint_frame.mono_button.select()
     if args.no_a_over_L:
         root.control_frame.eval_frame.a_L_button.deselect()
+    root.control_frame.eval_frame.update_a_L()
     if args.compute_vol_avg:
         root.control_frame.eval_frame.vol_avg_button.select()
     if args.compute_peaking:
