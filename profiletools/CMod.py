@@ -337,6 +337,11 @@ class BivariatePlasmaProfile(Profile):
         determined by finding the point of the GH limiter which has the
         smallest mapped coordinate.
         
+        If the limiter location is not found in the tree, the system will
+        instead use R=0.91m, Z=0.0m as the limiter location. This is a bit
+        outside of where the limiter is, but will act as a conservative
+        approximation for cases where the exact position is not available.
+        
         Note that this is accomplished approximately for bivariate data by
         specifying the slope and value to be zero at the limiter for a number
         of points in time.
@@ -375,9 +380,16 @@ class BivariatePlasmaProfile(Profile):
             raise ValueError("Limiter constraint is not supported for abscissa "
                              "'%s'. Convert to a normalized coordinate or Rmid "
                              "to use this constraint." % (self.abscissa,))
-        analysis = MDSplus.Tree('analysis', self.shot)
-        Z_lim = analysis.getNode('.limiters.gh_limiter.z').getData().data()
-        R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
+        # Fail back to a conservative position if the limiter data are not in
+        # the tree:
+        try:
+            analysis = MDSplus.Tree('analysis', self.shot)
+            Z_lim = analysis.getNode('.limiters.gh_limiter.z').getData().data()
+            R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
+        except MDSplus.TreeException:
+            print("No limiter data, defaulting to R=0.91, Z=0.0!")
+            Z_lim = [0.0]
+            R_lim = [0.91]
         if self.X_dim == 1:
             t_EFIT = self.efit_tree.getTimeBase()
             
