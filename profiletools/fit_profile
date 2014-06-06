@@ -1964,6 +1964,8 @@ class FitWindow(tk.Tk):
                 "Evaluation failed! Try re-running and/or adjusting bounds/number "
                 "of samples. Exception was: %s" % (e,)
             )
+            if args.no_interaction:
+                raise e
             return
         
         self.mean_peaking = None
@@ -2084,11 +2086,13 @@ class FitWindow(tk.Tk):
                 random_starts=int(self.control_frame.fitting_frame.method_frame.starts_box.get()),
                 verbose=True
             )
-        except ValueError:
+        except ValueError as e:
             self.control_frame.status_frame.add_line(
                 "MAP estimate failed. Hyperparameters should not be trusted! Try "
                 "re-running the fit with more random starts."
             )
+            if args.no_interaction:
+                raise e
         else:
             self.control_frame.status_frame.add_line(
                 "MAP estimate complete. Result is:"
