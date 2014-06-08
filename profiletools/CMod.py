@@ -671,7 +671,7 @@ class BivariatePlasmaProfile(Profile):
         elif self.t_min != self.t_max:
             ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
             # Handle case where there are none:
-            if not ok_idxs:
+            if len(ok_idxs) == 0:
                 ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
         else:
             ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
