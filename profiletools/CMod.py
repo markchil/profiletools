@@ -132,9 +132,6 @@ class BivariatePlasmaProfile(Profile):
                 new_rho = scipy.power(self.X[:, 1], 0.5)
             elif self.abscissa == 'RZ':
                 # Need to handle this case separately because of the extra column:
-                print(self.X[:, 1])
-                print(self.X[:, 2])
-                print(self.X[:, 0])
                 new_rho = self.efit_tree.rz2rho(new_abscissa,
                                                 self.X[:, 1],
                                                 self.X[:, 2],
