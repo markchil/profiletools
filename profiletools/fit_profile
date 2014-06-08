@@ -768,7 +768,7 @@ class MethodFrame(tk.Frame):
         # Create option menu for methods:
         self.method_var = tk.StringVar(self)
         self.method_var.set(self.METHOD_OPTIONS[0])
-        self.method_menu = tk.OptionMenu(self, self.method_var, *self.METHOD_OPTIONS)
+        self.method_menu = tk.OptionMenu(self, self.method_var, *self.METHOD_OPTIONS, command=self.update_method)
         self.method_menu.grid(row=0, column=1, sticky='W')
         
         # Create label for error method:
@@ -780,6 +780,14 @@ class MethodFrame(tk.Frame):
         self.error_method_var.set(self.ERROR_METHOD_OPTIONS[0])
         self.error_method_menu = tk.OptionMenu(self, self.error_method_var, *self.ERROR_METHOD_OPTIONS)
         self.error_method_menu.grid(row=1, column=1, sticky='W')
+    
+    def update_method(self, new_meth):
+        if new_meth == 'all points':
+            self.error_method_menu.config(state=tk.DISABLED)
+            self.error_method_label.config(state=tk.DISABLED)
+        else:
+            self.error_method_menu.config(state=tk.NORMAL)
+            self.error_method_label.config(state=tk.NORMAL)
 
 class AveragingFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
@@ -2729,6 +2737,9 @@ if __name__ == "__main__":
     if args.all_points:
         root.control_frame.averaging_frame.method_frame.method_var.set('all points')
     root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method)
+    root.control_frame.averaging_frame.method_frame.update_method(
+        root.control_frame.averaging_frame.method_frame.method_var.get()
+    )
     if args.change_threshold is not None:
         root.control_frame.outlier_frame.extreme_button.invoke()
         root.control_frame.outlier_frame.extreme_thresh_box.delete(0, tk.END)
