@@ -229,6 +229,19 @@ parser.add_argument('--robust',
                     action='store_true',
                     help="Set this flag to use robust estimators (median, IQR) "
                          "when performing time-averages.")
+parser.add_argument('--uncertainty-method',
+                    choices=['sample', 'RMS', 'total'],
+                    default='sample',
+                    help="Method by which the uncertainty should be propagated "
+                         "when time-averaging. sample will take the sample "
+                         "standard deviation, and is usually appropriate for "
+                         "cases where you have many points to average over. "
+                         "RMS uses the root-mean-square standard deviation, and "
+                         "is appropriate for small sample sizes. total uses the "
+                         "law of total variance which is the square root of the "
+                         "sum of the mean square uncertainty and sample variance. "
+                         "This is appropriate when the given points already "
+                         "represent actual sample means/variances.")
 parser.add_argument('--all-points', '--no-average',
                     action='store_true',
                     help="Set this flag to keep all points from the time window "
@@ -743,6 +756,7 @@ class TimeWindowFrame(tk.Frame):
 
 class MethodFrame(tk.Frame):
     METHOD_OPTIONS = ['conventional', 'robust', 'all points']
+    ERROR_METHOD_OPTIONS = ['sample', 'RMS', 'total']
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
         tk.Frame.__init__(self, *args, **kwargs)
@@ -757,6 +771,16 @@ class MethodFrame(tk.Frame):
         self.method_menu = tk.OptionMenu(self, self.method_var, *self.METHOD_OPTIONS)
         self.method_menu.grid(row=0, column=1, sticky='W')
         
+        # Create label for error method:
+        self.error_method_label = tk.Label(self, text="uncertainty method:")
+        self.error_method_label.grid(row=1, column=0, sticky='E')
+        
+        # Create option menu for error methods:
+        self.error_method_var = tk.StringVar(self)
+        self.error_method_var.set(self.ERROR_METHOD_OPTIONS[0])
+        self.error_method_menu = tk.OptionMenu(self, self.error_method_var, *self.ERROR_METHOD_OPTIONS)
+        self.error_method_menu.grid(row=1, column=1, sticky='W')
+
 class AveragingFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
@@ -1553,6 +1577,7 @@ class FitWindow(tk.Tk):
         self.plot_frame.a_a_L.clear()
         
         method = self.control_frame.averaging_frame.method_frame.method_var.get()
+        y_method = self.control_frame.averaging_frame.method_frame.error_method_var.get()
         abscissa = self.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.get()
         
         window_mode = (self.control_frame.averaging_frame.time_window_frame.method_state.get() ==
@@ -1614,7 +1639,7 @@ class FitWindow(tk.Tk):
                 if len(times) == 1 or method == "all points":
                     p.drop_axis(0)
                 else:
-                    p.time_average(robust=(method == "robust"))
+                    p.time_average(robust=(method == "robust"), y_method=y_method)
             if 'GPC' in k or 'ECE' in k or core_only:
                 p.remove_edge_points()
         
@@ -2703,6 +2728,7 @@ if __name__ == "__main__":
         root.control_frame.averaging_frame.method_frame.method_var.set('robust')
     if args.all_points:
         root.control_frame.averaging_frame.method_frame.method_var.set('all points')
+    root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method)
     if args.change_threshold is not None:
         root.control_frame.outlier_frame.extreme_button.invoke()
         root.control_frame.outlier_frame.extreme_thresh_box.delete(0, tk.END)

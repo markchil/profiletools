@@ -32,9 +32,6 @@ import csv
 import warnings
 import re
 
-# Conversion factor to get from interquartile range to standard deviation:
-IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
-
 class Profile(object):
     """Object to abstractly represent a profile.
     
@@ -318,7 +315,8 @@ class Profile(object):
         self.err_y = scipy.asarray(new_err_y)
         self.channels = scipy.vstack(new_channels)
     
-    def average_data(self, axis=0, ddof=1, robust=False):
+    def average_data(self, axis=0, ddof=1, robust=False, y_method='sample',
+                     X_method='sample'):
         """Computes the average of the profile over the desired axis.
         
         If `X_dim` is already 1, this returns the average of the quantity.
@@ -338,12 +336,29 @@ class Profile(object):
         robust : bool, optional
             If True, the median is used for the central value and the
             interquartile range is used for the distributional width.
+        y_method : {'sample', 'RMS', 'total'}, optional
+            The method to use in computing the error bar on the averaged
+            ordinate. 'sample' takes the sampled standard deviation, and is the
+            default. 'RMS' uses the mean of the individual variances. 'total'
+            uses the law of total variance, and is essentially the sum of the
+            two. This is only statistically valid if the data have already been
+            binned in some manner.
+        X_method : {'sample', 'RMS', 'total'}, optional
+            Same as `y_method`, but used for the uncertainty in the abscissa.
+            Default is again 'sample' (use the sample standard deviation).
         """
         # TODO: Add support for custom bins!
         if self.X_dim == 1:
             return scipy.mean(self.y)
+        allowed_methods = ['sample', 'RMS', 'total']
+        if y_method not in allowed_methods:
+            raise ValueError("Unsupported y_method '%s'!" % (y_method,))
+        if X_method not in allowed_methods:
+            raise ValueError("Unsupported X_method '%s'!" % (X_method,))
         reduced_channels = scipy.delete(self.channels, axis, axis=1)
         reduced_X = scipy.delete(self.X, axis, axis=1)
+        if X_method != 'sample':
+            reduced_err_X = scipy.delete(self.err_X, axis, axis=1)
         channels = unique_rows(reduced_channels)
         X = scipy.zeros((len(channels), self.X_dim - 1))
         y = scipy.zeros(len(channels))
@@ -353,22 +368,49 @@ class Profile(object):
             chan_mask = (
                 reduced_channels == chan.flatten()
             ).all(axis=1)
+            # TODO: Catch channels with 0 to 1 members!
             if not robust:
                 y[i] = scipy.mean(self.y[chan_mask])
-                err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
+                if y_method == 'sample':
+                    err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
+                elif y_method == 'RMS':
+                    err_y[i] = scipy.sqrt(scipy.mean((self.err_y[chan_mask])**2))
+                elif y_method == 'total':
+                    err_y[i] = scipy.sqrt(
+                        scipy.var(self.y[chan_mask], ddof=ddof) +
+                        scipy.mean((self.err_y[chan_mask])**2)
+                    )
                 X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
-                err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
+                if X_method == 'sample':
+                    err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
+                elif X_method == 'RMS':
+                    err_X[i, :] = scipy.sqrt(scipy.mean((reduced_err_X[chan_mask, :])**2))
+                elif X_method == 'total':
+                    err_X[i, :] = scipy.sqrt(
+                        scipy.var(reduced_X[chan_mask, :], ddof=ddof) +
+                        scipy.mean((reduced_err_X[chan_mask, :])**2)
+                    )
             else:
                 y[i] = scipy.median(self.y[chan_mask])
-                err_y[i] = (scipy.stats.scoreatpercentile(self.y[chan_mask], 75.0) -
-                            scipy.stats.scoreatpercentile(self.y[chan_mask], 25.0)) / IQR_TO_STD
+                if y_method == 'sample':
+                    err_y[i] = robust_std(self.y[chan_mask])
+                elif y_method == 'RMS':
+                    err_y[i] = scipy.sqrt(scipy.median((self.err_y[chan_mask])**2))
+                elif y_method == 'total':
+                    err_y[i] = scipy.sqrt(
+                        (robust_std(self.y[chan_mask]))**2 +
+                        scipy.median((self.err_y[chan_mask])**2)
+                    )
                 X[i, :] = scipy.median(reduced_X[chan_mask, :], axis=0)
-                err_X[i, :] = (scipy.stats.scoreatpercentile(reduced_X[chan_mask, :],
-                                                             75.0,
-                                                             axis=0) -
-                               scipy.stats.scoreatpercentile(reduced_X[chan_mask, :],
-                                                             25.0,
-                                                             axis=0)) / IQR_TO_STD
+                if X_method == 'sample':
+                    err_X[i, :] = robust_std(reduced_X[chan_mask, :], axis=0)
+                elif X_method == 'RMS':
+                    err_X[i, :] = scipy.sqrt(scipy.median((reduced_err_X[chan_mask, :])**2, axis=0))
+                elif X_method == 'total':
+                    err_X[i, :] = scipy.sqrt(
+                        (robust_std(reduced_X[chan_mask, :], axis=0))**2 +
+                        scipy.median((reduced_err_X[chan_mask, :])**2, axis=0)
+                    )
         
         self.X_dim -= 1
         self.X_units.pop(axis)
@@ -1145,3 +1187,10 @@ class RejectionFunc(object):
             return False
         else:
             return True
+
+# Conversion factor to get from interquartile range to standard deviation:
+IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
+
+def robust_std(y, axis=None):
+    (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
+     scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD
