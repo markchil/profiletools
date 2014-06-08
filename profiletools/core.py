@@ -357,8 +357,7 @@ class Profile(object):
             raise ValueError("Unsupported X_method '%s'!" % (X_method,))
         reduced_channels = scipy.delete(self.channels, axis, axis=1)
         reduced_X = scipy.delete(self.X, axis, axis=1)
-        if X_method != 'sample':
-            reduced_err_X = scipy.delete(self.err_X, axis, axis=1)
+        reduced_err_X = scipy.delete(self.err_X, axis, axis=1)
         channels = unique_rows(reduced_channels)
         X = scipy.zeros((len(channels), self.X_dim - 1))
         y = scipy.zeros(len(channels))
@@ -371,7 +370,10 @@ class Profile(object):
             # TODO: Catch channels with 0 to 1 members!
             if not robust:
                 y[i] = scipy.mean(self.y[chan_mask])
-                if y_method == 'sample':
+                # If there is only one member, just carry its uncertainty forward:
+                if len(self.y[chan_mask]) == 1:
+                    err_y[i] = self.err_y[chan_mask]
+                elif y_method == 'sample':
                     err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
                 elif y_method == 'RMS':
                     err_y[i] = scipy.sqrt(scipy.mean((self.err_y[chan_mask])**2))
@@ -381,7 +383,9 @@ class Profile(object):
                         scipy.mean((self.err_y[chan_mask])**2)
                     )
                 X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
-                if X_method == 'sample':
+                if len(reduced_X[chan_mask, :]) == 1:
+                    err_X[i, :] = reduced_err_X[chan_mask, :]
+                elif X_method == 'sample':
                     err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
                 elif X_method == 'RMS':
                     err_X[i, :] = scipy.sqrt(scipy.mean((reduced_err_X[chan_mask, :])**2))
@@ -392,7 +396,9 @@ class Profile(object):
                     )
             else:
                 y[i] = scipy.median(self.y[chan_mask])
-                if y_method == 'sample':
+                if len(self.y[chan_mask]) == 1:
+                    err_y[i] = self.err_y[chan_mask]
+                elif y_method == 'sample':
                     err_y[i] = robust_std(self.y[chan_mask])
                 elif y_method == 'RMS':
                     err_y[i] = scipy.sqrt(scipy.median((self.err_y[chan_mask])**2))
@@ -402,7 +408,9 @@ class Profile(object):
                         scipy.median((self.err_y[chan_mask])**2)
                     )
                 X[i, :] = scipy.median(reduced_X[chan_mask, :], axis=0)
-                if X_method == 'sample':
+                if len(reduced_X[chan_mask, :]) == 1:
+                    err_X[i, :] = reduced_err_X[chan_mask, :]
+                elif X_method == 'sample':
                     err_X[i, :] = robust_std(reduced_X[chan_mask, :], axis=0)
                 elif X_method == 'RMS':
                     err_X[i, :] = scipy.sqrt(scipy.median((reduced_err_X[chan_mask, :])**2, axis=0))

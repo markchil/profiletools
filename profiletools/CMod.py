@@ -98,16 +98,7 @@ class BivariatePlasmaProfile(Profile):
                 # Approximate form from uncertainty propagation:
                 err_new_rho = self.err_X[:, 0] / (2 * scipy.sqrt(self.X[:, 0]))
             else:
-                # Handle case where we need to average:
-                t_efit = self.efit_tree.getTimeBase()
-                if hasattr(self, 'times'):
-                    ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
-                elif self.t_min != self.t_max:
-                    ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
-                else:
-                    ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
-            
-                times = t_efit[ok_idxs]
+                times = self._get_efit_times_to_average()
             
                 if self.abscissa == 'RZ':
                     new_rhos = self.efit_tree.rz2rho(
@@ -141,6 +132,9 @@ class BivariatePlasmaProfile(Profile):
                 new_rho = scipy.power(self.X[:, 1], 0.5)
             elif self.abscissa == 'RZ':
                 # Need to handle this case separately because of the extra column:
+                print(self.X[:, 1])
+                print(self.X[:, 2])
+                print(self.X[:, 0])
                 new_rho = self.efit_tree.rz2rho(new_abscissa,
                                                 self.X[:, 1],
                                                 self.X[:, 2],
@@ -679,7 +673,9 @@ class BivariatePlasmaProfile(Profile):
             ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
         elif self.t_min != self.t_max:
             ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
-            # TODO: What happens if there is no point between the two?
+            # Handle case where there are none:
+            if not ok_idxs:
+                ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
         else:
             ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
     
