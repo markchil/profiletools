@@ -579,7 +579,6 @@ class Profile(object):
         err_y_bad : array
             Uncertainties on the bad values.
         """
-        # TODO: This should return err_X, too!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not remove_kwargs.get('use_MCMC', False):

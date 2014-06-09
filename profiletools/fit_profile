@@ -1817,16 +1817,41 @@ class FitWindow(tk.Tk):
         remove_outliers = self.control_frame.outlier_frame.outlier_state.get()
         if remove_outliers:
             self.control_frame.status_frame.add_line("Finding outliers...")
-            # self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
-            # self.find_MAP()
+            self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
+            self.find_MAP()
+            thresh = float(self.control_frame.outlier_frame.outlier_thresh_box.get())
             X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = \
-                self.combined_p.remove_outliers(thresh=float(self.control_frame.outlier_frame.outlier_thresh_box.get()))
+                self.combined_p.remove_outliers(thresh=thresh)
             X_bad_o = scipy.asarray(X_bad_o).flatten()
             err_X_bad_o = scipy.asarray(err_X_bad_o).flatten()
-            self.control_frame.status_frame.add_line("Removed %d outliers." % (len(y_bad_o),))
+            
+            # Perform a second MAP estimation to put back IN the outliers that
+            # now don't look so outlying:
+            self.control_frame.status_frame.add_line("Found %d candidate outliers." % (len(y_bad_o),))
             if len(y_bad_o) > 0:
-                self.plot_frame.a_val.plot(X_bad_o, y_bad_o, 'rx',
-                                           label='outlier', ms=14)
+                self.control_frame.status_frame.add_line("Finding second MAP estimate...")
+                self.find_MAP()
+                mean = self.combined_p.gp.predict(X_bad_o, n=0, noise=False, return_std=False)
+                deltas = scipy.absolute(mean - y_bad_o) / err_y_bad_o
+                deltas[err_y_bad_o == 0] = 0
+                bad_idxs = (deltas >= thresh)
+                good_idxs = ~bad_idxs
+                self.combined_p.add_data(
+                    X_bad_o[good_idxs],
+                    y_bad_o[good_idxs],
+                    err_X=err_X_bad_o[good_idxs],
+                    err_y=err_y_bad_o[good_idxs]
+                )
+                self.combined_p.gp.add_data(
+                    X_bad_o[good_idxs],
+                    y_bad_o[good_idxs],
+                    err_y=err_y_bad_o[good_idxs]
+                )
+            
+                self.control_frame.status_frame.add_line("Removed %d outliers." % (len(y_bad_o[bad_idxs]),))
+                if len(y_bad_o[bad_idxs]) > 0:
+                    self.plot_frame.a_val.plot(X_bad_o[bad_idxs], y_bad_o[bad_idxs], 'rx',
+                                               label='outlier', ms=14)
         
         # Do the voodoo:
         use_MCMC = (
