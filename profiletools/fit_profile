@@ -179,16 +179,18 @@ parser.add_argument('--system',
                          "is a shortcut to include both the core (CTS) and edge "
                          "(ETS) Thomson systems.")
 parser.add_argument('--kernel',
-                    choices=['gibbstanh', 'SE'],
+                    choices=['gibbstanh', 'SE', 'RQ'],
                     default='gibbstanh',
                     help="Which covariance kernel to use. This dictates the "
                          "properties of the fit. SE is the squared exponential "
-                         "kernel, which is good for core data. gibbstanh is the "
-                         "Gibbs kernel with tanh warping of the length scale. "
-                         "This kernel allows the entire profile to be fit at "
-                         "once, and should be used if you have edge data. You "
-                         "will typically also want to use --no-edge-constraint "
-                         "if you specify the SE kernel. See also --core-only.")
+                         "kernel, which is good for core data. RQ is the "
+                         "rational quadratic kernel, also good for core data. "
+                         "gibbstanh is the Gibbs kernel with tanh warping of the "
+                         "length scale. This kernel allows the entire profile to "
+                         "be fit at once, and should be used if you have edge "
+                         "data. You will typically also want to use "
+                         "--no-edge-constraint if you specify the SE or RQ "
+                         "kernels. See also --core-only.")
 parser.add_argument('--coordinate',
                     choices=['psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
                              'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'],
@@ -426,6 +428,16 @@ parser.add_argument('--no-interaction',
                          "GUI. The fit will be automatically run and saved, "
                          "along with a picture of the plot, to the output file "
                          "specified.")
+parser.add_argument('--x-lim',
+                    type=float,
+                    nargs=2,
+                    help="The upper and lower bounds for the horizontal plot "
+                         "axis. If not provided, these will be set from the data.")
+parser.add_argument('--y-lim',
+                    type=float,
+                    nargs=2,
+                    help="The upper and lower bounds for the vertical plot axis. "
+                         "If not provided, these will be set from the data.")
 
 args = parser.parse_args()
 
@@ -877,12 +889,15 @@ class OutlierFrame(tk.Frame):
 
 HYPERPARAMETERS = collections.OrderedDict([
     ('gibbstanh', collections.OrderedDict([(u"\u03C3f", "signal variance"),
-                                          (u"\u21131", "core covariance length scale"),
-                                          (u"\u21132", "edge covariance length scale"),
-                                          (u"\u2113w", "core/edge transition width"),
-                                          (u"x0", "core/edge transition location")])),
+                                           (u"\u21131", "core covariance length scale"),
+                                           (u"\u21132", "edge covariance length scale"),
+                                           (u"\u2113w", "core/edge transition width"),
+                                           (u"x0", "core/edge transition location")])),
     ('SE', collections.OrderedDict([(u"\u03C3f", "signal variance"),
-                                   (u"\u2113", "covariance length scale")])),
+                                    (u"\u2113", "covariance length scale")])),
+    ('RQ', collections.OrderedDict([(u"\u03C3f", "signal variance"),
+                                    (u"\u03B1", "order"),
+                                    (u"\u2113", "covariance length scale")]))
 ])
 
 class KernelTypeFrame(tk.Frame):    
@@ -1381,6 +1396,35 @@ class PlotFrame(tk.Frame):
     def on_key_event(self, evt):
         key_press_handler(evt, self.canvas, self.toolbar)
 
+class PlotParamFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.limits_label = tk.Label(self, text="plot limits:")
+        self.limits_label.grid(row=0, column=0, sticky='W', columnspan=4)
+        
+        self.x_lim_label = tk.Label(self, text="x:")
+        self.x_lim_label.grid(row=1, column=0, sticky='E')
+        self.x_lb_box = tk.Entry(self)
+        self.x_lb_box.grid(row=1, column=1, sticky='EW')
+        self.x_to_label = tk.Label(self, text="to")
+        self.x_to_label.grid(row=1, column=2, sticky='EW')
+        self.x_ub_box = tk.Entry(self)
+        self.x_ub_box.grid(row=1, column=3, sticky='EW')
+        
+        self.y_lim_label = tk.Label(self, text="y:")
+        self.y_lim_label.grid(row=2, column=0, sticky='E')
+        self.y_lb_box = tk.Entry(self)
+        self.y_lb_box.grid(row=2, column=1, sticky='EW')
+        self.y_to_label = tk.Label(self, text="to")
+        self.y_to_label.grid(row=2, column=2, sticky='EW')
+        self.y_ub_box = tk.Entry(self)
+        self.y_ub_box.grid(row=2, column=3, sticky='EW')
+        
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+
 frame_params = {'relief': tk.RAISED, 'borderwidth': 2}
 
 class ControlFrame(tk.Frame):
@@ -1416,14 +1460,17 @@ class ControlFrame(tk.Frame):
         
         self.fit_eval_frame.grid_columnconfigure(0, weight=1)
         self.fit_eval_frame.grid_rowconfigure(2, weight=1)
-
-
+        
+        self.plot_param_frame = PlotParamFrame(self, **frame_params)
+        
         self.note.add(self.data_time_frame,
                       text="Data")
         self.note.add(self.kernel_frame,
                       text="Kernel")
         self.note.add(self.fit_eval_frame,
                       text="Fit")
+        self.note.add(self.plot_param_frame,
+                      text="Plot")
         
         self.note.grid(row=0, sticky='EWNS')
 
@@ -1683,8 +1730,26 @@ class FitWindow(tk.Tk):
         self.plot_frame.a_val.set_ylabel(
             "%s [%s]" % (self.combined_p.y_label, self.combined_p.y_units,) if self.combined_p.y_units
             else self.combined_p.y_label)
-        self.plot_frame.a_val.set_xlim((self.combined_p.X.min(), self.combined_p.X.max()))
-        self.plot_frame.a_val.set_ylim(bottom=0)
+        
+        try:
+            x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
+        except ValueError:
+            x_min = self.combined_p.X.min()
+        try:
+            x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
+        except ValueError:
+            x_max = self.combined_p.X.max()
+        self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
+        try:
+            y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
+        except ValueError:
+            y_min = 0
+        try:
+            y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
+        except ValueError:
+            y_max = None
+        self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
+        
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         self.plot_frame.canvas.draw()
         self.plot_frame.canvas._tkcanvas.focus_set()
@@ -2134,8 +2199,24 @@ class FitWindow(tk.Tk):
         
         self.plot_frame.a_a_L.set_ylabel("$a/L_{%s}$" % (self.combined_p.y_label.strip('$'),))
         
-        self.plot_frame.a_val.set_xlim((min(X), max(X)))
-        self.plot_frame.a_val.set_ylim(bottom=0)
+        try:
+            x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
+        except ValueError:
+            x_min = min(X)
+        try:
+            x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
+        except ValueError:
+            x_max = max(X)
+        self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
+        try:
+            y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
+        except ValueError:
+            y_min = 0
+        try:
+            y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
+        except ValueError:
+            y_max = None
+        self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         self.plot_frame.canvas.draw()
         self.plot_frame.canvas._tkcanvas.focus_set()
@@ -2837,6 +2918,16 @@ if __name__ == "__main__":
         root.control_frame.eval_frame.vol_avg_button.select()
     if args.compute_peaking:
         root.control_frame.eval_frame.peaking_button.select()
+    if args.x_lim:
+        root.control_frame.plot_param_frame.x_lb_box.delete(0, tk.END)
+        root.control_frame.plot_param_frame.x_lb_box.insert(0, str(args.x_lim[0]))
+        root.control_frame.plot_param_frame.x_ub_box.delete(0, tk.END)
+        root.control_frame.plot_param_frame.x_ub_box.insert(0, str(args.x_lim[1]))
+    if args.y_lim:
+        root.control_frame.plot_param_frame.y_lb_box.delete(0, tk.END)
+        root.control_frame.plot_param_frame.y_lb_box.insert(0, str(args.y_lim[0]))
+        root.control_frame.plot_param_frame.y_ub_box.delete(0, tk.END)
+        root.control_frame.plot_param_frame.y_ub_box.insert(0, str(args.y_lim[1]))
     
     if args.full_auto or args.no_interaction:
         root.load_data()

@@ -723,6 +723,22 @@ class Profile(object):
             k = gptools.GibbsKernel1dTanh(initial_params=initial,
                                           hyperprior=gptools.CoreEdgeJointPrior(bounds),
                                           **k_kwargs)
+        elif k == 'RQ':
+            y_range = self.y.max() - self.y.min()
+            bounds = [(y_range / lower_factor, upper_factor * y_range),
+                      (10 * sys.float_info.epsilon, 1e2)]
+            for i in xrange(0, self.X_dim):
+                X_range = self.X[:, i].max() - self.X[:, i].min()
+                bounds.append((X_range / lower_factor,
+                               upper_factor * X_range))
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            k = gptools.RationalQuadraticKernel(num_dim=self.X_dim,
+                                                initial_params=initial,
+                                                param_bounds=bounds,
+                                                **k_kwargs)
+            # Try to avoid some issues that were coming up during MCMC sampling:
+            if 'diag_factor' not in kwargs:
+                kwargs['diag_factor'] = 1e3
         elif isinstance(k, str):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
