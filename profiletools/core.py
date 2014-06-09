@@ -1200,5 +1200,5 @@ class RejectionFunc(object):
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
 
 def robust_std(y, axis=None):
-    (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
+    return (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
      scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD

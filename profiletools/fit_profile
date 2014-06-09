@@ -1308,12 +1308,12 @@ class StatusBox(tk.Frame):
                                    # font=tkFont.Font(size=8)
                                   )
         self.history_box.grid(row=1, sticky='EWNS')
-        self.history_box.insert(tk.END,
-                                'This is fit_profile version {ver}, launched at {time}. {cores} cores detected.\n' \
-                                .format(ver=__version__,
-                                        time=time.strftime(DATE_FORMAT),
-                                        cores=multiprocessing.cpu_count()))
-        self.history_box.config(state=tk.DISABLED)
+        self.add_line(
+            'This is fit_profile version {ver}, launched at {time}. {cores} cores detected.' \
+            .format(ver=__version__,
+                    time=time.strftime(DATE_FORMAT),
+                    cores=multiprocessing.cpu_count())
+        )
         self.history_scroll = tk.Scrollbar(self)
         self.history_scroll.grid(row=1, column=1, sticky='NS')
         self.history_scroll.config(command=self.history_box.yview)
@@ -1321,9 +1321,12 @@ class StatusBox(tk.Frame):
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
+        
+        self.history_box.bind("<1>", lambda event: self.history_box.focus_set())
     
     def add_line(self, s):
         self.history_box.config(state=tk.NORMAL)
+        print(s)
         self.history_box.insert(tk.END, s + '\n')
         self.history_box.config(state=tk.DISABLED)
         self.history_box.yview(tk.END)
@@ -1814,8 +1817,8 @@ class FitWindow(tk.Tk):
         remove_outliers = self.control_frame.outlier_frame.outlier_state.get()
         if remove_outliers:
             self.control_frame.status_frame.add_line("Finding outliers...")
-            self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
-            self.find_MAP()
+            # self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
+            # self.find_MAP()
             X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = \
                 self.combined_p.remove_outliers(thresh=float(self.control_frame.outlier_frame.outlier_thresh_box.get()))
             X_bad_o = scipy.asarray(X_bad_o).flatten()
