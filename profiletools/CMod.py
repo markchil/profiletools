@@ -230,7 +230,7 @@ class BivariatePlasmaProfile(Profile):
                 self.convert_abscissa('psinorm')
             else:
                 raise ValueError("Removal of edge points not supported with abscissa RZ!")
-        if self.abscissa == 'r/a' or 'norm' in self.abscissa:
+        if 'r/a' in self.abscissa or 'norm' in self.abscissa:
             x_out = 1.0
         elif self.abscissa == 'Rmid':
             if self.X_dim == 1:
@@ -584,6 +584,10 @@ class BivariatePlasmaProfile(Profile):
                         self.efit_tree.getMagZ()[idx] * scipy.ones(R_grid.shape),
                         t_efit[idx]
                     )
+                    
+                    good_idxs = ~scipy.isnan(X_on_grid)
+                    X_on_grid = X_on_grid[good_idxs]
+                    R_grid = R_grid[good_idxs]
                 
                     spline = scipy.interpolate.InterpolatedUnivariateSpline(
                         X_on_grid, R_grid, k=3

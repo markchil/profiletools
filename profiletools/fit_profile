@@ -179,18 +179,23 @@ parser.add_argument('--system',
                          "is a shortcut to include both the core (CTS) and edge "
                          "(ETS) Thomson systems.")
 parser.add_argument('--kernel',
-                    choices=['gibbstanh', 'SE', 'RQ'],
-                    default='gibbstanh',
+                    choices=['gibbstanh', 'SE', 'RQ', 'SEsym1d', 'matern'],
+                    # default='gibbstanh',
                     help="Which covariance kernel to use. This dictates the "
                          "properties of the fit. SE is the squared exponential "
                          "kernel, which is good for core data. RQ is the "
                          "rational quadratic kernel, also good for core data. "
+                         "SEsym1d is an experimental SE kernel with symmetry "
+                         "constraint imposed by construction, and should not be "
+                         "used unless you know what you are doing. matern is the "
+                         "matern kernel, and at this point should not be used. "
                          "gibbstanh is the Gibbs kernel with tanh warping of the "
                          "length scale. This kernel allows the entire profile to "
                          "be fit at once, and should be used if you have edge "
                          "data. You will typically also want to use "
                          "--no-edge-constraint if you specify the SE or RQ "
-                         "kernels. See also --core-only.")
+                         "kernels. See also --core-only. The default is gibbstanh, "
+                         "or SE if --core-only is set.")
 parser.add_argument('--coordinate',
                     choices=['psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
                              'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'],
@@ -897,10 +902,17 @@ HYPERPARAMETERS = collections.OrderedDict([
                                     (u"\u2113", "covariance length scale")])),
     ('RQ', collections.OrderedDict([(u"\u03C3f", "signal variance"),
                                     (u"\u03B1", "order"),
-                                    (u"\u2113", "covariance length scale")]))
+                                    (u"\u2113", "covariance length scale")])),
+    ('SEsym1d', collections.OrderedDict([("1", "VOID"),
+                                         ("2", "VOID"),
+                                         (u"\u03C3f 2", "signal variance"),
+                                         (u"\u2113 2", "covariance length scale")])),
+    ('matern', collections.OrderedDict([(u"\u03C3f", "signal variance"),
+                                        (u"\u03BD", "order"),
+                                        (u"\u2113", "covariance length scale")])),
 ])
 
-class KernelTypeFrame(tk.Frame):    
+class KernelTypeFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
         tk.Frame.__init__(self, *args, **kwargs)
@@ -2231,7 +2243,8 @@ class FitWindow(tk.Tk):
         except ValueError as e:
             self.control_frame.status_frame.add_line(
                 "MAP estimate failed. Hyperparameters should not be trusted! Try "
-                "re-running the fit with more random starts."
+                "re-running the fit with more random starts. Exception was: '%s'."
+                % (e,)
             )
             if args.no_interaction:
                 raise e
@@ -2762,22 +2775,22 @@ if __name__ == "__main__":
     root = FitWindow()
     
     # Populate the GUI with parameters from args:
-    # TODO: Put some clever defaults here!
+    if not args.kernel:
+        if args.core_only:
+            args.kernel = 'SE'
+        else:
+            args.kernel = 'gibbstanh'
+    elif args.kernel == 'SEsym1d':
+        args.no_core_constraint = True
+    
     # Turn off edge constraint for --core-only:
     if args.core_only:
         args.no_edge_constraint = True
-        args.kernel = 'SE'
 
     # Bump random starts up to 4 for low processor count machines:
     if not args.random_starts:
         num_proc = multiprocessing.cpu_count()
         if num_proc < 4:
-            # root.status_frame.add_line(
-            #     "Number of processors available is less than 4. Setting random_starts "
-            #     "to 4 to help ensure convergence of MAP estimation. You can override "
-            #     "this by setting the number of random starts explicitly. Running on "
-            #     "a computer with more cores will make this run much faster."
-            # )
             args.random_starts = 4
         else:
             args.random_starts = num_proc
