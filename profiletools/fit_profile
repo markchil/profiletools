@@ -179,23 +179,33 @@ parser.add_argument('--system',
                          "is a shortcut to include both the core (CTS) and edge "
                          "(ETS) Thomson systems.")
 parser.add_argument('--kernel',
-                    choices=['gibbstanh', 'SE', 'RQ', 'SEsym1d', 'matern'],
+                    choices=['gibbstanh', 'SE', 'RQ', 'SEsym1d', 'matern', 'gibbsdoubletanh'],
                     # default='gibbstanh',
                     help="Which covariance kernel to use. This dictates the "
-                         "properties of the fit. SE is the squared exponential "
-                         "kernel, which is good for core data. RQ is the "
-                         "rational quadratic kernel, also good for core data. "
-                         "SEsym1d is an experimental SE kernel with symmetry "
-                         "constraint imposed by construction, and should not be "
-                         "used unless you know what you are doing. matern is the "
-                         "matern kernel, and at this point should not be used. "
-                         "gibbstanh is the Gibbs kernel with tanh warping of the "
-                         "length scale. This kernel allows the entire profile to "
-                         "be fit at once, and should be used if you have edge "
-                         "data. You will typically also want to use "
-                         "--no-edge-constraint if you specify the SE or RQ "
-                         "kernels. See also --core-only. The default is gibbstanh, "
-                         "or SE if --core-only is set.")
+                         "properties of the fit. "
+                         "* gibbstanh is the Gibbs kernel with tanh warping of "
+                         "the length scale. This kernel allows the entire "
+                         "profile to be fit at once, and should be used if you "
+                         "have edge data. "
+                         "* SE is the squared exponential kernel, which is good "
+                         "for core data. "
+                         "* RQ is the rational quadratic kernel, also good for "
+                         "core data. "
+                         "* SEsym1d is an experimental SE kernel with symmetry "
+                         "constraint imposed by construction. This is primarily "
+                         "useful for core data. "
+                         "* matern is the matern kernel, which is also "
+                         "potentially useful for core data. Note that the matern "
+                         "kernel is very slow to evaluate, particularly if you "
+                         "need gradients. "
+                         "* gibbsdoubletanh is an experimental Gibbs kernel "
+                         "whose warping function is the sum of two hyperbolic "
+                         "tangents. You will need to pay close attention to the "
+                         "bounds, as it has not been optimized yet."
+                         "You will typically want to set --no-edge-constraint "
+                         "and/or --core-only if you specify any kernel other "
+                         "gibbstanh. See also --core-only. The default is "
+                         "gibbstanh, or SE if --core-only is set.")
 parser.add_argument('--coordinate',
                     choices=['psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
                              'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'],
@@ -255,6 +265,10 @@ parser.add_argument('--all-points', '--no-average',
                          "selected instead of performing a time average. This "
                          "will make the fit take longer and is statistically-"
                          "questionable, but may be useful in some cases.")
+parser.add_argument('--weighted',
+                    action='store_true',
+                    help="Set this flag to use weighted estimators when averaging "
+                         "the data. The weights used are 1/sigma_i^2.")
 parser.add_argument('--change-threshold',
                     type=float,
                     help="If provided, any points whose differences with respect "
@@ -797,14 +811,21 @@ class MethodFrame(tk.Frame):
         self.error_method_var.set(self.ERROR_METHOD_OPTIONS[0])
         self.error_method_menu = tk.OptionMenu(self, self.error_method_var, *self.ERROR_METHOD_OPTIONS)
         self.error_method_menu.grid(row=1, column=1, sticky='W')
+        
+        # Create checkbox for weighted averaging:
+        self.weighted_state = tk.IntVar(self)
+        self.weighted_button = tk.Checkbutton(self, text="weighted", variable=self.weighted_state)
+        self.weighted_button.grid(row=0, column=2, sticky='W')
     
     def update_method(self, new_meth):
         if new_meth == 'all points':
             self.error_method_menu.config(state=tk.DISABLED)
             self.error_method_label.config(state=tk.DISABLED)
+            self.weighted_button.config(state=tk.DISABLED)
         else:
             self.error_method_menu.config(state=tk.NORMAL)
             self.error_method_label.config(state=tk.NORMAL)
+            self.weighted_button.config(state=tk.NORMAL)
 
 class AveragingFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
@@ -910,6 +931,14 @@ HYPERPARAMETERS = collections.OrderedDict([
     ('matern', collections.OrderedDict([(u"\u03C3f", "signal variance"),
                                         (u"\u03BD", "order"),
                                         (u"\u2113", "covariance length scale")])),
+    ('gibbsdoubletanh', collections.OrderedDict([(u"\u03C3f", "signal variance"),
+                                           (u"\u2113c", "core covariance length scale"),
+                                           (u"\u2113m", "mid covariance length scale"),
+                                           (u"\u2113e", "edge covariance length scale"),
+                                           (u"\u2113a", "first transition width"),
+                                           (u"\u2113b", "second transition width"),
+                                           ("xa", "first transition"),
+                                           ("xb", "second transition")]))
 ])
 
 class KernelTypeFrame(tk.Frame):
@@ -1354,6 +1383,7 @@ class StatusBox(tk.Frame):
     def add_line(self, s):
         self.history_box.config(state=tk.NORMAL)
         print(s)
+        sys.stdout.flush()
         self.history_box.insert(tk.END, s + '\n')
         self.history_box.config(state=tk.DISABLED)
         self.history_box.yview(tk.END)
@@ -1647,6 +1677,7 @@ class FitWindow(tk.Tk):
         self.plot_frame.a_a_L.clear()
         
         method = self.control_frame.averaging_frame.method_frame.method_var.get()
+        weighted = self.control_frame.averaging_frame.method_frame.weighted_state.get()
         y_method = self.control_frame.averaging_frame.method_frame.error_method_var.get()
         abscissa = self.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.get()
         
@@ -1709,7 +1740,11 @@ class FitWindow(tk.Tk):
                 if len(times) == 1 or method == "all points":
                     p.drop_axis(0)
                 else:
-                    p.time_average(robust=(method == "robust"), y_method=y_method)
+                    p.time_average(
+                        robust=(method == "robust"),
+                        y_method=y_method,
+                        weighted=weighted
+                    )
             if 'GPC' in k or 'ECE' in k or core_only:
                 p.remove_edge_points()
         
@@ -1924,18 +1959,20 @@ class FitWindow(tk.Tk):
                     y_bad_o[good_idxs],
                     err_y=err_y_bad_o[good_idxs]
                 )
-            
+                
                 self.control_frame.status_frame.add_line("Removed %d outliers." % (len(y_bad_o[bad_idxs]),))
                 if len(y_bad_o[bad_idxs]) > 0:
                     self.plot_frame.a_val.plot(X_bad_o[bad_idxs], y_bad_o[bad_idxs], 'rx',
                                                label='outlier', ms=14)
+            else:
+                bad_idxs = scipy.zeros_like(y_bad_o, dtype=bool)
         
         # Do the voodoo:
         use_MCMC = (
             self.control_frame.fitting_frame.method_frame.method_state.get() ==
             self.control_frame.fitting_frame.method_frame.USE_MCMC
         )
-        if not use_MCMC:
+        if not use_MCMC and (not remove_outliers or len(y_bad_o[bad_idxs]) != 0):
             self.control_frame.status_frame.add_line("Finding MAP estimate...")
             self.find_MAP()
         
@@ -2854,6 +2891,8 @@ if __name__ == "__main__":
         root.control_frame.kernel_frame.constraints_frame.update_edge()
     if args.core_only:
         root.control_frame.kernel_frame.kernel_type_frame.core_only_button.select()
+    if args.weighted:
+        root.control_frame.averaging_frame.method_frame.weighted_button.select()
     if args.robust:
         root.control_frame.averaging_frame.method_frame.method_var.set('robust')
     if args.all_points:

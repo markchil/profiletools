@@ -316,7 +316,7 @@ class Profile(object):
         self.channels = scipy.vstack(new_channels)
     
     def average_data(self, axis=0, ddof=1, robust=False, y_method='sample',
-                     X_method='sample'):
+                     X_method='sample', weighted=False):
         """Computes the average of the profile over the desired axis.
         
         If `X_dim` is already 1, this returns the average of the quantity.
@@ -346,6 +346,12 @@ class Profile(object):
         X_method : {'sample', 'RMS', 'total'}, optional
             Same as `y_method`, but used for the uncertainty in the abscissa.
             Default is again 'sample' (use the sample standard deviation).
+        weighted : bool, optional
+            Set to True to use weighted estimators (weighted with the provided
+            error bars). Default is False (use conventional, unweighted
+            estimators). Note that, when weighting is used, the weights obtained
+            from `y` are used to weight `X` so that the two sets are consistently
+            weighted.
         """
         # TODO: Add support for custom bins!
         if self.X_dim == 1:
@@ -369,32 +375,45 @@ class Profile(object):
             ).all(axis=1)
             # TODO: Catch channels with 0 to 1 members!
             if not robust:
-                y[i] = scipy.mean(self.y[chan_mask])
+                # Process y:
+                if weighted:
+                    weights = 1.0 / self.err_y[chan_mask]**2
+                    if scipy.isinf(weights).any() or scipy.isnan(weights).any():
+                        weights = None
+                        warnings.warn("Invalid weight, setting weights equal!")
+                else:
+                    weights = None
+                y[i] = meanw(self.y[chan_mask], weights=weights)
                 # If there is only one member, just carry its uncertainty forward:
                 if len(self.y[chan_mask]) == 1:
                     err_y[i] = self.err_y[chan_mask]
                 elif y_method == 'sample':
-                    err_y[i] = scipy.std(self.y[chan_mask], ddof=ddof)
+                    err_y[i] = stdw(self.y[chan_mask], weights=weights, ddof=ddof)
                 elif y_method == 'RMS':
-                    err_y[i] = scipy.sqrt(scipy.mean((self.err_y[chan_mask])**2))
+                    err_y[i] = scipy.sqrt(meanw((self.err_y[chan_mask])**2, weights=weights))
                 elif y_method == 'total':
                     err_y[i] = scipy.sqrt(
-                        scipy.var(self.y[chan_mask], ddof=ddof) +
-                        scipy.mean((self.err_y[chan_mask])**2)
+                        varw(self.y[chan_mask], weights=weights, ddof=ddof) +
+                        meanw((self.err_y[chan_mask])**2, weights=weights)
                     )
-                X[i, :] = scipy.mean(reduced_X[chan_mask, :], axis=0)
+                
+                # Similar picture for X:
+                if weights is not None:
+                    weights = scipy.atleast_2d(weights).T
+                X[i, :] = meanw(reduced_X[chan_mask, :], weights=weights, axis=0)
                 if len(reduced_X[chan_mask, :]) == 1:
                     err_X[i, :] = reduced_err_X[chan_mask, :]
                 elif X_method == 'sample':
-                    err_X[i, :] = scipy.std(reduced_X[chan_mask, :], ddof=ddof, axis=0)
+                    err_X[i, :] = stdw(reduced_X[chan_mask, :], weights=weights, ddof=ddof, axis=0)
                 elif X_method == 'RMS':
-                    err_X[i, :] = scipy.sqrt(scipy.mean((reduced_err_X[chan_mask, :])**2))
+                    err_X[i, :] = scipy.sqrt(meanw((reduced_err_X[chan_mask, :])**2, weights=weights))
                 elif X_method == 'total':
                     err_X[i, :] = scipy.sqrt(
-                        scipy.var(reduced_X[chan_mask, :], ddof=ddof) +
-                        scipy.mean((reduced_err_X[chan_mask, :])**2)
+                        varw(reduced_X[chan_mask, :], weights=weights, ddof=ddof) +
+                        meanw((reduced_err_X[chan_mask, :])**2, weights=weights)
                     )
             else:
+                # TODO: Handle weighting!
                 y[i] = scipy.median(self.y[chan_mask])
                 if len(self.y[chan_mask]) == 1:
                     err_y[i] = self.err_y[chan_mask]
@@ -725,6 +744,32 @@ class Profile(object):
             k = gptools.GibbsKernel1dTanh(initial_params=initial,
                                           hyperprior=gptools.CoreEdgeJointPrior(bounds),
                                           **k_kwargs)
+        elif k == 'gibbsdoubletanh':
+            if self.X_dim != 1:
+                raise ValueError('Gibbs kernel is only supported for univariate data!')
+            y_range = self.y.max() - self.y.min()
+            sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
+            X_range = self.X[:, 0].max() - self.X[:, 0].min()
+            lcore_bounds = (10 * sys.float_info.epsilon, upper_factor * X_range)
+            la_bounds = (10 * sys.float_info.epsilon, lcore_bounds[1] / 50.0)
+            if x0_bounds is None:
+                x0_bounds = (self.X[:, 0].min(), self.X[:, 0].max())
+            bounds = [
+                sigma_f_bounds,
+                lcore_bounds,
+                lcore_bounds,
+                lcore_bounds,
+                la_bounds,
+                la_bounds,
+                x0_bounds,
+                x0_bounds
+            ]
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            k = gptools.GibbsKernel1dDoubleTanh(
+                initial_params=initial,
+                hyperprior=gptools.CoreMidEdgeJointPrior(bounds),
+                **k_kwargs
+            )
         elif k == 'RQ':
             y_range = self.y.max() - self.y.min()
             bounds = [(y_range / lower_factor, upper_factor * y_range),
@@ -1247,5 +1292,150 @@ class RejectionFunc(object):
 IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
 
 def robust_std(y, axis=None):
+    r"""Computes the robust standard deviation of the given data.
+    
+    This is defined as :math:`IQR/(2\Phi^{-1}(0.75))`, where :math:`IQR` is the
+    interquartile range and :math:`\Phi` is the inverse CDF of the standard
+    normal. This is an approximation based on the assumption that the data are
+    Gaussian, and will have the effect of diminishing the effect of outliers.
+    
+    Parameters
+    ----------
+    y : array-like
+        The data to find the robust standard deviation of.
+    axis : int, optional
+        The axis to find the standard deviation along. Default is None (find
+        from whole data set).
+    """
     return (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
      scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD
+
+def meanw(x, weights=None, axis=None):
+    r"""Weighted mean of data.
+    
+    Defined as
+    
+    .. math::
+        
+        \mu = \frac{\sum_i w_i x_i}{\sum_i w_i}
+    
+    Parameters
+    ----------
+    x : array-like
+        The vector to find the mean of.
+    weights : array-like, optional
+        The weights. Must be broadcastable with `x`. Default is to use the
+        unweighted mean.
+    axis : int, optional
+        The axis to take the mean along. Default is to use the whole data set.
+    """
+    if weights is None:
+        return scipy.mean(x, axis=axis)
+    else:
+        x = scipy.asarray(x)
+        weights = scipy.asarray(weights)
+        return (weights * x).sum(axis=axis) / weights.sum(axis=axis)
+
+def varw(x, weights=None, axis=None, ddof=1, mean=None):
+    r"""Weighted variance of data.
+    
+    Defined (for `ddof`=1) as
+    
+    .. math::
+        
+        s^2 = \frac{\sum_i w_i}{(\sum_i w_i)^2 - \sum_i w_i^2}\sum_i w_i (x_i - \mu)^2
+    
+    Parameters
+    ----------
+    x : array-like
+        The vector to find the mean of.
+    weights : array-like, optional
+        The weights. Must be broadcastable with `x`. Default is to use the
+        unweighted mean.
+    axis : int, optional
+        The axis to take the mean along. Default is to use the whole data set.
+    ddof : int, optional
+        The degree of freedom correction to use. If no weights are given, this
+        is the standard Bessel correction. If weights are given, this uses an
+        approximate form based on the assumption that the weights are inverse
+        variances for each data point. In this case, the value has no effect
+        other than being True or False. Default is 1 (apply correction assuming
+        normal noise dictated weights).
+    mean : array-like, optional
+        The weighted mean to use. If you have already computed the weighted mean
+        with :py:func:`meanw`, you can pass the result in here to save time.
+    """
+    if weights is None:
+        return scipy.var(x, axis=axis, ddof=1)
+    else:
+        x = scipy.asarray(x)
+        weights = scipy.asarray(weights)
+        if mean is None:
+            mean = meanw(x, weights=weights, axis=axis)
+        else:
+            mean = scipy.asarray(mean)
+        V1 = weights.sum(axis=axis)
+        M = (weights * (x - mean)**2).sum(axis=axis)
+        if ddof:
+            res = V1 / (V1**2 - (weights**2).sum(axis=axis)) * M
+            # Put nan where the result blow up to be consistent with scipy:
+            try:
+                res[scipy.isinf(res)] = scipy.nan
+            except TypeError:
+                if scipy.isinf(res):
+                    res = scipy.nan
+            return res
+        else:
+            return M / V1
+
+def stdw(*args, **kwargs):
+    r"""Weighted standard deviation of data.
+    
+    Defined (for `ddof`=1) as
+    
+    .. math::
+        
+        s = \sqrt{\frac{\sum_i w_i}{(\sum_i w_i)^2 - \sum_i w_i^2}\sum_i w_i (x_i - \mu)^2}
+    
+    Parameters
+    ----------
+    x : array-like
+        The vector to find the mean of.
+    weights : array-like, optional
+        The weights. Must be broadcastable with `x`. Default is to use the
+        unweighted mean.
+    axis : int, optional
+        The axis to take the mean along. Default is to use the whole data set.
+    ddof : int, optional
+        The degree of freedom correction to use. If no weights are given, this
+        is the standard Bessel correction. If weights are given, this uses an
+        approximate form based on the assumption that the weights are inverse
+        variances for each data point. In this case, the value has no effect
+        other than being True or False. Default is 1 (apply correction assuming
+        normal noise dictated weights).
+    mean : array-like, optional
+        The weighted mean to use. If you have already computed the weighted mean
+        with :py:func:`meanw`, you can pass the result in here to save time.
+    """
+    return scipy.sqrt(varw(*args, **kwargs))
+
+def scoreatpercentilew(x, p, weights=None, axis=None):
+    # TODO: Vectorize this!
+    if weights is None:
+        return scipy.stats.scoreatpercentile(x, p, axis=axis)
+    else:
+        x = scipy.asarray(x)
+        weights = scipy.asarray(weights)
+        
+        srt = x.argsort()
+        x = x[srt]
+        w = weights[srt]
+    
+        Sn = w.cumsum()
+        pn = 100.0 / Sn[-1] * (Sn - w / 2.0)
+        k = scipy.digitize(scipy.atleast_1d(p), pn) - 1
+        return x[k] + (p - pn[k]) / (pn[k + 1] - pn[k]) * (x[k + 1] - x[k])
+        # TODO: This returns an array for a scalar input!
+
+# TODO: Write medianw!
+# TODO: Write robust_stdw!

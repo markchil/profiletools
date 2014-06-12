@@ -279,6 +279,7 @@ class BivariatePlasmaProfile(Profile):
         """
         if self.X_dim == 1:
             if self.abscissa == 'Rmid':
+                # TODO: Re-do this with _get_efit_times_to_average!
                 t_EFIT = self.efit_tree.getTimeBase()
                 if hasattr(self, 'times'):
                     idx = self.efit_tree._getNearestIdx(self.times, t_EFIT)
@@ -382,16 +383,7 @@ class BivariatePlasmaProfile(Profile):
             Z_lim = [0.0]
             R_lim = [0.91]
         if self.X_dim == 1:
-            t_EFIT = self.efit_tree.getTimeBase()
-            
-            if hasattr(self, 'times'):
-                idx = self.efit_tree._getNearestIdx(self.times, t_EFIT)
-                t_EFIT = t_EFIT[idx]
-            elif self.t_min != self.t_max:
-                t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
-            else:
-                idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
-                t_EFIT = t_EFIT[idx]
+            t_EFIT = self._get_efit_times_to_average()
             rho_lim = scipy.mean(
                 self.efit_tree.rz2rho(
                     self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True
@@ -1109,7 +1101,7 @@ def neTS(shot, **kwargs):
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False):
+          efit_tree=None, remove_edge=False, remove_zeros=True):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
 
     Parameters
@@ -1131,6 +1123,9 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     remove_edge : bool, optional
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
+    remove_zeros : bool, optional
+        If True, will remove any points that are exactly zero, independent of
+        what their error bar is. Default is True.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -1175,6 +1170,8 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     p.add_data(X, Te, err_y=err_Te, channels={1: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
+    if remove_zeros:
+        p.remove_points(p.y == 0.0)
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
@@ -1690,3 +1687,13 @@ def read_plasma_NetCDF(*args, **kwargs):
                 p.abscissa = p.X_labels[-1].strip('$ ')
     
     return p
+
+# def make_Z_of_rho_spline(efit_tree, rho, R):
+#     Z = efit_tree.getZGrid()
+#     R = R * scipy.ones_like(Z)
+#     t = efit_tree.getTimeBase()
+#     rho_grid = efit_tree.rz2rho(rho, R, Z, t, each_t=True)
+#     ZZ, TT = scipy.meshgrid(Z, t)
+#     return scipy.interpolate.SmoothBivariateSpline(
+#         rho_grid.ravel(), TT.ravel(), ZZ.ravel()
+#     )
