@@ -79,6 +79,7 @@ class Profile(object):
         variables.
     """
     def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label=''):
+        # TODO: Think about how to handle labelling for transformed quantities!
         self.X_dim = X_dim
         if X_units is None:
             X_units = [''] * X_dim
@@ -105,10 +106,11 @@ class Profile(object):
         self.err_y = scipy.array([], dtype=float)
         self.err_X = None
         self.channels = None
+        self.T = None
         
         self.gp = None
     
-    def add_data(self, X, y, err_X=0, err_y=0, channels=None):
+    def add_data(self, X, y, err_X=0, err_y=0, channels=None, T=None):
         """Add data to the training data set of the :py:class:`Profile` instance.
         
         Will also update the Profile's Gaussian process instance (if it exists).
@@ -176,10 +178,21 @@ class Profile(object):
         # Correct single-dimension inputs:
         if self.X_dim == 1 and X.shape[0] == 1:
             X = X.T
-        if X.shape != (len(y), self.X_dim):
+        if T is None and X.shape != (len(y), self.X_dim):
             raise ValueError("Shape of independent variables must be (len(y), self.X_dim)! "
                              "X given has shape %s, shape of "
                              "y is %s and X_dim=%d." % (X.shape, y.shape, self.X_dim))
+        
+        # Verify T matches the shape of X, y:
+        if T is not None:
+            # Promote T if it is a single observation:
+            T = scipy.atleast_2d(scipy.asarray(T, dtype=float))
+            if T.ndim != 2:
+                raise ValueError("T must have exactly 2 dimensions!")
+            if T.shape[1] != X.shape[0]:
+                raise ValueError("Second dimension of T must match first dimension of X!")
+            if T.shape[0] != len(y):
+                raise ValueError("Length of first dimension of T must match length of y!")
         
         # Process uncertainty in err_X:
         try:
@@ -204,17 +217,37 @@ class Profile(object):
         
         # Process channel flags:
         if channels is None:
-            channels = X.copy()
+            channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
         else:
             if isinstance(channels, dict):
                 d_channels = channels
-                channels = X.copy()
+                channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
                 for idx in d_channels:
                     channels[:, idx] = d_channels[idx]
             else:
                 channels = scipy.asarray(channels)
-                if channels.shape != X.shape:
+                if channels.shape != (len(y), X.shape[1]):
                     raise ValueError("Shape of channels and X must be the same!")
+        
+        if T is None and self.T is not None:
+            T = scipy.eye(X.shape[0])
+        if T is not None:
+            # First entry to be non-line-integrated:
+            if self.X is not None and self.T is None:
+                self.T = scipy.eye(self.X.shape[0])
+            if self.T is None:
+                self.T = T
+            else:
+                self.T = scipy.vstack((
+                    scipy.hstack((
+                        self.T,
+                        scipy.zeros((self.T.shape[0], T.shape[1]))
+                        )),
+                    scipy.hstack((
+                        scipy.zeros((T.shape[0], self.T.shape[1])),
+                        T
+                    ))
+                ))
         
         if self.X is None:
             self.X = X
@@ -253,7 +286,7 @@ class Profile(object):
         new_other_channels = (other.channels - other.channels.min(axis=0) +
                               self.channels.max(axis=0) + 1)
         self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y,
-                      channels=new_other_channels)
+                      channels=new_other_channels, T=other.T)
 
     def drop_axis(self, axis):
         """Drops a selected axis from `X`.
@@ -272,48 +305,54 @@ class Profile(object):
         self.X_labels.pop(axis)
         self.X_units.pop(axis)
     
-    def keep_slices(self, axis, vals):
+    def keep_slices(self, axis, vals, reject_mixed=True):
         """Keeps only the nearest points to vals along the given axis for each channel.
         
         Parameters
         ----------
         axis : int
-            The axis to take the slice of.
+            The axis to take the slice(s) of.
         vals : array of float
             The values the axis should be close to.
+        reject_mixed : bool, optional
+            If True, any y value which corresponds to a combination of multiple
+            values of X[:, axis] is thrown out. Otherwise, such values are kept.
+            Default is True (throw out mixed transformed quantities).
         """
+        # TODO: This does not handle y or T properly!
         try:
             iter(vals)
         except TypeError:
             vals = [vals]
-        new_X = []
-        new_y = []
-        new_err_X = []
-        new_err_y = []
-        new_channels = []
         
-        axis_channels = self.channels[:, axis].flatten()
-        
-        reduced_channels = scipy.delete(self.channels, axis, axis=1)
-        channels = unique_rows(reduced_channels)
-        
-        for ch in channels:
-            channel_idxs = (
-                reduced_channels == ch.flatten()
-            ).all(axis=1)
-            ch_axis_X = self.X[channel_idxs, axis].flatten()
-            keep_idxs = scipy.unique(get_nearest_idx(vals, ch_axis_X))
+        if self.T is None:
+            # Simple, fast form for when there are no line-integrated data:
+            new_X = []
+            new_y = []
+            new_err_X = []
+            new_err_y = []
+            new_channels = []
             
-            new_X.extend(self.X[channel_idxs, :][keep_idxs, :])
-            new_y.extend(self.y[channel_idxs][keep_idxs])
-            new_err_X.extend(self.err_X[channel_idxs, :][keep_idxs, :])
-            new_err_y.extend(self.err_y[channel_idxs][keep_idxs])
-            new_channels.extend(self.channels[channel_idxs, :][keep_idxs, :])
-        self.X = scipy.vstack(new_X)
-        self.y = scipy.asarray(new_y)
-        self.err_X = scipy.vstack(new_err_X)
-        self.err_y = scipy.asarray(new_err_y)
-        self.channels = scipy.vstack(new_channels)
+            reduced_channels = scipy.delete(self.channels, axis, axis=1)
+            channels = unique_rows(reduced_channels)
+            
+            for ch in channels:
+                channel_idxs = (reduced_channels == ch.flatten()).all(axis=1)
+                ch_axis_X = self.X[channel_idxs, axis].flatten()
+                keep_idxs = scipy.unique(get_nearest_idx(vals, ch_axis_X))
+                
+                new_X.extend(self.X[channel_idxs, :][keep_idxs, :])
+                new_y.extend(self.y[channel_idxs][keep_idxs])
+                new_err_X.extend(self.err_X[channel_idxs, :][keep_idxs, :])
+                new_err_y.extend(self.err_y[channel_idxs][keep_idxs])
+                new_channels.extend(self.channels[channel_idxs, :][keep_idxs, :])
+            self.X = scipy.vstack(new_X)
+            self.y = scipy.asarray(new_y)
+            self.err_X = scipy.vstack(new_err_X)
+            self.err_y = scipy.asarray(new_err_y)
+            self.channels = scipy.vstack(new_channels)
+        else:
+            raise NotImplementedError("Not done yet!")
     
     def average_data(self, axis=0, ddof=1, robust=False, y_method='sample',
                      X_method='sample', weighted=False):
@@ -353,6 +392,7 @@ class Profile(object):
             from `y` are used to weight `X` so that the two sets are consistently
             weighted.
         """
+        # TODO: How to support T here?
         # TODO: Add support for custom bins!
         if self.X_dim == 1:
             return scipy.mean(self.y)
@@ -468,6 +508,7 @@ class Profile(object):
         -------
         The axis instance used.
         """
+        # TODO: How to support T here?
         if self.X_dim > 2:
             raise ValueError("Plotting is not supported for X_dim > 2!")
         if ax is None:
@@ -542,6 +583,7 @@ class Profile(object):
         err_y_bad : array
             Uncertainties on the bad values.
         """
+        # TODO: Add support for T here!
         idxs = ~conditional
         
         y_bad = self.y[conditional]
@@ -598,6 +640,7 @@ class Profile(object):
         err_y_bad : array
             Uncertainties on the bad values.
         """
+        # TODO: How to support T here?
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not remove_kwargs.get('use_MCMC', False):
@@ -633,6 +676,7 @@ class Profile(object):
             in a row. Default is 'and' (point must have a drastic change in both 
             directions to be rejected).
         """
+        # TODO: How to support T here?
         if self.X_dim != 1:
             raise NotImplementedError("Extreme change removal is not supported "
                                       "for X_dim = %d" % (self.X_dim,))
@@ -708,6 +752,7 @@ class Profile(object):
             All additional kwargs are passed to the constructor of
             :py:class:`gptools.GaussianProcess`.
         """
+        # TODO: Add support for T here!
         # TODO: Add better initial guesses/param_bounds!
         # TODO: Add handling for string kernels!
         # TODO: Create more powerful way of specifying mixed kernels!
@@ -949,7 +994,8 @@ class Profile(object):
             Path of the file to write. If the file exists, it will be
             overwritten without warning.
         """
-        # TODO: Add metadata!
+        # TODO: Add support for T!
+        # TODO: Add metadata (probably in CMod...)!
         filename = os.path.expanduser(filename)
         with open(filename, 'wb') as outfile:
             writer = csv.writer(outfile)

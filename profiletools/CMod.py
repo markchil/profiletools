@@ -964,7 +964,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, ne, err_y=err_ne, channels={1: channels})
+    p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: R.ravel()})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
     if t_min is not None:
@@ -1042,7 +1042,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, ne, err_y=err_ne, channels={1: channels})
+    p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: R.ravel()})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
                     ((p.y == 0.0) & (p.err_y == 2)))
@@ -1167,7 +1167,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, Te, err_y=err_Te, channels={1: channels})
+    p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: R.ravel()})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
     if remove_zeros:
@@ -1247,7 +1247,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, Te, err_y=err_Te, channels={1: channels})
+    p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: R.ravel()})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
                     ((p.y == 0) & (p.err_y == 1)))
