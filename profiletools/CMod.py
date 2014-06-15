@@ -88,32 +88,38 @@ class BivariatePlasmaProfile(Profile):
         if self.abscissa == new_abscissa:
             return
         elif self.X_dim == 1 or (self.X_dim == 2 and self.abscissa == 'RZ'):
-            # TODO: Handle the sqrt cases elegantly!
+            X = self.every_X
+            err_X = self.every_err_X
+            assoc = self.X_assoc
             if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-                new_rho = scipy.power(self.X[:, 0], 2)
+                new_rho = scipy.power(X[:, 0], 2)
                 # Approximate form from uncertainty propagation:
-                err_new_rho = self.err_X[:, 0] * 2 * self.X[:, 0]
+                err_new_rho = err_X[:, 0] * 2 * X[:, 0]
             elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-                new_rho = scipy.power(self.X[:, 0], 0.5)
+                new_rho = scipy.power(X[:, 0], 0.5)
                 # Approximate form from uncertainty propagation:
-                err_new_rho = self.err_X[:, 0] / (2 * scipy.sqrt(self.X[:, 0]))
+                err_new_rho = err_X[:, 0] / (2 * scipy.sqrt(X[:, 0]))
             else:
                 times = self._get_efit_times_to_average()
             
                 if self.abscissa == 'RZ':
                     new_rhos = self.efit_tree.rz2rho(
                         new_abscissa,
-                        self.X[:, 0],
-                        self.X[:, 1],
+                        X[:, 0],
+                        X[:, 1],
                         times,
                         each_t=True
                     )
+                    self.X_labels.pop(1)
+                    self.X_units.pop(1)
                     self.X_dim = 1
+                    for p in self.points:
+                        p.channel = p.channel[:1]
                 else:
                     new_rhos = self.efit_tree.rho2rho(
                         self.abscissa,
                         new_abscissa,
-                        self.X[:, 0],
+                        X[:, 0],
                         times,
                         each_t=True
                     )
@@ -121,45 +127,53 @@ class BivariatePlasmaProfile(Profile):
                 err_new_rho = scipy.std(new_rhos, axis=0, ddof=ddof)
                 err_new_rho[scipy.isnan(err_new_rho)] = 0
             
-            self.X = scipy.atleast_2d(new_rho).T
-            self.X_labels = [_X_label_mapping[new_abscissa]]
-            self.X_units = [_X_unit_mapping[new_abscissa]]
-            self.err_X = scipy.atleast_2d(err_new_rho).T
+            for k in xrange(0, len(self.points)):
+                idxs = assoc == k
+                self.points[k].X[:, 0] = new_rho[idxs]
+                self.points[k].err_X[:, 0] = err_new_rho[idxs]
+            
+            self.X_labels[0] = _X_label_mapping[new_abscissa]
+            self.X_units[0] = _X_unit_mapping[new_abscissa]
         else:
+            X = self.every_X
+            err_X = self.every_err_X
+            assoc = self.X_assoc
             if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-                new_rho = scipy.power(self.X[:, 1], 2)
+                new_rho = scipy.power(X[:, 1], 2)
             elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-                new_rho = scipy.power(self.X[:, 1], 0.5)
+                new_rho = scipy.power(X[:, 1], 0.5)
             elif self.abscissa == 'RZ':
                 # Need to handle this case separately because of the extra column:
                 new_rho = self.efit_tree.rz2rho(new_abscissa,
-                                                self.X[:, 1],
-                                                self.X[:, 2],
-                                                self.X[:, 0],
+                                                X[:, 1],
+                                                X[:, 2],
+                                                X[:, 0],
                                                 each_t=False)
-                self.channels = self.channels[:, 0:2]                
+                for p in self.points:
+                    p.channel = p.channel[:2]
+                self.X_labels.pop(2)
+                self.X_units.pop(2)
                 self.X_dim = 2
             else:
                 new_rho = self.efit_tree.rho2rho(
                     self.abscissa,
                     new_abscissa,
-                    self.X[:, 1],
-                    self.X[:, 0],
+                    X[:, 1],
+                    X[:, 0],
                     each_t=False
                 )
-            err_new_rho = scipy.zeros_like(self.X[:, 0])
-        
-            self.X = scipy.hstack((scipy.atleast_2d(self.X[:, 0]).T, scipy.atleast_2d(new_rho).T))
-            self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
-            self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
-            self.err_X = scipy.hstack(
-                (
-                    scipy.atleast_2d(self.err_X[:, 0]).T,
-                    scipy.atleast_2d(err_new_rho).T
-                )
-            )
+            err_new_rho = scipy.zeros_like(X[:, 0])
+            
+            for k in xrange(0, len(self.points)):
+                idxs = assoc == k
+                self.points[k].X[:, 1] = new_rho[idxs]
+                self.points[k].err_X[:, 1] = err_new_rho[idxs]
+            
+            self.X_labels[1] = _X_label_mapping[new_abscissa]
+            self.X_units[1] = _X_unit_mapping[new_abscissa]
         self.abscissa = new_abscissa
         if drop_nan:
+            # TODO: Update this!
             self.remove_points(scipy.isnan(self.X).any(axis=1))
 
     def time_average(self, **kwargs):
@@ -964,7 +978,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: R.ravel()})
+    p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
     if t_min is not None:
@@ -1042,7 +1056,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: R.ravel()})
+    p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
                     ((p.y == 0.0) & (p.err_y == 2)))
@@ -1167,7 +1181,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: R.ravel()})
+    p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
     if remove_zeros:
@@ -1247,7 +1261,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         p.efit_tree = efit_tree
     p.abscissa = 'RZ'
     
-    p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: R.ravel()})
+    p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
                     ((p.y == 0) & (p.err_y == 1)))
@@ -1461,7 +1475,7 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
                                X_units=['s', 'm'],
                                y_units='keV',
                                X_labels=['$t$', '$R_{mid}$'],
-                               y_label='$T_e$, GPC2')
+                               y_label='$T_e$, GPC')
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
     if efit_tree is None:

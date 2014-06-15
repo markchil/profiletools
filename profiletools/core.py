@@ -32,6 +32,177 @@ import csv
 import warnings
 import re
 
+def average_points(points, axis, ddof=1, robust=False, y_method='sample',
+                   X_method='sample', weighted=False):
+    # TODO: Add support for custom bins!
+    allowed_methods = ['sample', 'RMS', 'total']
+    if y_method not in allowed_methods:
+        raise ValueError("Unsupported y_method '%s'!" % (y_method,))
+    if X_method not in allowed_methods:
+        raise ValueError("Unsupported X_method '%s'!" % (X_method,))
+    
+    y = []
+    err_y = []
+    X = []
+    err_X = []
+    T = []
+    for p in points:
+        y += [p.y]
+        err_y += [p.err_y]
+        # Eliminate the dimension being averaged over:
+        X += [scipy.delete(p.X, axis, axis=1)]
+        err_X += [scipy.delete(p.err_X, axis, axis=1)]
+        T += [p.T]
+    
+    if not robust:
+        # Process y:
+        if weighted:
+            weights = 1.0 / err_y**2
+            if scipy.isinf(weights).any() or scipy.isnan(weights).any():
+                weights = None
+                warnings.warn("Invalid weight, setting weights equal!")
+        else:
+            weights = None
+        mean_y = meanw(y, weights=weights)
+        # If there is only one member, just carry its uncertainty forward:
+        if len(y) == 1:
+            err_y = err_y[0]
+        elif y_method == 'sample':
+            err_y = stdw(y, weights=weights, ddof=ddof)
+        elif y_method == 'RMS':
+            err_y = scipy.sqrt(meanw(err_y**2, weights=weights))
+        elif y_method == 'total':
+            err_y = scipy.sqrt(
+                varw(y, weights=weights, ddof=ddof) +
+                meanw(err_y**2, weights=weights)
+            )
+        
+        # Similar picture for X:
+        if weights is not None:
+            weights = scipy.atleast_2d(weights).T
+        mean_X = meanw(X, weights=weights, axis=0)
+        if len(y) == 1:
+            err_X = err_X[0]
+        elif X_method == 'sample':
+            err_X = stdw(X, weights=weights, ddof=ddof, axis=0)
+        elif X_method == 'RMS':
+            err_X = scipy.sqrt(meanw(err_X**2, weights=weights, axis=0))
+        elif X_method == 'total':
+            err_X = scipy.sqrt(
+                varw(X, weights=weights, ddof=ddof, axis=0) +
+                meanw(err_X**2, weights=weights, axis=0)
+            )
+        
+        # And again for T:
+        if T[0] is not None:
+            T = meanw(T, weights=weights, axis=0)
+        else:
+            T = None
+    else:
+        # TODO: Handle weighting!
+        mean_y = scipy.median(y)
+        if len(y) == 1:
+            err_y = err_y[0]
+        elif y_method == 'sample':
+            err_y = robust_std(y)
+        elif y_method == 'RMS':
+            err_y = scipy.sqrt(scipy.median(err_y**2))
+        elif y_method == 'total':
+            err_y = scipy.sqrt((robust_std(y))**2 + scipy.median(err_y**2))
+        mean_X = scipy.median(X, axis=0)
+        if len(y) == 1:
+            err_X = err_X[0]
+        elif X_method == 'sample':
+            err_X = robust_std(X, axis=0)
+        elif X_method == 'RMS':
+            err_X = scipy.sqrt(scipy.median(err_X**2, axis=0))
+        elif X_method == 'total':
+            err_X = scipy.sqrt(
+                (robust_std(X, axis=0))**2 +
+                scipy.median(err_X**2, axis=0)
+            )
+        if T[0] is not None:
+            T = scipy.median(T, axis=0)
+        else:
+            T = None
+    
+    return Point(
+        mean_X, mean_y, err_X=err_X, err_y=err_y, T=T, channel=points[0].channel,
+        X_labels=points[0].X_labels, X_units=points[0].X_units,
+        y_label=points[0].y_label, y_units=points[0].y_units
+    )
+
+class Point(object):
+    def __init__(self, X, y, err_X=0, err_y=0, T=None, channel=None,
+                 X_labels=None, X_units=None, y_label='', y_units=''):
+        self.X = scipy.atleast_2d(scipy.asarray(X, dtype=float))
+        self.y = y
+        try:
+            iter(err_X)
+        except TypeError:
+            self.err_X = err_X * scipy.ones_like(self.X)
+        else:
+            err_X = scipy.atleast_2d(scipy.asarray(err_X, dtype=float))
+            if err_X.shape != self.X.shape:
+                raise ValueError("Shape of err_X must match that of X!")
+            self.err_X = err_X
+        self.err_y = err_y
+        if T is None:
+            self.T = T
+        else:
+            self.T = scipy.atleast_2d(scipy.asarray(T, dtype=float))
+            if self.T.shape != (1, self.X.shape[0]):
+                raise ValueError("Shape of T must be 1 by the number of entries in X!")
+        if channel is None:
+            self.channel = self.X[0, :]
+        else:
+            self.channel = scipy.asarray(channel)
+        if X_labels is None:
+            X_labels = [''] * self.X_dim
+        elif self.X_dim == 1 and isinstance(X_labels, str):
+            X_labels = [X_labels]
+        if len(X_labels) != self.X_dim:
+            raise ValueError("Length of X_labels must be equal to X_dim!")
+        self.X_labels = X_labels
+        if X_units is None:
+            X_units = [''] * self.X_dim
+        elif self.X_dim == 1 and isinstance(X_units, str):
+            X_units = [X_units]
+        if len(X_units) != self.X_dim:
+            raise ValueError("Length of X_units must be equal to X_dim!")
+        self.X_units = X_units
+        self.y_label = y_label
+        self.y_units = y_units
+    
+    @property
+    def X_dim(self):
+        return self.X.shape[1]
+    
+    @property
+    def is_single_point(self):
+        return self.T is None
+    
+    def __unicode__(self):
+        if self.is_single_point:
+            X_desc = u"("
+            for l, u, v, sv in zip(self.X_labels, self.X_units, self.X[0, :], self.err_X[0, :]):
+                if u:
+                    X_desc += u"%s=(%g\u00B1%g) %s, " % (l, v, sv, u)
+                else:
+                    X_desc += u"%s=%g\u00B1%g, " % (l, v, sv)
+            X_desc = X_desc[:-2]
+            X_desc += u")"
+        else:
+            X_desc = u""
+        if self.y_units:
+            return u"%s%s = (%g\u00B1%g) %s" % (self.y_label, X_desc, self.y, self.err_y, self.y_units)
+        else:
+            return u"%s%s = %g\u00B1%g" % (self.y_label, X_desc, self.y, self.err_y)
+    
+    def __str__(self):
+        return unicode(self).replace(u"\u00B1", "+/-").encode('utf-8')
+        
+
 class Profile(object):
     """Object to abstractly represent a profile.
     
@@ -79,7 +250,6 @@ class Profile(object):
         variables.
     """
     def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label=''):
-        # TODO: Think about how to handle labelling for transformed quantities!
         self.X_dim = X_dim
         if X_units is None:
             X_units = [''] * X_dim
@@ -101,14 +271,81 @@ class Profile(object):
         self.X_labels = X_labels
         self.y_label = y_label
         
-        self.y = scipy.array([], dtype=float)
-        self.X = None
-        self.err_y = scipy.array([], dtype=float)
-        self.err_X = None
-        self.channels = None
-        self.T = None
+        self.points = scipy.array([], dtype=Point)
         
         self.gp = None
+    
+    # The properties prefixed with "all_" include all quantities, including
+    # the ones that are linear transformations. The unprefixed ones ONLY include
+    # ones that are single points.
+    
+    @property
+    def is_single(self):
+        return [p.is_single_point for p in self.points]
+    
+    @property
+    def X_assoc(self):
+        res = []
+        for k in xrange(0, self.points):
+            res.extend([k] * self.points[k].X.shape[0])
+        return res
+    
+    @property
+    def all_X(self):
+        return scipy.vstack([p.X if p.is_single_point
+                                 else scipy.nan * scipy.ones_like(p.X[0, :])
+                                 for p in self.points])
+    
+    @property
+    def every_X(self):
+        return scipy.vstack([p.X for p in self.points])
+    
+    @property
+    def X(self):
+        return scipy.vstack([p.X for p in self.points if p.is_single_point])
+    
+    @property
+    def all_err_X(self):
+        return scipy.vstack([p.err_X if p.is_single_point
+                                     else scipy.nan * scipy.ones_like(p.err_X[0, :])
+                                     for p in self.points])
+    
+    @property
+    def every_err_X(self):
+        return scipy.vstack([p.err_X for p in self.points])
+    
+    @property
+    def err_X(self):
+        return scipy.vstack([p.err_X for p in self.points if p.is_single_point])
+    
+    @property
+    def all_y(self):
+        return scipy.asarray([p.y for p in self.points])
+    
+    @property
+    def y(self):
+        return scipy.asarray([p.y for p in self.points if p.is_single_point])
+    
+    @property
+    def all_err_y(self):
+        return scipy.asarray([p.err_y for p in self.points])
+    
+    @property
+    def err_y(self):
+        return scipy.asarray([p.err_y for p in self.points if p.is_single_point])
+    
+    # TODO: Need clever way to make global T matrix filled out with zeros!
+    @property
+    def T(self):
+        return [p.T for p in self.points]
+    
+    @property
+    def all_channels(self):
+        return scipy.vstack([p.channel for p in self.points])
+    
+    @property
+    def channels(self):
+        return scipy.vstack([p.channel for p in self.points if p.is_single_point])
     
     def add_data(self, X, y, err_X=0, err_y=0, channels=None, T=None):
         """Add data to the training data set of the :py:class:`Profile` instance.
@@ -147,6 +384,7 @@ class Profile(object):
         ValueError
             Bad shapes for any of the inputs, negative values for `err_y` or `n`.
         """
+        # Check inputs:
         # Verify y has only one non-trivial dimension:
         try:
             iter(y)
@@ -229,47 +467,35 @@ class Profile(object):
                 if channels.shape != (len(y), X.shape[1]):
                     raise ValueError("Shape of channels and X must be the same!")
         
-        if T is None and self.T is not None:
-            T = scipy.eye(X.shape[0])
-        if T is not None:
-            # First entry to be non-line-integrated:
-            if self.X is not None and self.T is None:
-                self.T = scipy.eye(self.X.shape[0])
-            if self.T is None:
-                self.T = T
+        # Add data to self.points:
+        for k in xrange(0, len(y)):
+            if T is None:
+                Xpts = X[k, :]
+                err_Xpts = err_X[k, :]
+                Tpt = None
             else:
-                self.T = scipy.vstack((
-                    scipy.hstack((
-                        self.T,
-                        scipy.zeros((self.T.shape[0], T.shape[1]))
-                        )),
-                    scipy.hstack((
-                        scipy.zeros((T.shape[0], self.T.shape[1])),
-                        T
-                    ))
-                ))
+                Tpt = T[k, :]
+                mask = Tpt != 0
+                Xpts = X[mask, :]
+                err_Xpts = err_X[mask, :]
+            self.points = scipy.append(
+                self.points,
+                Point(
+                    Xpts, y[k], err_X=err_Xpts, err_y=err_y[k], T=Tpt,
+                    channel=channels[k, :], X_labels=self.X_labels,
+                    X_units=self.X_units, y_label=self.y_label,
+                    y_units=self.y_units
+                )
+            )
         
-        if self.X is None:
-            self.X = X
-        else:
-            self.X = scipy.vstack((self.X, X))
-        if self.channels is None:
-            self.channels = channels
-        else:
-            self.channels = scipy.vstack((self.channels, channels))
-        if self.err_X is None:
-            self.err_X = err_X
-        else:
-            self.err_X = scipy.vstack((self.err_X, err_X))
-        self.y = scipy.append(self.y, y)
-        self.err_y = scipy.append(self.err_y, err_y)
-        
+        # Add to the GP, if it exists:
+        # TODO: Make this include T once gptools supports it!
         if self.gp is not None:
             self.gp.add_data(X, y, err_y=err_y)
         
     def add_profile(self, other):
         """Absorbs the data from one profile object.
-
+        
         Parameters
         ----------
         other : :py:class:`Profile`
@@ -282,15 +508,22 @@ class Profile(object):
             raise ValueError("When merging profiles, the y_units must agree!")
         if self.X_units != other.X_units:
             raise ValueError("When merging profiles, the X_units must agree!")
-        # Modify the channels of other.channels to avoid clashes:
-        new_other_channels = (other.channels - other.channels.min(axis=0) +
-                              self.channels.max(axis=0) + 1)
-        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y,
-                      channels=new_other_channels, T=other.T)
-
+        
+        # Modify the channels of self.channels to avoid clashes:
+        other_channel_max = other.all_channels.max(axis=0)
+        self_channel_min = self.all_channels.min(axis=0)
+        for p in self.points:
+            p.channel = p.channel - self_channel_min + other_channel_max + 1
+        # Set units to be the same so reference semantics works:
+        for p in other.points:
+            p.X_labels = self.X_labels
+            p.X_units = self.X_units
+        
+        self.points = scipy.append(self.points, other.points)
+    
     def drop_axis(self, axis):
         """Drops a selected axis from `X`.
-
+        
         Parameters
         ----------
         axis : int
@@ -298,10 +531,16 @@ class Profile(object):
         """
         if self.X_dim == 1:
             raise ValueError("Can't drop axis from a univariate profile!")
+        
         self.X_dim -= 1
-        self.channels = scipy.delete(self.channels, axis, axis=1)
-        self.X = scipy.delete(self.X, axis, axis=1)
-        self.err_X = scipy.delete(self.err_X, axis, axis=1)
+        
+        for p in self.points:
+            p.channel = scipy.delete(p.channel, axis, axis=1)
+            p.X = scipy.delete(p.X, axis, axis=1)
+            p.err_X = scipy.delete(p.err_X, axis, axis=1)
+        
+        # Rely on reference semantics to update all of the elements of
+        # self.points at once here:
         self.X_labels.pop(axis)
         self.X_units.pop(axis)
     
@@ -319,43 +558,43 @@ class Profile(object):
             values of X[:, axis] is thrown out. Otherwise, such values are kept.
             Default is True (throw out mixed transformed quantities).
         """
-        # TODO: This does not handle y or T properly!
-        try:
-            iter(vals)
-        except TypeError:
-            vals = [vals]
+        keep_points = scipy.array([], dtype=Point)
         
-        if self.T is None:
-            # Simple, fast form for when there are no line-integrated data:
-            new_X = []
-            new_y = []
-            new_err_X = []
-            new_err_y = []
-            new_channels = []
-            
-            reduced_channels = scipy.delete(self.channels, axis, axis=1)
-            channels = unique_rows(reduced_channels)
-            
-            for ch in channels:
-                channel_idxs = (reduced_channels == ch.flatten()).all(axis=1)
-                ch_axis_X = self.X[channel_idxs, axis].flatten()
-                keep_idxs = scipy.unique(get_nearest_idx(vals, ch_axis_X))
-                
-                new_X.extend(self.X[channel_idxs, :][keep_idxs, :])
-                new_y.extend(self.y[channel_idxs][keep_idxs])
-                new_err_X.extend(self.err_X[channel_idxs, :][keep_idxs, :])
-                new_err_y.extend(self.err_y[channel_idxs][keep_idxs])
-                new_channels.extend(self.channels[channel_idxs, :][keep_idxs, :])
-            self.X = scipy.vstack(new_X)
-            self.y = scipy.asarray(new_y)
-            self.err_X = scipy.vstack(new_err_X)
-            self.err_y = scipy.asarray(new_err_y)
-            self.channels = scipy.vstack(new_channels)
-        else:
-            raise NotImplementedError("Not done yet!")
+        reduced_channels = scipy.delete(self.all_channels, axis, axis=1)
+        channels = unique_rows(reduced_channels)
+        
+        X = self.all_X
+        
+        for ch in channels:
+            channel_idxs = (reduced_channels == ch.ravel()).all(axis=1)
+            if self.points[channel_idxs[0]].is_single_point:
+                # Then all of the points in this channel must be single.
+                ch_axis_X = X[channel_idxs, axis].ravel()
+                keep_points = scipy.append(
+                    keep_points,
+                    self.points[channel_idxs][scipy.unique(get_nearest_idx(vals, ch_axis_X))]
+                )
+            else:
+                # Must find if this channel is mixed:
+                if max([len(scipy.unique(p.X[:, axis])) for p in self.points[channel_idxs]]) > 1:
+                    if not reject_mixed:
+                        keep_points = scipy.append(keep_points, self.points[channel_idxs])
+                else:
+                    # If they aren't mixed, we can just take the column from the first row:
+                    keep_points = scipy.append(
+                        keep_points,
+                        self.points[channel_idxs][scipy.unique(
+                            get_nearest_idx(
+                                vals,
+                                scipy.asarray([
+                                    p.X[0, axis] for p in self.points[channel_idxs]
+                                ])
+                            )
+                        )]
+                    )
+        self.points = keep_points
     
-    def average_data(self, axis=0, ddof=1, robust=False, y_method='sample',
-                     X_method='sample', weighted=False):
+    def average_data(self, axis=0, **kwargs):
         """Computes the average of the profile over the desired axis.
         
         If `X_dim` is already 1, this returns the average of the quantity.
@@ -392,101 +631,24 @@ class Profile(object):
             from `y` are used to weight `X` so that the two sets are consistently
             weighted.
         """
-        # TODO: How to support T here?
-        # TODO: Add support for custom bins!
         if self.X_dim == 1:
             return scipy.mean(self.y)
-        allowed_methods = ['sample', 'RMS', 'total']
-        if y_method not in allowed_methods:
-            raise ValueError("Unsupported y_method '%s'!" % (y_method,))
-        if X_method not in allowed_methods:
-            raise ValueError("Unsupported X_method '%s'!" % (X_method,))
-        reduced_channels = scipy.delete(self.channels, axis, axis=1)
-        reduced_X = scipy.delete(self.X, axis, axis=1)
-        reduced_err_X = scipy.delete(self.err_X, axis, axis=1)
-        channels = unique_rows(reduced_channels)
-        X = scipy.zeros((len(channels), self.X_dim - 1))
-        y = scipy.zeros(len(channels))
-        err_X = scipy.zeros_like(X)
-        err_y = scipy.zeros_like(y)
-        for i, chan in zip(range(0, len(channels)), channels):
-            chan_mask = (
-                reduced_channels == chan.flatten()
-            ).all(axis=1)
-            # TODO: Catch channels with 0 to 1 members!
-            if not robust:
-                # Process y:
-                if weighted:
-                    weights = 1.0 / self.err_y[chan_mask]**2
-                    if scipy.isinf(weights).any() or scipy.isnan(weights).any():
-                        weights = None
-                        warnings.warn("Invalid weight, setting weights equal!")
-                else:
-                    weights = None
-                y[i] = meanw(self.y[chan_mask], weights=weights)
-                # If there is only one member, just carry its uncertainty forward:
-                if len(self.y[chan_mask]) == 1:
-                    err_y[i] = self.err_y[chan_mask]
-                elif y_method == 'sample':
-                    err_y[i] = stdw(self.y[chan_mask], weights=weights, ddof=ddof)
-                elif y_method == 'RMS':
-                    err_y[i] = scipy.sqrt(meanw((self.err_y[chan_mask])**2, weights=weights))
-                elif y_method == 'total':
-                    err_y[i] = scipy.sqrt(
-                        varw(self.y[chan_mask], weights=weights, ddof=ddof) +
-                        meanw((self.err_y[chan_mask])**2, weights=weights)
-                    )
-                
-                # Similar picture for X:
-                if weights is not None:
-                    weights = scipy.atleast_2d(weights).T
-                X[i, :] = meanw(reduced_X[chan_mask, :], weights=weights, axis=0)
-                if len(reduced_X[chan_mask, :]) == 1:
-                    err_X[i, :] = reduced_err_X[chan_mask, :]
-                elif X_method == 'sample':
-                    err_X[i, :] = stdw(reduced_X[chan_mask, :], weights=weights, ddof=ddof, axis=0)
-                elif X_method == 'RMS':
-                    err_X[i, :] = scipy.sqrt(meanw((reduced_err_X[chan_mask, :])**2, weights=weights))
-                elif X_method == 'total':
-                    err_X[i, :] = scipy.sqrt(
-                        varw(reduced_X[chan_mask, :], weights=weights, ddof=ddof) +
-                        meanw((reduced_err_X[chan_mask, :])**2, weights=weights)
-                    )
-            else:
-                # TODO: Handle weighting!
-                y[i] = scipy.median(self.y[chan_mask])
-                if len(self.y[chan_mask]) == 1:
-                    err_y[i] = self.err_y[chan_mask]
-                elif y_method == 'sample':
-                    err_y[i] = robust_std(self.y[chan_mask])
-                elif y_method == 'RMS':
-                    err_y[i] = scipy.sqrt(scipy.median((self.err_y[chan_mask])**2))
-                elif y_method == 'total':
-                    err_y[i] = scipy.sqrt(
-                        (robust_std(self.y[chan_mask]))**2 +
-                        scipy.median((self.err_y[chan_mask])**2)
-                    )
-                X[i, :] = scipy.median(reduced_X[chan_mask, :], axis=0)
-                if len(reduced_X[chan_mask, :]) == 1:
-                    err_X[i, :] = reduced_err_X[chan_mask, :]
-                elif X_method == 'sample':
-                    err_X[i, :] = robust_std(reduced_X[chan_mask, :], axis=0)
-                elif X_method == 'RMS':
-                    err_X[i, :] = scipy.sqrt(scipy.median((reduced_err_X[chan_mask, :])**2, axis=0))
-                elif X_method == 'total':
-                    err_X[i, :] = scipy.sqrt(
-                        (robust_std(reduced_X[chan_mask, :], axis=0))**2 +
-                        scipy.median((reduced_err_X[chan_mask, :])**2, axis=0)
-                    )
         
         self.X_dim -= 1
         self.X_units.pop(axis)
         self.X_labels.pop(axis)
-        self.X = X
-        self.y = y
-        self.err_X = err_X
-        self.err_y = err_y
-        self.channels = channels
+        
+        reduced_channels = scipy.delete(self.all_channels, axis, axis=1)
+        channels = unique_rows(reduced_channels)
+        new_points = []
+        for i, chan in zip(range(0, len(channels)), channels):
+            chan_mask = (
+                reduced_channels == chan.flatten()
+            ).all(axis=1)
+            
+            new_points += [average_points(self.points[chan_mask], axis, **kwargs)]
+        
+        self.points = scipy.asarray(new_points, dtype=Point)
     
     def plot_data(self, ax=None, label_axes=True, **kwargs):
         """Plot the data stored in this Profile. Only works for X_dim = 1 or 2.
@@ -527,7 +689,7 @@ class Profile(object):
             kwargs['fmt'] = 'o'
         
         if self.X_dim == 1:
-            ax.errorbar(self.X.flatten(), self.y,
+            ax.errorbar(self.X.ravel(), self.y,
                         yerr=self.err_y, xerr=self.err_X.flatten(),
                         **kwargs)
             if label_axes:
@@ -583,21 +745,10 @@ class Profile(object):
         err_y_bad : array
             Uncertainties on the bad values.
         """
-        # TODO: Add support for T here!
         idxs = ~conditional
-        
-        y_bad = self.y[conditional]
-        X_bad = self.X[conditional, :]
-        err_y_bad = self.err_y[conditional]
-        err_X_bad = self.err_X[conditional, :]
-        
-        self.y = self.y[idxs]
-        self.X = self.X[idxs, :]
-        self.err_y = self.err_y[idxs]
-        self.err_X = self.err_X[idxs, :]
-        self.channels = self.channels[idxs, :]
-        
-        return (X_bad, y_bad, err_X_bad, err_y_bad)
+        p_bad = self.points[conditional]
+        self.points = self.points[idxs]
+        return p_bad
     
     def remove_outliers(self, force_update=False, gp_kwargs={}, MAP_kwargs={},
                         **remove_kwargs):
@@ -640,17 +791,15 @@ class Profile(object):
         err_y_bad : array
             Uncertainties on the bad values.
         """
-        # TODO: How to support T here?
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not remove_kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         
         out = self.gp.remove_outliers(**remove_kwargs)
-        err_X_bad = self.err_X[out[4][:len(self.y)], :]
         # Chop bad_idxs down with the assumption that all constraints that are
         # not reflected in self.y are at the end:
-        return self.remove_points(out[4][:len(self.y)])
+        return self.remove_points(out[4][:len(self.points)])
     
     def remove_extreme_changes(self, thresh=10, logic='and'):
         """Removes points at which there is an extreme change.
@@ -676,17 +825,20 @@ class Profile(object):
             in a row. Default is 'and' (point must have a drastic change in both 
             directions to be rejected).
         """
-        # TODO: How to support T here?
         if self.X_dim != 1:
             raise NotImplementedError("Extreme change removal is not supported "
                                       "for X_dim = %d" % (self.X_dim,))
-        sort_idx = self.X.flatten().argsort()
-        y_sort = self.y[sort_idx]
-        err_y_sort = self.err_y[sort_idx]
+        X_ravel = self.all_X.ravel()
+        sort_idx = X_ravel.argsort()
+        y_sort = self.all_y[sort_idx]
+        err_y_sort = self.all_err_y[sort_idx]
         forward_diff = y_sort[:-1] - y_sort[1:]
         backward_diff = -forward_diff
         forward_diff = scipy.absolute(scipy.append(forward_diff, 0) / err_y_sort)
         backward_diff = scipy.absolute(scipy.insert(backward_diff, 0, 0) / err_y_sort)
+        # Any line-integrated quantities will not be checked:
+        forward_diff[scipy.isnan(X_ravel)] = 0
+        backward_diff[scipy.isnan(X_ravel)] = 0
         if logic == 'and':
             extreme_changes = (forward_diff >= thresh) & (backward_diff >= thresh)
         elif logic == 'or':
@@ -752,19 +904,23 @@ class Profile(object):
             All additional kwargs are passed to the constructor of
             :py:class:`gptools.GaussianProcess`.
         """
-        # TODO: Add support for T here!
+        # TODO: Add support for line-integrated quantities here!
         # TODO: Add better initial guesses/param_bounds!
         # TODO: Add handling for string kernels!
         # TODO: Create more powerful way of specifying mixed kernels!
+        # Save some time by only building these arrays once:
+        # Note that using this form only gets the non-transformed values.
+        y = self.y
+        X = self.X
         if isinstance(k, gptools.Kernel):
             # Skip to the end for pure kernel instances, no need to do all the
             # testing...
             pass
         elif k is None or k == 'SE':
-            y_range = self.y.max() - self.y.min()
+            y_range = y.max() - y.min()
             bounds = [(y_range / lower_factor, upper_factor * y_range)]
             for i in xrange(0, self.X_dim):
-                X_range = self.X[:, i].max() - self.X[:, i].min()
+                X_range = X[:, i].max() - X[:, i].min()
                 bounds.append((X_range / lower_factor,
                                upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
@@ -775,14 +931,14 @@ class Profile(object):
         elif k == 'gibbstanh':
             if self.X_dim != 1:
                 raise ValueError('Gibbs kernel is only supported for univariate data!')
-            y_range = self.y.max() - self.y.min()
+            y_range = y.max() - y.min()
             sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
-            X_range = self.X[:, 0].max() - self.X[:, 0].min()
+            X_range = X[:, 0].max() - X[:, 0].min()
             l1_bounds = (X_range / lower_factor, upper_factor * X_range)
             l2_bounds = (10 * sys.float_info.epsilon, l1_bounds[1])
             lw_bounds = (l2_bounds[0], l1_bounds[1] / 50.0)
             if x0_bounds is None:
-                x0_bounds = (self.X[:, 0].min(), self.X[:, 0].max())
+                x0_bounds = (X[:, 0].min(), X[:, 0].max())
             bounds = [sigma_f_bounds, l1_bounds, l2_bounds, lw_bounds, x0_bounds]
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
             initial[2] = initial[2] / 2
@@ -792,13 +948,13 @@ class Profile(object):
         elif k == 'gibbsdoubletanh':
             if self.X_dim != 1:
                 raise ValueError('Gibbs kernel is only supported for univariate data!')
-            y_range = self.y.max() - self.y.min()
+            y_range = y.max() - y.min()
             sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
-            X_range = self.X[:, 0].max() - self.X[:, 0].min()
+            X_range = X[:, 0].max() - X[:, 0].min()
             lcore_bounds = (10 * sys.float_info.epsilon, upper_factor * X_range)
             la_bounds = (10 * sys.float_info.epsilon, lcore_bounds[1] / 50.0)
             if x0_bounds is None:
-                x0_bounds = (self.X[:, 0].min(), self.X[:, 0].max())
+                x0_bounds = (X[:, 0].min(), X[:, 0].max())
             bounds = [
                 sigma_f_bounds,
                 lcore_bounds,
@@ -816,11 +972,11 @@ class Profile(object):
                 **k_kwargs
             )
         elif k == 'RQ':
-            y_range = self.y.max() - self.y.min()
+            y_range = y.max() - y.min()
             bounds = [(y_range / lower_factor, upper_factor * y_range),
                       (10 * sys.float_info.epsilon, 1e2)]
             for i in xrange(0, self.X_dim):
-                X_range = self.X[:, i].max() - self.X[:, i].min()
+                X_range = X[:, i].max() - X[:, i].min()
                 bounds.append((X_range / lower_factor,
                                upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
@@ -834,10 +990,10 @@ class Profile(object):
         elif k == 'SEsym1d':
             if self.X_dim != 1:
                 raise ValueError("Symmetric SE kernel only supported for univariate data!")
-            y_range = self.y.max() - self.y.min()
+            y_range = y.max() - y.min()
             bounds = [(y_range / lower_factor, upper_factor * y_range)]
             for i in xrange(0, self.X_dim):
-                X_range = self.X[:, i].max() - self.X[:, i].min()
+                X_range = X[:, i].max() - X[:, i].min()
                 bounds.append((X_range / lower_factor,
                                upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
@@ -849,11 +1005,11 @@ class Profile(object):
             kM2 = gptools.MaskedKernel(k_base, mask=[0], total_dim=1, scale=[-1, 1])
             k = kM1 + kM2
         elif k == 'matern':
-            y_range = self.y.max() - self.y.min()
+            y_range = y.max() - y.min()
             bounds = [(y_range / lower_factor, upper_factor * y_range),
                       (0.51, 1e2)]
             for i in xrange(0, self.X_dim):
-                X_range = self.X[:, i].max() - self.X[:, i].min()
+                X_range = X[:, i].max() - X[:, i].min()
                 bounds.append((X_range / lower_factor,
                                upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
@@ -864,7 +1020,7 @@ class Profile(object):
         elif isinstance(k, str):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
-        self.gp.add_data(self.X, self.y, err_y=self.err_y)
+        self.gp.add_data(X, y, err_y=self.err_y)
     
     def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):
         """Find the MAP estimate for the hyperparameters of the Profile's Gaussian process.
@@ -996,6 +1152,14 @@ class Profile(object):
         """
         # TODO: Add support for T!
         # TODO: Add metadata (probably in CMod...)!
+        
+        # Only build these arrays once to save a bit of time:
+        # Note that this form does not write any of the transformed quantities!
+        X = self.X
+        err_X = self.err_X
+        y = self.y
+        err_y = self.err_y
+        
         filename = os.path.expanduser(filename)
         with open(filename, 'wb') as outfile:
             writer = csv.writer(outfile)
@@ -1005,9 +1169,9 @@ class Profile(object):
                             [self.y_label + ' [' + self.y_units + ']'] +
                             ['err_' + self.y_label])
             for k in xrange(0, len(self.y)):
-                writer.writerow([x for x in self.X[k, :]] +
-                                [x for x in self.err_X[k, :]] +
-                                [self.y[k], self.err_y[k]])
+                writer.writerow(
+                    [x for x in X[k, :]] + [x for x in err_X[k, :]] + [y[k], err_y[k]]
+                )
     
 def read_csv(filename, X_names=None, y_name=None, metadata_lines=None):
     """Reads a CSV file into a :py:class:`Profile`.
