@@ -62,15 +62,16 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
     if p.T is not None:
         T = scipy.vstack(T)
     
+    if weighted:
+        weights = 1.0 / err_y**2
+        if scipy.isinf(weights).any() or scipy.isnan(weights).any():
+            weights = None
+            warnings.warn("Invalid weight, setting weights equal!")
+    else:
+        weights = None
+    
     if not robust:
         # Process y:
-        if weighted:
-            weights = 1.0 / err_y**2
-            if scipy.isinf(weights).any() or scipy.isnan(weights).any():
-                weights = None
-                warnings.warn("Invalid weight, setting weights equal!")
-        else:
-            weights = None
         mean_y = meanw(y, weights=weights)
         # If there is only one member, just carry its uncertainty forward:
         if len(y) == 1:
@@ -127,41 +128,52 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
         else:
             T = None
     else:
-        # TODO: Handle weighting!
-        mean_y = scipy.median(y)
+        mean_y = medianw(y, weights=weights)
         if len(y) == 1:
             err_y = err_y[0]
         elif y_method == 'sample':
-            err_y = robust_std(y)
+            err_y = robust_stdw(y, weights=weights)
         elif y_method == 'RMS':
-            err_y = scipy.sqrt(scipy.median(err_y**2))
+            err_y = scipy.sqrt(medianw(err_y**2, weights=weights))
         elif y_method == 'total':
-            err_y = scipy.sqrt((robust_std(y))**2 + scipy.median(err_y**2))
+            err_y = scipy.sqrt((robust_stdw(y, weights=weights))**2 + medianw(err_y**2, weights=weights))
         elif y_method == 'of mean':
             # TODO: This is a very sketchy approximation!
-            err_y = scipy.sqrt((err_y**2).sum()) / len(err_y)
+            if weighted:
+                err_y = scipy.sqrt((weights**2 * err_y**2).sum()) / weights.sum()
+            else:
+                err_y = scipy.sqrt((err_y**2).sum()) / len(y)
         elif y_method == 'of mean sample':
-            err_y = robust_std(y) / scipy.sqrt(len(y))
+            if weighted:
+                err_y = scipy.sqrt((weights**2).sum()) * robust_stdw(y, weights=weights) / weights.sum()
+            else:
+                err_y = robust_std(y) / scipy.sqrt(len(y))
         
         mean_X = scipy.median(X, axis=0)
         if len(y) == 1:
             err_X = err_X[0]
         elif X_method == 'sample':
-            err_X = robust_std(X, axis=0)
+            err_X = robust_stdw(X, weights=weights, axis=0)
         elif X_method == 'RMS':
-            err_X = scipy.sqrt(scipy.median(err_X**2, axis=0))
+            err_X = scipy.sqrt(medianw(err_X**2, weights=weights, axis=0))
         elif X_method == 'total':
             err_X = scipy.sqrt(
-                (robust_std(X, axis=0))**2 +
+                (robust_stdw(X, weights=weights, axis=0))**2 +
                 scipy.median(err_X**2, axis=0)
             )
         elif X_method == 'of mean':
-            err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(err_X)
+            if weighted:
+                err_X = scipy.sqrt((weights**2 * err_X**2).sum(axis=0)) / weights.sum()
+            else:
+                err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(y)
         elif X_method == 'of mean sample':
-            err_X = robust_std(X, axis=0) / scipy.sqrt(len(y))
+            if weighted:
+                err_X = scipy.sqrt((weights**2).sum()) * robust_stdw(X, weights=weights, ddof=ddof, axis=0) / weights.sum()
+            else:
+                err_X = robust_stdw(X, weights=weights, axis=0) / scipy.sqrt(len(y))
         
         if points[0].T is not None:
-            T = scipy.median(T, axis=0)
+            T = medianw(T, weights=weights, axis=0)
         else:
             T = None
     
@@ -1537,28 +1549,6 @@ class RejectionFunc(object):
         else:
             return True
 
-# Conversion factor to get from interquartile range to standard deviation:
-IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
-
-def robust_std(y, axis=None):
-    r"""Computes the robust standard deviation of the given data.
-    
-    This is defined as :math:`IQR/(2\Phi^{-1}(0.75))`, where :math:`IQR` is the
-    interquartile range and :math:`\Phi` is the inverse CDF of the standard
-    normal. This is an approximation based on the assumption that the data are
-    Gaussian, and will have the effect of diminishing the effect of outliers.
-    
-    Parameters
-    ----------
-    y : array-like
-        The data to find the robust standard deviation of.
-    axis : int, optional
-        The axis to find the standard deviation along. Default is None (find
-        from whole data set).
-    """
-    return (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
-     scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD
-
 def leading_axis_product(w, x):
     return scipy.einsum('i...,i...->i...', w, x)
 
@@ -1671,23 +1661,88 @@ def stdw(*args, **kwargs):
     """
     return scipy.sqrt(varw(*args, **kwargs))
 
-def scoreatpercentilew(x, p, weights=None, axis=None):
-    # TODO: Vectorize this!
-    if weights is None:
-        return scipy.stats.scoreatpercentile(x, p, axis=axis)
-    else:
-        x = scipy.asarray(x)
-        weights = scipy.asarray(weights)
-        
-        srt = x.argsort()
-        x = x[srt]
-        w = weights[srt]
-    
-        Sn = w.cumsum()
-        pn = 100.0 / Sn[-1] * (Sn - w / 2.0)
-        k = scipy.digitize(scipy.atleast_1d(p), pn) - 1
-        return x[k] + (p - pn[k]) / (pn[k + 1] - pn[k]) * (x[k + 1] - x[k])
-        # TODO: This returns an array for a scalar input!
+# Conversion factor to get from interquartile range to standard deviation:
+IQR_TO_STD = 2.0 * scipy.stats.norm.isf(0.25)
 
-# TODO: Write medianw!
-# TODO: Write robust_stdw!
+def robust_std(y, axis=None):
+    r"""Computes the robust standard deviation of the given data.
+    
+    This is defined as :math:`IQR/(2\Phi^{-1}(0.75))`, where :math:`IQR` is the
+    interquartile range and :math:`\Phi` is the inverse CDF of the standard
+    normal. This is an approximation based on the assumption that the data are
+    Gaussian, and will have the effect of diminishing the effect of outliers.
+    
+    Parameters
+    ----------
+    y : array-like
+        The data to find the robust standard deviation of.
+    axis : int, optional
+        The axis to find the standard deviation along. Default is None (find
+        from whole data set).
+    """
+    return (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
+            scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD
+
+def scoreatpercentilew(x, p, weights):
+    # TODO: Vectorize this!
+    x = scipy.asarray(x)
+    weights = scipy.asarray(weights)
+    
+    srt = x.argsort()
+    x = x[srt]
+    w = weights[srt]
+    
+    Sn = w.cumsum()
+    pn = 100.0 / Sn[-1] * (Sn - w / 2.0)
+    k = scipy.digitize(scipy.atleast_1d(p), pn) - 1
+    return x[k] + (p - pn[k]) / (pn[k + 1] - pn[k]) * (x[k + 1] - x[k])
+    # TODO: This returns an array for a scalar input!
+
+def medianw(x, weights=None, axis=None):
+    # TODO: This could be done a whole lot better!
+    if weights is None:
+        return scipy.median(x, axis=axis)
+    else:
+        if axis is None and x.ndim == 1:
+            return scoreatpercentilew(x, 50, weights)[0]
+        elif axis == 0 and x.ndim == 3:
+            out = scipy.zeros_like(x[0])
+            for i in xrange(0, out.shape[0]):
+                for j in xrange(0, out.shape[1]):
+                    out[i, j] = scoreatpercentilew(x[:, i, j], 50, weights)
+            return out
+        elif axis == 0 and x.ndim == 2:
+            out = scipy.zeros(x.shape[1])
+            for i in xrange(0, len(out)):
+                out[i] = scoreatpercentilew(x[:, i], 50, weights)
+            return out
+        else:
+            raise NotImplementedError("That shape/axis is not supported!")
+
+def robust_stdw(x, weights=None, axis=None):
+    # TODO: This could be done a whole lot better!
+    if weights is None:
+        return robust_std(x, axis=axis)
+    else:
+        if axis is None and x.ndim == 1:
+            lq, uq = scoreatpercentilew(x, [25, 75], weights)
+            return (uq - lq) / IQR_TO_STD
+        elif axis == 0 and x.ndim == 3:
+            lq = scipy.zeros_like(x[0])
+            uq = scipy.zeros_like(x[0])
+            for i in xrange(0, lq.shape[0]):
+                for j in xrange(0, lq.shape[1]):
+                    lqij, uqij = scoreatpercentilew(x[:, i, j], [25, 75], weights)
+                    lq[i, j] = lqij
+                    uq[i, j] = uqij
+            return (uq - lq) / IQR_TO_STD
+        elif axis == 0 and x.ndim == 2:
+            lq = scipy.atleast_1d(scipy.zeros(x.shape[1]))
+            uq = scipy.atleast_1d(scipy.zeros(x.shape[1]))
+            for i in xrange(0, len(lq)):
+                lqi, uqi = scoreatpercentilew(x[:, i], [25, 75], weights)
+                lq[i] = lqi
+                uq[i] = uqi
+            return (uq - lq) / IQR_TO_STD
+        else:
+            raise NotImplementedError("That shape/axis is not supported!")

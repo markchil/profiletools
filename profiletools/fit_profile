@@ -245,7 +245,9 @@ parser.add_argument('--core-only',
 parser.add_argument('--robust',
                     action='store_true',
                     help="Set this flag to use robust estimators (median, IQR) "
-                         "when performing time-averages.")
+                         "when performing time-averages. Note that using robust "
+                         "weighted estimators will not work for small numbers of "
+                         "data points.")
 parser.add_argument('--uncertainty-method',
                     choices=['sample', 'RMS', 'total', 'of_mean', 'of_mean_sample'],
                     default='sample',
@@ -264,10 +266,12 @@ parser.add_argument('--uncertainty-method',
                          "means/variances. "
                          "* of_mean uses the uncertainty in the mean using the "
                          "individual error bars on the points, and is only "
-                         "appropriate if the data are steady in time."
+                         "appropriate if the data are steady in time. It is very "
+                         "questionable to use this with robust estimators."
                          "* of_mean_sample uses the uncertainty in the mean "
                          "using the sample standard deviation, and is only "
-                         "appropriate if the data are steady in time.")
+                         "appropriate if the data are steady in time. It is very "
+                         "questionable to use this with robust estimators.")
 parser.add_argument('--all-points', '--no-average',
                     action='store_true',
                     help="Set this flag to keep all points from the time window "
@@ -277,7 +281,9 @@ parser.add_argument('--all-points', '--no-average',
 parser.add_argument('--weighted',
                     action='store_true',
                     help="Set this flag to use weighted estimators when averaging "
-                         "the data. The weights used are 1/sigma_i^2.")
+                         "the data. The weights used are 1/sigma_i^2. Note that "
+                         "using robust weighted estimators will not work for "
+                         "small numbers of data points.")
 parser.add_argument('--change-threshold',
                     type=float,
                     help="If provided, any points whose differences with respect "
