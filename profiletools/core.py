@@ -35,9 +35,7 @@ import re
 def average_points(points, axis, ddof=1, robust=False, y_method='sample',
                    X_method='sample', weighted=False):
     # TODO: Add support for custom bins!
-    # TODO: Weighted averaging over X won't work right with transformed data!
-    # TODO: The handling of uncertainty in the mean is questionable at best!
-    allowed_methods = ['sample', 'RMS', 'total', 'of mean']
+    allowed_methods = ['sample', 'RMS', 'total', 'of mean', 'of mean sample']
     if y_method not in allowed_methods:
         raise ValueError("Unsupported y_method '%s'!" % (y_method,))
     if X_method not in allowed_methods:
@@ -54,12 +52,15 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
         # Eliminate the dimension being averaged over:
         X += [scipy.delete(p.X, axis, axis=1)]
         err_X += [scipy.delete(p.err_X, axis, axis=1)]
-        T += [p.T]
+        if p.T is not None:
+            T += [p.T]
     
     y = scipy.asarray(y)
     err_y = scipy.asarray(err_y)
     X = scipy.asarray(X)
     err_X = scipy.asarray(err_X)
+    if p.T is not None:
+        T = scipy.vstack(T)
     
     if not robust:
         # Process y:
@@ -87,10 +88,14 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
             if weighted:
                 err_y = scipy.sqrt((weights**2 * err_y**2).sum()) / weights.sum()
             else:
-                err_y = scipy.sqrt((err_y**2).sum()) / len(err_y)
+                err_y = scipy.sqrt((err_y**2).sum()) / len(y)
+        elif y_method == 'of mean sample':
+            if weighted:
+                err_y = scipy.sqrt((weights**2).sum()) * stdw(y, weights=weights, ddof=ddof) / weights.sum()
+            else:
+                err_y = stdw(y, weights=weights, ddof=ddof) / scipy.sqrt(len(y))
         
         # Similar picture for X:
-        # TODO: This does not work right for transformed things!
         if weights is not None:
             weights = scipy.atleast_2d(weights).T
         mean_X = meanw(X, weights=weights, axis=0)
@@ -109,10 +114,15 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
             if weighted:
                 err_X = scipy.sqrt((weights**2 * err_X**2).sum(axis=0)) / weights.sum()
             else:
-                err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(err_X)
+                err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(y)
+        elif X_method == 'of mean sample':
+            if weighted:
+                err_X = scipy.sqrt((weights**2).sum()) * stdw(X, weights=weights, ddof=ddof, axis=0) / weights.sum()
+            else:
+                err_X = stdw(X, weights=weights, ddof=ddof, axis=0) / scipy.sqrt(len(y))
         
         # And again for T:
-        if T[0] is not None:
+        if points[0].T is not None:
             T = meanw(T, weights=weights, axis=0)
         else:
             T = None
@@ -130,6 +140,8 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
         elif y_method == 'of mean':
             # TODO: This is a very sketchy approximation!
             err_y = scipy.sqrt((err_y**2).sum()) / len(err_y)
+        elif y_method == 'of mean sample':
+            err_y = robust_std(y) / scipy.sqrt(len(y))
         
         mean_X = scipy.median(X, axis=0)
         if len(y) == 1:
@@ -145,8 +157,10 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
             )
         elif X_method == 'of mean':
             err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(err_X)
+        elif X_method == 'of mean sample':
+            err_X = robust_std(X, axis=0) / scipy.sqrt(len(y))
         
-        if T[0] is not None:
+        if points[0].T is not None:
             T = scipy.median(T, axis=0)
         else:
             T = None
@@ -175,9 +189,9 @@ class Point(object):
         if T is None:
             self.T = T
         else:
-            self.T = scipy.atleast_2d(scipy.asarray(T, dtype=float))
-            if self.T.shape != (1, self.X.shape[0]):
-                raise ValueError("Shape of T must be 1 by the number of entries in X!")
+            self.T = scipy.asarray(T, dtype=float)
+            if self.T.shape != (self.X.shape[0],):
+                raise ValueError("T must be 1d and have length equal to the number of entries in X!")
         if channel is None:
             self.channel = self.X[0, :]
         else:
@@ -932,8 +946,6 @@ class Profile(object):
             :py:class:`gptools.GaussianProcess`.
         """
         # TODO: Add support for line-integrated quantities here!
-        # TODO: Add better initial guesses/param_bounds!
-        # TODO: Add handling for string kernels!
         # TODO: Create more powerful way of specifying mixed kernels!
         # Save some time by only building these arrays once:
         # Note that using this form only gets the non-transformed values.
@@ -1547,6 +1559,9 @@ def robust_std(y, axis=None):
     return (scipy.stats.scoreatpercentile(y, 75.0, axis=axis) -
      scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD
 
+def leading_axis_product(w, x):
+    return scipy.einsum('i...,i...->i...', w, x)
+
 def meanw(x, weights=None, axis=None):
     r"""Weighted mean of data.
     
@@ -1571,7 +1586,7 @@ def meanw(x, weights=None, axis=None):
     else:
         x = scipy.asarray(x)
         weights = scipy.asarray(weights)
-        return (weights * x).sum(axis=axis) / weights.sum(axis=axis)
+        return leading_axis_product(weights, x).sum(axis=axis) / weights.sum(axis=axis)
 
 def varw(x, weights=None, axis=None, ddof=1, mean=None):
     r"""Weighted variance of data.
@@ -1612,7 +1627,7 @@ def varw(x, weights=None, axis=None, ddof=1, mean=None):
         else:
             mean = scipy.asarray(mean)
         V1 = weights.sum(axis=axis)
-        M = (weights * (x - mean)**2).sum(axis=axis)
+        M = leading_axis_product(weights, (x - mean)**2).sum(axis=axis)
         if ddof:
             res = V1 / (V1**2 - (weights**2).sum(axis=axis)) * M
             # Put nan where the result blow up to be consistent with scipy:

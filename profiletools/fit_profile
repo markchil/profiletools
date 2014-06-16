@@ -88,11 +88,6 @@ hyperparameters walked the minimizer into a bad state. At the end of the
 optimization you will be told how many starts were accepted. Try to increase
 --random-starts and/or adjust --bounds until this number is at least 4.
 
-Note that, at this point, the program only supports handling of the
-hyperparameters through MAP estimation. This is usually sufficient for the value
-in the core, but is NOT sufficient for getting uncertainties on gradients (even
-in the core) or detailed information on the edge.
-
 READING FROM FILES:
 
 The support for reading data from NetCDF and CSV files is fairly powerful. With
@@ -104,9 +99,10 @@ smart enough to figure out your column names, as long as you put the time column
 first when using data you haven't time-averaged yet. In either type of file you
 can include the metadata needed to apply core/edge constraints. For CSV files,
 start the file with as many lines needed of the form "name data" or
-"name data,data,..." Be sure to specify --metadata-lines when doing this! For
-NetCDF files, simply place the metadata in the appropriate attributes of the
-file. The supported metadata are:
+"name data,data,..." Be sure to either make the first line be "metadata N" where
+N is the number of metadata lines used or specify --metadata-lines when doing
+this! For NetCDF files, simply place the metadata in the appropriate attributes
+of the file. The supported metadata are:
 
         ========== =======================================================
         shot       shot number
@@ -146,6 +142,7 @@ parser.add_argument('--t-max',
                          "when applying constraints.")
 parser.add_argument('-t', '--t-points',
                     type=float,
+                    metavar='T_POINT',
                     nargs='+',
                     help="Individual time values to use. The nearest time to "
                          "each will be selected for each channel. You can use "
@@ -168,6 +165,7 @@ parser.add_argument('--x-max',
                          "the fit at.")
 parser.add_argument('--x-pts',
                     type=float,
+                    metavar='X_PT',
                     nargs='+',
                     help="Discrete points to evaluate the fit at. If present, "
                          "this overrides the effect of npts, x-min and x-max.")
@@ -224,12 +222,14 @@ parser.add_argument('--no-edge-constraint',
                          "at/outside the GH limiter.")
 parser.add_argument('--core-constraint-location',
                     type=float,
+                    metavar='LOC',
                     help="Location to impose slope=0 constraint at. Typically "
                          "this is the magnetic axis. If you specify a shot "
                          "number and times then this will be found automatically, "
                          "but you can override it with this flag.")
 parser.add_argument('--edge-constraint-locations',
                     type=float,
+                    metavar='LOC',
                     nargs='+',
                     help="Location to impose slope~0, value~0 constraints at. "
                          "Typically this is at the location of the GH limiter. "
@@ -247,18 +247,27 @@ parser.add_argument('--robust',
                     help="Set this flag to use robust estimators (median, IQR) "
                          "when performing time-averages.")
 parser.add_argument('--uncertainty-method',
-                    choices=['sample', 'RMS', 'total'],
+                    choices=['sample', 'RMS', 'total', 'of_mean', 'of_mean_sample'],
                     default='sample',
                     help="Method by which the uncertainty should be propagated "
-                         "when time-averaging. sample will take the sample "
-                         "standard deviation, and is usually appropriate for "
-                         "cases where you have many points to average over. "
-                         "RMS uses the root-mean-square standard deviation, and "
-                         "is appropriate for small sample sizes. total uses the "
-                         "law of total variance which is the square root of the "
-                         "sum of the mean square uncertainty and sample variance. "
-                         "This is appropriate when the given points already "
-                         "represent actual sample means/variances.")
+                         "when time-averaging. "
+                         "* sample will take the sample standard deviation, and "
+                         "is usually appropriate for cases where you have many "
+                         "points to average over and the data are not completely "
+                         "stationary in time. "
+                         "* RMS uses the root-mean-square standard deviation, "
+                         "and is appropriate for small sample sizes. "
+                         "* total uses the law of total variance which is the "
+                         "square root of the sum of the mean square uncertainty "
+                         "and sample variance. This is appropriate when the "
+                         "given points already represent actual sample "
+                         "means/variances. "
+                         "* of_mean uses the uncertainty in the mean using the "
+                         "individual error bars on the points, and is only "
+                         "appropriate if the data are steady in time."
+                         "* of_mean_sample uses the uncertainty in the mean "
+                         "using the sample standard deviation, and is only "
+                         "appropriate if the data are steady in time.")
 parser.add_argument('--all-points', '--no-average',
                     action='store_true',
                     help="Set this flag to keep all points from the time window "
@@ -331,8 +340,10 @@ parser.add_argument('--walkers',
                          "a time.")
 parser.add_argument('--MCMC-samp',
                     type=int,
-                    default=500,
-                    help="The number of samples to take with each walker.")
+                    default=100,
+                    help="The number of samples to take with each walker. 100 is "
+                         "a good number to get a look at the sample space and "
+                         "dial in the bounds.")
 parser.add_argument('--burn',
                     type=int,
                     default=100,
@@ -794,7 +805,7 @@ class TimeWindowFrame(tk.Frame):
 
 class MethodFrame(tk.Frame):
     METHOD_OPTIONS = ['conventional', 'robust', 'all points']
-    ERROR_METHOD_OPTIONS = ['sample', 'RMS', 'total', 'of mean']
+    ERROR_METHOD_OPTIONS = ['sample', 'RMS', 'total', 'of mean', 'of mean sample']
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
         tk.Frame.__init__(self, *args, **kwargs)
@@ -1134,7 +1145,7 @@ class MCMCFrame(tk.Frame):
         self.sample_label = tk.Label(self, text="samples:")
         self.sample_label.grid(row=0, column=2, sticky='E')
         self.sample_box = tk.Entry(self, width=4)
-        self.sample_box.insert(tk.END, '500')
+        self.sample_box.insert(tk.END, '100')
         self.sample_box.grid(row=0, column=3, sticky='EW')
         
         self.burn_label = tk.Label(self, text="burn:")
@@ -3013,7 +3024,7 @@ if __name__ == "__main__":
         root.control_frame.averaging_frame.method_frame.method_var.set('robust')
     if args.all_points:
         root.control_frame.averaging_frame.method_frame.method_var.set('all points')
-    root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method)
+    root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method.replace('_', ' '))
     root.control_frame.averaging_frame.method_frame.update_method(
         root.control_frame.averaging_frame.method_frame.method_var.get()
     )
