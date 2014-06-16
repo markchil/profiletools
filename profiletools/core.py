@@ -35,7 +35,9 @@ import re
 def average_points(points, axis, ddof=1, robust=False, y_method='sample',
                    X_method='sample', weighted=False):
     # TODO: Add support for custom bins!
-    allowed_methods = ['sample', 'RMS', 'total']
+    # TODO: Weighted averaging over X won't work right with transformed data!
+    # TODO: The handling of uncertainty in the mean is questionable at best!
+    allowed_methods = ['sample', 'RMS', 'total', 'of mean']
     if y_method not in allowed_methods:
         raise ValueError("Unsupported y_method '%s'!" % (y_method,))
     if X_method not in allowed_methods:
@@ -53,6 +55,11 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
         X += [scipy.delete(p.X, axis, axis=1)]
         err_X += [scipy.delete(p.err_X, axis, axis=1)]
         T += [p.T]
+    
+    y = scipy.asarray(y)
+    err_y = scipy.asarray(err_y)
+    X = scipy.asarray(X)
+    err_X = scipy.asarray(err_X)
     
     if not robust:
         # Process y:
@@ -76,8 +83,14 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
                 varw(y, weights=weights, ddof=ddof) +
                 meanw(err_y**2, weights=weights)
             )
+        elif y_method == 'of mean':
+            if weighted:
+                err_y = scipy.sqrt((weights**2 * err_y**2).sum()) / weights.sum()
+            else:
+                err_y = scipy.sqrt((err_y**2).sum()) / len(err_y)
         
         # Similar picture for X:
+        # TODO: This does not work right for transformed things!
         if weights is not None:
             weights = scipy.atleast_2d(weights).T
         mean_X = meanw(X, weights=weights, axis=0)
@@ -92,6 +105,11 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
                 varw(X, weights=weights, ddof=ddof, axis=0) +
                 meanw(err_X**2, weights=weights, axis=0)
             )
+        elif X_method == 'of mean':
+            if weighted:
+                err_X = scipy.sqrt((weights**2 * err_X**2).sum(axis=0)) / weights.sum()
+            else:
+                err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(err_X)
         
         # And again for T:
         if T[0] is not None:
@@ -109,6 +127,10 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
             err_y = scipy.sqrt(scipy.median(err_y**2))
         elif y_method == 'total':
             err_y = scipy.sqrt((robust_std(y))**2 + scipy.median(err_y**2))
+        elif y_method == 'of mean':
+            # TODO: This is a very sketchy approximation!
+            err_y = scipy.sqrt((err_y**2).sum()) / len(err_y)
+        
         mean_X = scipy.median(X, axis=0)
         if len(y) == 1:
             err_X = err_X[0]
@@ -121,6 +143,9 @@ def average_points(points, axis, ddof=1, robust=False, y_method='sample',
                 (robust_std(X, axis=0))**2 +
                 scipy.median(err_X**2, axis=0)
             )
+        elif X_method == 'of mean':
+            err_X = scipy.sqrt((err_X**2).sum(axis=0)) / len(err_X)
+        
         if T[0] is not None:
             T = scipy.median(T, axis=0)
         else:
@@ -286,9 +311,9 @@ class Profile(object):
     @property
     def X_assoc(self):
         res = []
-        for k in xrange(0, self.points):
+        for k in xrange(0, len(self.points)):
             res.extend([k] * self.points[k].X.shape[0])
-        return res
+        return scipy.asarray(res, dtype=int)
     
     @property
     def all_X(self):
@@ -535,7 +560,7 @@ class Profile(object):
         self.X_dim -= 1
         
         for p in self.points:
-            p.channel = scipy.delete(p.channel, axis, axis=1)
+            p.channel = scipy.delete(p.channel, axis)
             p.X = scipy.delete(p.X, axis, axis=1)
             p.err_X = scipy.delete(p.err_X, axis, axis=1)
         
@@ -799,6 +824,8 @@ class Profile(object):
         out = self.gp.remove_outliers(**remove_kwargs)
         # Chop bad_idxs down with the assumption that all constraints that are
         # not reflected in self.y are at the end:
+        # TODO: Make sure that the implementation of transformed data in gptools
+        # preserves the ordering here!
         return self.remove_points(out[4][:len(self.points)])
     
     def remove_extreme_changes(self, thresh=10, logic='and'):

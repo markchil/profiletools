@@ -101,7 +101,6 @@ class BivariatePlasmaProfile(Profile):
                 err_new_rho = err_X[:, 0] / (2 * scipy.sqrt(X[:, 0]))
             else:
                 times = self._get_efit_times_to_average()
-            
                 if self.abscissa == 'RZ':
                     new_rhos = self.efit_tree.rz2rho(
                         new_abscissa,
@@ -114,7 +113,9 @@ class BivariatePlasmaProfile(Profile):
                     self.X_units.pop(1)
                     self.X_dim = 1
                     for p in self.points:
-                        p.channel = p.channel[:1]
+                        p.channel = p.channel[0]
+                        p.X = p.X[:, :1]
+                        p.err_X = p.err_X[:, :1]
                 else:
                     new_rhos = self.efit_tree.rho2rho(
                         self.abscissa,
@@ -151,6 +152,8 @@ class BivariatePlasmaProfile(Profile):
                                                 each_t=False)
                 for p in self.points:
                     p.channel = p.channel[:2]
+                    p.X = p.X[:, :2]
+                    p.err_X = p.err_X[:, :2]
                 self.X_labels.pop(2)
                 self.X_units.pop(2)
                 self.X_dim = 2
@@ -173,26 +176,28 @@ class BivariatePlasmaProfile(Profile):
             self.X_units[1] = _X_unit_mapping[new_abscissa]
         self.abscissa = new_abscissa
         if drop_nan:
-            # TODO: Update this!
-            self.remove_points(scipy.isnan(self.X).any(axis=1))
-
+            nan_idxs = scipy.unique(assoc[scipy.isnan(self.every_X).any(axis=1)])
+            mask = scipy.zeros(len(self.points), dtype=bool)
+            mask[nan_idxs] = True
+            self.remove_points(mask)
+    
     def time_average(self, **kwargs):
         """Compute the time average of the quantity.
-
+        
         Stores the original bounds of `t` to `self.t_min` and `self.t_max`.
-
+        
         All parameters are passed to :py:meth:`average_data`.
         """
-        self.t_min = self.X[:, 0].min()
-        self.t_max = self.X[:, 0].max()
-        # if self.abscissa == 'RZ':
-        #     self.drop_axis(1)
+        X = self.X
+        self.t_min = X[:, 0].min()
+        self.t_max = X[:, 0].max()
         self.average_data(axis=0, **kwargs)
     
     def drop_axis(self, axis):
         if self.X_labels[axis] == '$t$':
-            self.t_min = self.X[:, 0].min()
-            self.t_max = self.X[:, 0].max()
+            X = self.X
+            self.t_min = X[:, 0].min()
+            self.t_max = X[:, 0].max()
         super(BivariatePlasmaProfile, self).drop_axis(axis)
     
     def keep_times(self, times):
@@ -207,7 +212,7 @@ class BivariatePlasmaProfile(Profile):
     
     def add_profile(self, other):
         """Absorbs the data from one profile object.
-
+        
         Parameters
         ----------
         other : :py:class:`Profile`
@@ -222,10 +227,10 @@ class BivariatePlasmaProfile(Profile):
         super(BivariatePlasmaProfile, self).add_profile(other)
         if self.y_label != other.y_label:
             self.y_label = self.y_label.split(', ')[0]
-
+    
     def remove_edge_points(self, allow_conversion=True):
-        """Removes points that are outside the LCFS, including those with NaN for the radial coordinate.
-
+        """Removes points that are outside the LCFS.
+        
         Must be called when the abscissa is a normalized coordinate. Assumes
         that the last column of `self.X` is space: so it will do the wrong
         thing if you have already taken an average along space.
@@ -237,7 +242,6 @@ class BivariatePlasmaProfile(Profile):
             converted to psinorm and the points will be dropped. Default is True
             (allow conversion).
         """
-        # TODO: This needs a lot more work!
         if self.abscissa == 'RZ':
             if allow_conversion:
                 warnings.warn("Removal of edge points not supported with abscissa RZ. Will convert to psinorm.")
@@ -248,24 +252,17 @@ class BivariatePlasmaProfile(Profile):
             x_out = 1.0
         elif self.abscissa == 'Rmid':
             if self.X_dim == 1:
-                if hasattr(self, 'times'):
-                    x_out = scipy.mean(self.efit_tree.getRmidOutSpline()(self.times))
-                else:
-                    t_EFIT = self.efit_tree.getTimeBase()
-                    
-                    if self.t_min != self.t_max:
-                        t_EFIT = t_EFIT[(t_EFIT >= self.t_min) & (t_EFIT <= self.t_max)]
-                    else:
-                        idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
-                        t_EFIT = t_EFIT[idx]
-                    x_out = scipy.mean(self.efit_tree.getRmidOutSpline()(t_EFIT))
+                t_EFIT = self._get_efit_times_to_average()
+                x_out = scipy.mean(self.efit_tree.getRmidOutSpline()(t_EFIT))
             else:
                 assert self.X_dim == 2
-                x_out = self.efit_tree.getRmidOutSpline()(scipy.asarray(self.X[:, 0]).flatten())
+                x_out = self.efit_tree.getRmidOutSpline()(scipy.asarray(self.X[:, 0]).ravel())
         else:
             raise ValueError("Removal of edge points not supported with abscissa %s!" % (self.abscissa,))
-        self.remove_points((scipy.asarray(self.X[:, -1]).flatten() >= x_out) |
-                           scipy.asarray(scipy.isnan(self.X[:, -1])).flatten())
+        X = self.all_X
+        mask = X[:, -1] >= x_out
+        mask[scipy.isnan(X).any(axis=1)] = False
+        self.remove_points(mask)
     
     def constrain_slope_on_axis(self, err=0, times=None):
         """Constrains the slope at the magnetic axis of this Profile's Gaussian process to be zero.
@@ -293,17 +290,8 @@ class BivariatePlasmaProfile(Profile):
         """
         if self.X_dim == 1:
             if self.abscissa == 'Rmid':
-                # TODO: Re-do this with _get_efit_times_to_average!
-                t_EFIT = self.efit_tree.getTimeBase()
-                if hasattr(self, 'times'):
-                    idx = self.efit_tree._getNearestIdx(self.times, t_EFIT)
-                    x0 = scipy.mean(self.efit_tree.getMagR()[idx])
-                elif self.t_min != self.t_max:
-                    x0 = scipy.mean(self.efit_tree.getMagR()[(t_EFIT >= self.t_min) &
-                                                             (t_EFIT <= self.t_max)])
-                else:
-                    idx = self.efit_tree._getNearestIdx(self.t_min, t_EFIT)
-                    x0 = self.efit_tree.getMagR()[idx]
+                t_EFIT = self._get_efit_times_to_average()
+                x0 = scipy.mean(self.efit_tree.getMagRSpline()(t_EFIT))
             elif 'norm' in self.abscissa or 'r/a' in self.abscissa:
                 x0 = 0
             else:
@@ -314,11 +302,9 @@ class BivariatePlasmaProfile(Profile):
             self.gp.add_data(x0, 0, err_y=err, n=1)
         elif self.X_dim == 2:
             if times is None:
-                times = scipy.unique(scipy.asarray(self.X[:, 0]).ravel())
+                times = scipy.unique(self.X[:, 0])
             if self.abscissa == 'Rmid':
-                x0 = scipy.interpolate.interp1d(self.efit_tree.getTimeBase(),
-                                                self.efit_tree.getMagR(),
-                                                kind='nearest' if not self.efit_tree._tricubic else 'cubic')(times)
+                x0 = self.efit_tree.getMagRSpline()(times)
             elif 'norm' in self.abscissa or 'r/a' in self.abscissa:
                 x0 = scipy.zeros_like(times)
             else:
@@ -425,7 +411,6 @@ class BivariatePlasmaProfile(Profile):
                              "abscissa '%s'. Convert to a normalized "
                              "coordinate or Rmid to use this constraint."
                              % (self.X_dim, self.abscissa,))
-
     
     def create_gp(self, constrain_slope_on_axis=True, constrain_at_limiter=True,
                   axis_constraint_kwargs={}, limiter_constraint_kwargs={}, **kwargs):
@@ -550,13 +535,7 @@ class BivariatePlasmaProfile(Profile):
             
             # Get geometry from EFIT:
             t_efit = self.efit_tree.getTimeBase()
-            if hasattr(self, 'times'):
-                ok_idxs = self.efit_tree._getNearestIdx(self.times, t_efit)
-            elif self.t_min != self.t_max:
-                ok_idxs = scipy.where((t_efit >= self.t_min) & (t_efit <= self.t_max))[0]
-            else:
-                ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
-            
+            ok_idxs = self._get_efit_times_to_average(return_idxs=True)
             a = self.efit_tree.getAOut()[ok_idxs]
             var_a = scipy.var(a, ddof=1)
             if scipy.isnan(var_a):
@@ -583,7 +562,7 @@ class BivariatePlasmaProfile(Profile):
                         self.efit_tree.getRGrid()[-1],
                         resample_factor * len(self.efit_tree.getRGrid())
                     )
-                
+                    
                     X_on_grid = self.efit_tree.rz2rho(
                         self.abscissa,
                         R_grid,
@@ -594,7 +573,7 @@ class BivariatePlasmaProfile(Profile):
                     good_idxs = ~scipy.isnan(X_on_grid)
                     X_on_grid = X_on_grid[good_idxs]
                     R_grid = R_grid[good_idxs]
-                
+                    
                     spline = scipy.interpolate.InterpolatedUnivariateSpline(
                         X_on_grid, R_grid, k=3
                     )
@@ -667,7 +646,7 @@ class BivariatePlasmaProfile(Profile):
         else:
             return (mean_a_L, std_a_L)
     
-    def _get_efit_times_to_average(self):
+    def _get_efit_times_to_average(self, return_idxs=False):
         """Get the EFIT times to average over for a profile that has already been time-averaged.
         
         If this instance has a :py:attr:`times` attribute, the nearest indices
@@ -685,8 +664,11 @@ class BivariatePlasmaProfile(Profile):
                 ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
         else:
             ok_idxs = self.efit_tree._getNearestIdx([self.t_min], t_efit)
-    
-        return t_efit[ok_idxs]
+        
+        if return_idxs:
+            return ok_idxs
+        else:
+            return t_efit[ok_idxs]
     
     def _make_volume_averaging_matrix(self, rho_grid=None, npts=400):
         """Generate a matrix of weights to find the volume average using the trapezoid rule.
@@ -744,7 +726,13 @@ class BivariatePlasmaProfile(Profile):
                 weights *= (b - a) / (2.0 * N)
             else:
                 if 'volnorm' not in self.abscissa:
-                    vol_grid = self.efit_tree.rho2rho(self.abscissa, 'volnorm', rho_grid, times, each_t=True)
+                    vol_grid = self.efit_tree.rho2rho(
+                        self.abscissa,
+                        'volnorm',
+                        rho_grid,
+                        times,
+                        each_t=True
+                    )
                 else:
                     if self.abscissa.startswith('sqrt'):
                         vol_grid = scipy.asarray(rho_grid)**2
@@ -756,7 +744,12 @@ class BivariatePlasmaProfile(Profile):
                 ok_mask = ~scipy.isnan(vol_grid)
                 delta_vol = scipy.diff(vol_grid[ok_mask])
                 weights = scipy.zeros_like(vol_grid)
-                weights[ok_mask] = 0.5 * (scipy.insert(delta_vol, 0, 0) + scipy.insert(delta_vol, -1, 0))
+                weights[ok_mask] = (
+                    0.5 * (
+                        scipy.insert(delta_vol, 0, 0) +
+                        scipy.insert(delta_vol, -1, 0)
+                    )
+                )
             
             weights = scipy.atleast_2d(weights)
             return (rho_grid, weights)
@@ -1633,6 +1626,7 @@ def read_plasma_csv(*args, **kwargs):
     
     Parameters are the same as :py:func:`read_csv`.
     """
+    # TODO: Does not support transformed quantities!
     p = read_csv(*args, **kwargs)
     p.__class__ = BivariatePlasmaProfile
     metadata = dict([l.split(None, 1) for l in p.metadata])
@@ -1682,6 +1676,7 @@ def read_plasma_NetCDF(*args, **kwargs):
     
     Parameters are the same as :py:func:`read_NetCDF`.
     """
+    # TODO: Does not support transformed quantities!
     metadata = kwargs.pop('metadata', [])
     metadata = set(metadata + ['shot', 'times', 't_max', 't_min', 'coordinate'])
     p = read_NetCDF(*args, metadata=metadata, **kwargs)
