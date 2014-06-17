@@ -1780,17 +1780,9 @@ class FitWindow(tk.Tk):
             if p.X_dim > 1:
                 if window_mode:
                     if t_min is not None:
-                        cond = p.every_X[:, 0] < t_min
-                        remove_idxs = scipy.unique(p.X_assoc[cond])
-                        mask = scipy.zeros(len(p.points), dtype=bool)
-                        mask[remove_idxs] = True
-                        p.remove_points(mask)
+                        p.remove_points(p.X[:, 0] < t_min)
                     if t_max is not None:
-                        cond = p.every_X[:, 0] > t_max
-                        remove_idxs = scipy.unique(p.X_assoc[cond])
-                        mask = scipy.zeros(len(p.points), dtype=bool)
-                        mask[remove_idxs] = True
-                        p.remove_points(mask)
+                        p.remove_points(p.X[:, 0] > t_max)
                 else:
                     if times:
                         p.keep_times(times)
@@ -1830,33 +1822,14 @@ class FitWindow(tk.Tk):
                 "Removing points that exhibit extreme changes..."
             )
             try:
-                bad_points = self.combined_p.remove_extreme_changes(
-                    thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get())
-                )
-                X_bad_c = []
-                y_bad_c = []
-                err_X_bad_c = []
-                err_y_bad_c = []
-                transformed_bad_c = []
-                for p in bad_points:
-                    if p.is_single_point:
-                        X_bad_c.append(p.X[0, 0])
-                        y_bad_c.append(p.y)
-                        err_X_bad_c.append(p.err_X[0, 0])
-                        err_y_bad_c.append(p.err_y)
-                    else:
-                        transformed_bad_c.append(p)
-                
-                self.control_frame.status_frame.add_line(
-                    "Removed %d points with extreme changes." % (len(bad_points),)
-                )
-                if len(transformed_bad_c) > 0:
-                    self.control_frame.status_frame.add_line(
-                        "Removed the following points as well:"
+                X_bad_c, y_bad_c, err_X_bad_c, err_y_bad_c = \
+                    self.combined_p.remove_extreme_changes(
+                        thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get())
                     )
-                    for p in transformed_bad_c:
-                        self.control_frame.status_frame.add_line(unicode(p))
-                
+                X_bad_c = X_bad_c.ravel()
+                self.control_frame.status_frame.add_line(
+                    "Removed %d points with extreme changes." % (len(y_bad_c),)
+                )
                 if len(y_bad_c) > 0:
                     self.plot_frame.a_val.plot(
                         X_bad_c, y_bad_c, 'mx', label='extreme change', ms=14
@@ -2029,31 +2002,15 @@ class FitWindow(tk.Tk):
             self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
             self.find_MAP()
             thresh = float(self.control_frame.outlier_frame.outlier_thresh_box.get())
-            bad_points = self.combined_p.remove_outliers(thresh=thresh)
-            X_bad_o = []
-            y_bad_o = []
-            err_X_bad_o = []
-            err_y_bad_o = []
-            transformed_bad_o = []
-            for p in bad_points:
-                if p.is_single_point:
-                    X_bad_o.append(p.X[0, 0])
-                    y_bad_o.append(p.y)
-                    err_X_bad_o.append(p.err_X[0, 0])
-                    err_y_bad_o.append(p.err_y)
-                else:
-                    transformed_bad_o.append(p)
-            X_bad_o = scipy.asarray(X_bad_o)
-            y_bad_o = scipy.asarray(y_bad_o)
-            err_X_bad_o = scipy.asarray(err_X_bad_o)
-            err_y_bad_o = scipy.asarray(err_y_bad_o)
-            
+            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = self.combined_p.remove_outliers(thresh=thresh)
+            X_bad_o = X_bad_o.ravel()
+            err_X_bad_o = err_X_bad_o.ravel()
             # Perform a second MAP estimation to put back IN the outliers that
             # now don't look so outlying:
             self.control_frame.status_frame.add_line(
-                "Found %d candidate outliers." % (len(bad_points),)
+                "Found %d candidate outliers." % (len(y_bad_o),)
             )
-            if len(bad_points) > 0:
+            if len(y_bad_o) > 0:
                 self.control_frame.status_frame.add_line("Finding second MAP estimate...")
                 self.find_MAP()
                 # TODO: This needs to be updated once gptools supports
@@ -2085,7 +2042,6 @@ class FitWindow(tk.Tk):
                         'rx',
                         label='outlier', ms=14
                     )
-                # TODO: Print removed transformed quantities!
             else:
                 bad_idxs = scipy.zeros_like(y_bad_o, dtype=bool)
         

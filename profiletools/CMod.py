@@ -88,98 +88,155 @@ class BivariatePlasmaProfile(Profile):
         if self.abscissa == new_abscissa:
             return
         elif self.X_dim == 1 or (self.X_dim == 2 and self.abscissa == 'RZ'):
-            X = self.every_X
-            err_X = self.every_err_X
-            assoc = self.X_assoc
             if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-                new_rho = scipy.power(X[:, 0], 2)
+                new_rho = scipy.power(self.X[:, 0], 2)
                 # Approximate form from uncertainty propagation:
-                err_new_rho = err_X[:, 0] * 2 * X[:, 0]
+                err_new_rho = self.err_X[:, 0] * 2 * self.X[:, 0]
+                
+                # Handle transformed quantities:
+                for p in self.transformed:
+                    p.X[:, :, 0] = scipy.power(p.X[:, :, 0], 2)
+                    p.err_X[:, :, 0] = p.err_X[:, :, 0] * 2 * p.X[:, :, 0]
             elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-                new_rho = scipy.power(X[:, 0], 0.5)
+                new_rho = scipy.power(self.X[:, 0], 0.5)
                 # Approximate form from uncertainty propagation:
-                err_new_rho = err_X[:, 0] / (2 * scipy.sqrt(X[:, 0]))
+                err_new_rho = self.err_X[:, 0] / (2 * scipy.sqrt(self.X[:, 0]))
+                
+                # Handle transformed quantities:
+                for p in self.transformed:
+                    p.X[:, :, 0] = scipy.power(p.X[:, :, 0], 0.5)
+                    p.err_X[:, :, 0] = p.err_X[:, :, 0]  / (2 * scipy.sqrt(p.X[:, :, 0]))
             else:
                 times = self._get_efit_times_to_average()
+                
                 if self.abscissa == 'RZ':
                     new_rhos = self.efit_tree.rz2rho(
                         new_abscissa,
-                        X[:, 0],
-                        X[:, 1],
+                        self.X[:, 0],
+                        self.X[:, 1],
                         times,
                         each_t=True
                     )
-                    self.X_labels.pop(1)
-                    self.X_units.pop(1)
+                    self.channels = self.channels[:, 0:1]
                     self.X_dim = 1
-                    for p in self.points:
-                        p.channel = p.channel[0]
-                        p.X = p.X[:, :1]
-                        p.err_X = p.err_X[:, :1]
+                    
+                    # Handle transformed quantities:
+                    for p in self.transformed:
+                        new_rhos = self.efit_tree.rz2rho(
+                            new_abscissa,
+                            p.X[:, :, 0],
+                            p.X[:, :, 1],
+                            times,
+                            each_t=True
+                        )
+                        p.X = scipy.delete(p.X, 1, axis=2)
+                        p.err_X = scipy.delete(p.err_X, 1, axis=2)
+                        p.X[:, :, 0] = scipy.atleast_3d(scipy.mean(new_rhos, axis=0))
+                        p.err_X[:, :, 0] = scipy.atleast_3d(scipy.std(new_rhos, axis=0, ddof=ddof))
+                        p.err_X[scipy.isnan(p.err_X)] = 0
                 else:
                     new_rhos = self.efit_tree.rho2rho(
                         self.abscissa,
                         new_abscissa,
-                        X[:, 0],
+                        self.X[:, 0],
                         times,
                         each_t=True
                     )
+                    
+                    # Handle transformed quantities:
+                    for p in self.transformed:
+                        new_rhos = self.efit_tree.rho2rho(
+                            self.abscissa,
+                            new_abscissa,
+                            p.X[:, :, 0],
+                            times,
+                            each_t=True
+                        )
+                        p.X[:, :, 0] = scipy.atleast_3d(scipy.mean(new_rhos, axis=0))
+                        p.err_X[:, :, 0] = scipy.atleast_3d(scipy.std(new_rhos, axis=0, ddof=ddof))
+                        p.err_X[scipy.isnan(p.err_X)] = 0
                 new_rho = scipy.mean(new_rhos, axis=0)
                 err_new_rho = scipy.std(new_rhos, axis=0, ddof=ddof)
                 err_new_rho[scipy.isnan(err_new_rho)] = 0
             
-            for k in xrange(0, len(self.points)):
-                idxs = assoc == k
-                self.points[k].X[:, 0] = new_rho[idxs]
-                self.points[k].err_X[:, 0] = err_new_rho[idxs]
-            
-            self.X_labels[0] = _X_label_mapping[new_abscissa]
-            self.X_units[0] = _X_unit_mapping[new_abscissa]
+            self.X = scipy.atleast_2d(new_rho).T
+            self.X_labels = [_X_label_mapping[new_abscissa]]
+            self.X_units = [_X_unit_mapping[new_abscissa]]
+            self.err_X = scipy.atleast_2d(err_new_rho).T
         else:
-            X = self.every_X
-            err_X = self.every_err_X
-            assoc = self.X_assoc
             if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-                new_rho = scipy.power(X[:, 1], 2)
+                new_rho = scipy.power(self.X[:, 1], 2)
+                
+                # Handle transformed quantities:
+                for p in self.transformed:
+                    p.X[:, :, 1] = scipy.power(p.X[:, :, 1], 2)
+                    p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-                new_rho = scipy.power(X[:, 1], 0.5)
+                new_rho = scipy.power(self.X[:, 1], 0.5)
+                
+                # Handle transformed quantities:
+                for p in self.transformed:
+                    p.X[:, :, 1] = scipy.power(p.X[:, :, 1], 0.5)
+                    p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             elif self.abscissa == 'RZ':
                 # Need to handle this case separately because of the extra column:
-                new_rho = self.efit_tree.rz2rho(new_abscissa,
-                                                X[:, 1],
-                                                X[:, 2],
-                                                X[:, 0],
-                                                each_t=False)
-                for p in self.points:
-                    p.channel = p.channel[:2]
-                    p.X = p.X[:, :2]
-                    p.err_X = p.err_X[:, :2]
-                self.X_labels.pop(2)
-                self.X_units.pop(2)
+                new_rho = self.efit_tree.rz2rho(
+                    new_abscissa,
+                    self.X[:, 1],
+                    self.X[:, 2],
+                    self.X[:, 0],
+                    each_t=False
+                )
+                self.channels = self.channels[:, 0:2]
                 self.X_dim = 2
+                
+                # Handle transformed quantities:
+                for p in self.transformed:
+                    p.X[:, :, 1] = self.efit_tree.rz2rho(
+                        new_abscissa,
+                        p.X[:, :, 1],
+                        p.X[:, :, 2],
+                        p.X[:, :, 0],
+                        each_t=False
+                    )
+                    p.X = scipy.delete(p.X, 2, axis=2)
+                    p.err_X = scipy.delete(p.err_X, 2, axis=2)
+                    p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             else:
                 new_rho = self.efit_tree.rho2rho(
                     self.abscissa,
                     new_abscissa,
-                    X[:, 1],
-                    X[:, 0],
+                    self.X[:, 1],
+                    self.X[:, 0],
                     each_t=False
                 )
-            err_new_rho = scipy.zeros_like(X[:, 0])
+                
+                # Handle transformed quantities:
+                for p in self.transformed:
+                    p.X[:, :, 1] = self.efit_tree.rho2rho(
+                        self.abscissa,
+                        new_abscissa,
+                        p.X[:, :, 1],
+                        p.X[:, :, 0],
+                        each_t=False
+                    )
+                    p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             
-            for k in xrange(0, len(self.points)):
-                idxs = assoc == k
-                self.points[k].X[:, 1] = new_rho[idxs]
-                self.points[k].err_X[:, 1] = err_new_rho[idxs]
+            err_new_rho = scipy.zeros_like(self.X[:, 0])
             
-            self.X_labels[1] = _X_label_mapping[new_abscissa]
-            self.X_units[1] = _X_unit_mapping[new_abscissa]
+            self.X = scipy.hstack((
+                scipy.atleast_2d(self.X[:, 0]).T,
+                scipy.atleast_2d(new_rho).T
+            ))
+            self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
+            self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
+            self.err_X = scipy.hstack((
+                scipy.atleast_2d(self.err_X[:, 0]).T,
+                scipy.atleast_2d(err_new_rho).T
+            ))
         self.abscissa = new_abscissa
         if drop_nan:
-            nan_idxs = scipy.unique(assoc[scipy.isnan(self.every_X).any(axis=1)])
-            mask = scipy.zeros(len(self.points), dtype=bool)
-            mask[nan_idxs] = True
-            self.remove_points(mask)
+            self.remove_points(scipy.isnan(self.X).any(axis=1))
     
     def time_average(self, **kwargs):
         """Compute the time average of the quantity.
@@ -188,16 +245,15 @@ class BivariatePlasmaProfile(Profile):
         
         All parameters are passed to :py:meth:`average_data`.
         """
-        X = self.X
-        self.t_min = X[:, 0].min()
-        self.t_max = X[:, 0].max()
+        # TODO: Need to handle transformed quantities when setting t_min, t_max!
+        self.t_min = self.X[:, 0].min()
+        self.t_max = self.X[:, 0].max()
         self.average_data(axis=0, **kwargs)
     
     def drop_axis(self, axis):
         if self.X_labels[axis] == '$t$':
-            X = self.X
-            self.t_min = X[:, 0].min()
-            self.t_max = X[:, 0].max()
+            self.t_min = self.X[:, 0].min()
+            self.t_max = self.X[:, 0].max()
         super(BivariatePlasmaProfile, self).drop_axis(axis)
     
     def keep_times(self, times):
@@ -259,10 +315,7 @@ class BivariatePlasmaProfile(Profile):
                 x_out = self.efit_tree.getRmidOutSpline()(scipy.asarray(self.X[:, 0]).ravel())
         else:
             raise ValueError("Removal of edge points not supported with abscissa %s!" % (self.abscissa,))
-        X = self.all_X
-        mask = X[:, -1] >= x_out
-        mask[scipy.isnan(X).any(axis=1)] = False
-        self.remove_points(mask)
+        self.remove_points((self.X[:, -1] >= x_out) | scipy.isnan(self.X[:, -1]))
     
     def constrain_slope_on_axis(self, err=0, times=None):
         """Constrains the slope at the magnetic axis of this Profile's Gaussian process to be zero.
@@ -1106,6 +1159,11 @@ def neTS(shot, **kwargs):
     """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
     """
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
+
+def neFTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
+           efit_tree=None):
+    raise NotImplementedError("Not done yet!")
+    # TODO: Finish this!
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False, remove_zeros=True):
