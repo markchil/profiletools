@@ -154,7 +154,7 @@ def average_points(X, y, err_X, err_y, axis, T=None, ddof=1, robust=False,
     return (mean_X, mean_y, err_X, err_y, T)
 
 class Channel(object):
-    def __init__(self, X, y, err_X=0, err_y=0, T=None, y_label=''):
+    def __init__(self, X, y, err_X=0, err_y=0, T=None, y_label='', y_units=''):
         # Verify y has only one non-trivial dimension:
         y = scipy.atleast_1d(scipy.asarray(y, dtype=float))
         if y.ndim != 1:
@@ -226,25 +226,46 @@ class Channel(object):
         self.err_y = err_y
         self.T = T
     
-    def keep_slices(self, axis, vals):
-        # TODO: Implement this!
-        raise NotImplementedError("Not done yet!")
-    
+    def keep_slices(self, axis, vals, keep_mixed=False):
+        unique_vals = []
+        num_unique = []
+        for pt in self.X:
+            unique_vals += [scipy.unique(pt[:, axis])]
+            num_unique += [len(unique_vals[-1])]
+        if max(num_unique) > 1:
+            if keep_mixed:
+                return True
+            else:
+                return False
+        else:
+            unique_vals = scipy.asarray(unique_vals)
+            keep_idxs = scipy.unique(get_nearest_idx(vals, unique_vals))
+            
+            self.X = self.X[keep_idxs, :, :]
+            self.y = self.y[keep_idxs]
+            self.err_X = self.err_X[keep_idxs, :, :]
+            self.err_y = self.err_y[keep_idxs]
+            self.T = self.T[keep_idxs, :]
+            
+            return True
+        
     def average_data(self, axis=0, **kwargs):
+        reduced_X = scipy.delete(self.X, axis, axis=2)
+        reduced_err_X = scipy.delete(self.err_X, axis, axis=2)
         self.X, self.y, self.err_X, self.err_y, self.T = average_points(
-            self.X,
+            reduced_X,
             self.y,
-            self.err_X,
+            reduced_err_X,
             self.err_y,
             axis,
             T=self.T,
             **kwargs
         )
-    
-    def remove_points(self, filt):
-        # TODO: Figure out a clever way of doing this!
-        raise NotImplementedError("Not done yet!")
-        
+        self.X = scipy.expand_dims(self.X, axis=0)
+        self.y = scipy.expand_dims(self.y, axis=0)
+        self.err_X = scipy.expand_dims(self.err_X, axis=0)
+        self.err_y = scipy.expand_dims(self.err_y, axis=0)
+        self.T = scipy.expand_dims(self.T, axis=0)
 
 class Profile(object):
     """Object to abstractly represent a profile.
@@ -470,10 +491,11 @@ class Profile(object):
         if self.X_units != other.X_units:
             raise ValueError("When merging profiles, the X_units must agree!")
         # Modify the channels of self.channels to avoid clashes:
-        self.channels = (
-            self.channels - self.channels.min(axis=0) +
-            other.channels.max(axis=0) + 1
-        )
+        if other.channels is not None and self.channels is not None:
+            self.channels = (
+                self.channels - self.channels.min(axis=0) +
+                other.channels.max(axis=0) + 1
+            )
         self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y,
                       channels=other.channels)
         
@@ -500,7 +522,7 @@ class Profile(object):
             p.X = scipy.delete(p.X, axis, axis=2)
             p.err_X = scipy.delete(p.err_X, axis, axis=2)
     
-    def keep_slices(self, axis, vals):
+    def keep_slices(self, axis, vals, **kwargs):
         """Keeps only the nearest points to vals along the given axis for each channel.
         
         Parameters
@@ -542,8 +564,8 @@ class Profile(object):
             self.err_y = scipy.asarray(new_err_y)
             self.channels = scipy.vstack(new_channels)
         
-        for p in self.transformed:
-            p.keep_slices(axis, vals)
+        mask = [p.keep_slices(axis, vals, **kwargs) for p in self.transformed]
+        self.transformed = self.transformed[scipy.asarray(mask, dtype=bool)]
     
     def average_data(self, axis=0, **kwargs):
         """Computes the average of the profile over the desired axis.
@@ -583,36 +605,38 @@ class Profile(object):
             weighted.
         """
         # TODO: Add support for custom bins!
-        reduced_channels = scipy.delete(self.channels, axis, axis=1)
-        reduced_X = scipy.delete(self.X, axis, axis=1)
-        reduced_err_X = scipy.delete(self.err_X, axis, axis=1)
-        channels = unique_rows(reduced_channels)
-        X = scipy.zeros((len(channels), self.X_dim - 1))
-        y = scipy.zeros(len(channels))
-        err_X = scipy.zeros_like(X)
-        err_y = scipy.zeros_like(y)
-        for i, chan in zip(range(0, len(channels)), channels):
-            chan_mask = (
-                reduced_channels == chan.flatten()
-            ).all(axis=1)
+        if self.X is not None:
+            reduced_channels = scipy.delete(self.channels, axis, axis=1)
+            reduced_X = scipy.delete(self.X, axis, axis=1)
+            reduced_err_X = scipy.delete(self.err_X, axis, axis=1)
+            channels = unique_rows(reduced_channels)
+            X = scipy.zeros((len(channels), self.X_dim - 1))
+            y = scipy.zeros(len(channels))
+            err_X = scipy.zeros_like(X)
+            err_y = scipy.zeros_like(y)
+            for i, chan in zip(range(0, len(channels)), channels):
+                chan_mask = (
+                    reduced_channels == chan.flatten()
+                ).all(axis=1)
             
-            X[i, :], y[i], err_X[i, :], err_y[i], dum = average_points(
-                reduced_X[chan_mask, :],
-                self.y[chan_mask],
-                reduced_err_X[chan_mask, :],
-                self.err_y[chan_mask],
-                axis,
-                **kwargs
-            )
+                X[i, :], y[i], err_X[i, :], err_y[i], dum = average_points(
+                    reduced_X[chan_mask, :],
+                    self.y[chan_mask],
+                    reduced_err_X[chan_mask, :],
+                    self.err_y[chan_mask],
+                    axis,
+                    **kwargs
+                )
+            
+            self.X = X
+            self.y = y
+            self.err_X = err_X
+            self.err_y = err_y
+            self.channels = channels
         
         self.X_dim -= 1
         self.X_units.pop(axis)
         self.X_labels.pop(axis)
-        self.X = X
-        self.y = y
-        self.err_X = err_X
-        self.err_y = err_y
-        self.channels = channels
         
         for p in self.transformed:
             p.average_data(axis=axis, **kwargs)
@@ -637,7 +661,6 @@ class Profile(object):
         -------
         The axis instance used.
         """
-        # TODO: How to support T here?
         if self.X_dim > 2:
             raise ValueError("Plotting is not supported for X_dim > 2!")
         if ax is None:
@@ -695,6 +718,10 @@ class Profile(object):
         to call :py:meth:`create_gp` again or act manually on the :py:attr:`gp`
         attribute.
         
+        Also note that this does not include any provision for removing points
+        that represent linearly-transformed quantities -- you will need to
+        operate directly on :py:attr:`transformed` to remove such points.
+        
         Parameters
         ----------
         conditional : array-like of bool, (`M`,)
@@ -724,8 +751,6 @@ class Profile(object):
         self.err_y = self.err_y[idxs]
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
-        
-        # TODO: Do something about transformed points here!
         
         return (X_bad, y_bad, err_X_bad, err_y_bad)
     
@@ -778,8 +803,7 @@ class Profile(object):
         out = self.gp.remove_outliers(**remove_kwargs)
         # Chop bad_idxs down with the assumption that all constraints that are
         # not reflected in self.y are at the end:
-        # TODO: Make sure that the implementation of transformed data in gptools
-        # preserves the ordering here!
+        # TODO: Remove outlying transformed points, too!
         return self.remove_points(out[4][:len(self.y)])
     
     def remove_extreme_changes(self, thresh=10, logic='and'):
@@ -881,8 +905,8 @@ class Profile(object):
             All additional kwargs are passed to the constructor of
             :py:class:`gptools.GaussianProcess`.
         """
-        # TODO: Add support for line-integrated quantities here!
-        # TODO: Create more powerful way of specifying mixed kernels!
+        # TODO: Create more powerful way of specifying kernels!
+        # TODO: Set ranges intelligently when using all transformed data!
         # Save some time by only building these arrays once:
         # Note that using this form only gets the non-transformed values.
         y = self.y
@@ -996,6 +1020,8 @@ class Profile(object):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
         self.gp.add_data(X, y, err_y=self.err_y)
+        for p in self.transformed:
+            self.gp.add_data(scipy.vstack(p.X), p.y, err_y=p.err_y, T=p.T)
     
     def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):
         """Find the MAP estimate for the hyperparameters of the Profile's Gaussian process.

@@ -20,7 +20,7 @@
 
 from __future__ import division
 
-from .core import Profile, read_csv, read_NetCDF
+from .core import Profile, Channel, read_csv, read_NetCDF
 
 import MDSplus
 import scipy
@@ -89,18 +89,20 @@ class BivariatePlasmaProfile(Profile):
             return
         elif self.X_dim == 1 or (self.X_dim == 2 and self.abscissa == 'RZ'):
             if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-                new_rho = scipy.power(self.X[:, 0], 2)
-                # Approximate form from uncertainty propagation:
-                err_new_rho = self.err_X[:, 0] * 2 * self.X[:, 0]
+                if self.X is not None:
+                    new_rho = scipy.power(self.X[:, 0], 2)
+                    # Approximate form from uncertainty propagation:
+                    err_new_rho = self.err_X[:, 0] * 2 * self.X[:, 0]
                 
                 # Handle transformed quantities:
                 for p in self.transformed:
                     p.X[:, :, 0] = scipy.power(p.X[:, :, 0], 2)
                     p.err_X[:, :, 0] = p.err_X[:, :, 0] * 2 * p.X[:, :, 0]
             elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-                new_rho = scipy.power(self.X[:, 0], 0.5)
-                # Approximate form from uncertainty propagation:
-                err_new_rho = self.err_X[:, 0] / (2 * scipy.sqrt(self.X[:, 0]))
+                if self.X is not None:
+                    new_rho = scipy.power(self.X[:, 0], 0.5)
+                    # Approximate form from uncertainty propagation:
+                    err_new_rho = self.err_X[:, 0] / (2 * scipy.sqrt(self.X[:, 0]))
                 
                 # Handle transformed quantities:
                 for p in self.transformed:
@@ -110,14 +112,15 @@ class BivariatePlasmaProfile(Profile):
                 times = self._get_efit_times_to_average()
                 
                 if self.abscissa == 'RZ':
-                    new_rhos = self.efit_tree.rz2rho(
-                        new_abscissa,
-                        self.X[:, 0],
-                        self.X[:, 1],
-                        times,
-                        each_t=True
-                    )
-                    self.channels = self.channels[:, 0:1]
+                    if self.X is not None:
+                        new_rhos = self.efit_tree.rz2rho(
+                            new_abscissa,
+                            self.X[:, 0],
+                            self.X[:, 1],
+                            times,
+                            each_t=True
+                        )
+                        self.channels = self.channels[:, 0:1]
                     self.X_dim = 1
                     
                     # Handle transformed quantities:
@@ -135,13 +138,14 @@ class BivariatePlasmaProfile(Profile):
                         p.err_X[:, :, 0] = scipy.atleast_3d(scipy.std(new_rhos, axis=0, ddof=ddof))
                         p.err_X[scipy.isnan(p.err_X)] = 0
                 else:
-                    new_rhos = self.efit_tree.rho2rho(
-                        self.abscissa,
-                        new_abscissa,
-                        self.X[:, 0],
-                        times,
-                        each_t=True
-                    )
+                    if self.X is not None:
+                        new_rhos = self.efit_tree.rho2rho(
+                            self.abscissa,
+                            new_abscissa,
+                            self.X[:, 0],
+                            times,
+                            each_t=True
+                        )
                     
                     # Handle transformed quantities:
                     for p in self.transformed:
@@ -155,24 +159,28 @@ class BivariatePlasmaProfile(Profile):
                         p.X[:, :, 0] = scipy.atleast_3d(scipy.mean(new_rhos, axis=0))
                         p.err_X[:, :, 0] = scipy.atleast_3d(scipy.std(new_rhos, axis=0, ddof=ddof))
                         p.err_X[scipy.isnan(p.err_X)] = 0
-                new_rho = scipy.mean(new_rhos, axis=0)
-                err_new_rho = scipy.std(new_rhos, axis=0, ddof=ddof)
-                err_new_rho[scipy.isnan(err_new_rho)] = 0
+                if self.X is not None:
+                    new_rho = scipy.mean(new_rhos, axis=0)
+                    err_new_rho = scipy.std(new_rhos, axis=0, ddof=ddof)
+                    err_new_rho[scipy.isnan(err_new_rho)] = 0
             
-            self.X = scipy.atleast_2d(new_rho).T
+            if self.X is not None:
+                self.X = scipy.atleast_2d(new_rho).T
+                self.err_X = scipy.atleast_2d(err_new_rho).T
             self.X_labels = [_X_label_mapping[new_abscissa]]
             self.X_units = [_X_unit_mapping[new_abscissa]]
-            self.err_X = scipy.atleast_2d(err_new_rho).T
         else:
             if self.abscissa.startswith('sqrt') and self.abscissa[4:] == new_abscissa:
-                new_rho = scipy.power(self.X[:, 1], 2)
+                if self.X is not None:
+                    new_rho = scipy.power(self.X[:, 1], 2)
                 
                 # Handle transformed quantities:
                 for p in self.transformed:
                     p.X[:, :, 1] = scipy.power(p.X[:, :, 1], 2)
                     p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             elif new_abscissa.startswith('sqrt') and self.abscissa == new_abscissa[4:]:
-                new_rho = scipy.power(self.X[:, 1], 0.5)
+                if self.X is not None:
+                    new_rho = scipy.power(self.X[:, 1], 0.5)
                 
                 # Handle transformed quantities:
                 for p in self.transformed:
@@ -180,14 +188,15 @@ class BivariatePlasmaProfile(Profile):
                     p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             elif self.abscissa == 'RZ':
                 # Need to handle this case separately because of the extra column:
-                new_rho = self.efit_tree.rz2rho(
-                    new_abscissa,
-                    self.X[:, 1],
-                    self.X[:, 2],
-                    self.X[:, 0],
-                    each_t=False
-                )
-                self.channels = self.channels[:, 0:2]
+                if self.X is not None:
+                    new_rho = self.efit_tree.rz2rho(
+                        new_abscissa,
+                        self.X[:, 1],
+                        self.X[:, 2],
+                        self.X[:, 0],
+                        each_t=False
+                    )
+                    self.channels = self.channels[:, 0:2]
                 self.X_dim = 2
                 
                 # Handle transformed quantities:
@@ -203,13 +212,14 @@ class BivariatePlasmaProfile(Profile):
                     p.err_X = scipy.delete(p.err_X, 2, axis=2)
                     p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             else:
-                new_rho = self.efit_tree.rho2rho(
-                    self.abscissa,
-                    new_abscissa,
-                    self.X[:, 1],
-                    self.X[:, 0],
-                    each_t=False
-                )
+                if self.X is not None:
+                    new_rho = self.efit_tree.rho2rho(
+                        self.abscissa,
+                        new_abscissa,
+                        self.X[:, 1],
+                        self.X[:, 0],
+                        each_t=False
+                    )
                 
                 # Handle transformed quantities:
                 for p in self.transformed:
@@ -222,20 +232,22 @@ class BivariatePlasmaProfile(Profile):
                     )
                     p.err_X[:, :, 1] = scipy.zeros_like(p.X[:, :, 1])
             
-            err_new_rho = scipy.zeros_like(self.X[:, 0])
+            if self.X is not None:
+                err_new_rho = scipy.zeros_like(self.X[:, 0])
             
-            self.X = scipy.hstack((
-                scipy.atleast_2d(self.X[:, 0]).T,
-                scipy.atleast_2d(new_rho).T
-            ))
+                self.X = scipy.hstack((
+                    scipy.atleast_2d(self.X[:, 0]).T,
+                    scipy.atleast_2d(new_rho).T
+                ))
+                self.err_X = scipy.hstack((
+                    scipy.atleast_2d(self.err_X[:, 0]).T,
+                    scipy.atleast_2d(err_new_rho).T
+                ))
+            
             self.X_labels = [self.X_labels[0], _X_label_mapping[new_abscissa]]
             self.X_units = [self.X_units[0], _X_unit_mapping[new_abscissa]]
-            self.err_X = scipy.hstack((
-                scipy.atleast_2d(self.err_X[:, 0]).T,
-                scipy.atleast_2d(err_new_rho).T
-            ))
         self.abscissa = new_abscissa
-        if drop_nan:
+        if drop_nan and self.X is not None:
             self.remove_points(scipy.isnan(self.X).any(axis=1))
     
     def time_average(self, **kwargs):
@@ -246,8 +258,9 @@ class BivariatePlasmaProfile(Profile):
         All parameters are passed to :py:meth:`average_data`.
         """
         # TODO: Need to handle transformed quantities when setting t_min, t_max!
-        self.t_min = self.X[:, 0].min()
-        self.t_max = self.X[:, 0].max()
+        if self.X is not None:
+            self.t_min = self.X[:, 0].min()
+            self.t_max = self.X[:, 0].max()
         self.average_data(axis=0, **kwargs)
     
     def drop_axis(self, axis):
@@ -1117,7 +1130,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
 
     return p
 
-def ne(shot, include=['CTS', 'ETS'], **kwargs):
+def ne(shot, include=['CTS', 'ETS', 'TCI'], TCI_npts=100, **kwargs):
     """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
 
     Parameters
@@ -1146,6 +1159,8 @@ def ne(shot, include=['CTS', 'ETS'], **kwargs):
             p_list.append(neCTS(shot, **kwargs))
         elif system == 'ETS':
             p_list.append(neETS(shot, **kwargs))
+        elif system == 'TCI':
+            p_list.append(neTCI(shot, npts=TCI_npts, **kwargs))
         else:
             raise ValueError("Unknown profile '%s'." % (system,))
     
@@ -1160,13 +1175,70 @@ def neTS(shot, **kwargs):
     """
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
-def neFTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-           efit_tree=None):
-    raise NotImplementedError("Not done yet!")
-    # TODO: Finish this!
+def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
+           efit_tree=None, npts=100):
+    p = BivariatePlasmaProfile(
+        X_dim=3,
+        X_units=['s', 'm', 'm'],
+        y_units='$10^{20}$ m$^{-3}$',
+        X_labels=['$t$','$R$', '$Z$'],
+        y_label='$n_e$, TCI'
+    )
+    
+    if efit_tree is None:
+        p.efit_tree = eqtools.CModEFITTree(shot)
+    else:
+        p.efit_tree = efit_tree
+    p.abscissa = 'RZ'
+    
+    if electrons is None:
+        electrons = MDSplus.Tree('electrons', shot)
+    
+    R = electrons.getNode(r'tci.results:rad').data()
+    ZG = p.efit_tree.getZGrid()
+    Z = scipy.linspace(ZG.min(), ZG.max(), npts)
+    weights = 2 * scipy.ones_like(Z)
+    weights[0] = 1
+    weights[-1] = 1
+    weights *= (Z.max() - Z.min()) / (2 * (len(Z) - 1))
+    
+    mask = None
+    for i, r in zip(range(0, 10), R):
+        N_NL = electrons.getNode(r'tci.results:nl_%02d' % (i + 1,))
+        ne = N_NL.data()
+        t_ne = N_NL.dim_of().data()
+        if mask is None:
+            if t_min is None:
+                t_min = t_ne.min()
+            if t_max is None:
+                t_max = t_ne.max()
+            mask = (t_ne >= t_min) & (t_ne <= t_max)
+        t_ne = t_ne[mask]
+        ne = ne[mask]
+        X = scipy.ones((len(t_ne), len(Z), 3))
+        X = scipy.einsum('i,ijk->ijk', t_ne, X)
+        X[:, :, 1] = r
+        X[:, :, 2] = Z
+        T = scipy.tile(weights, (len(t_ne), 1))
+        
+        p.transformed = scipy.append(
+            p.transformed,
+            Channel(
+                X,
+                ne / 1e20,
+                T=T,
+                y_label='nl_%02d' % (i + 1,),
+                y_units='$10^{20}$ m$^{-2}$'
+            )
+        )
+    
+    p.shot = shot
+    p.convert_abscissa(abscissa)
+    
+    return p
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=True):
+          efit_tree=None):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
 
     Parameters
@@ -1185,12 +1257,6 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
-    remove_edge : bool, optional
-        If True, will remove points that are outside the LCFS. It will convert
-        the abscissa to psinorm if necessary. Default is False (keep edge).
-    remove_zeros : bool, optional
-        If True, will remove any points that are exactly zero, independent of
-        what their error bar is. Default is True.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
