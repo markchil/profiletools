@@ -257,16 +257,34 @@ class BivariatePlasmaProfile(Profile):
         
         All parameters are passed to :py:meth:`average_data`.
         """
-        # TODO: Need to handle transformed quantities when setting t_min, t_max!
         if self.X is not None:
             self.t_min = self.X[:, 0].min()
             self.t_max = self.X[:, 0].max()
+        if len(self.transformed) > 0:
+            t_min_T = min([p.X[:, :, 0].min() for p in self.transformed])
+            t_max_T = max([p.X[:, :, 0].max() for p in self.transformed])
+            if self.X is None:
+                self.t_min = t_min_T
+                self.t_max = t_max_T
+            else:
+                self.t_min = min(self.t_min, t_min_T)
+                self.t_max = max(self.t_max, t_max_T)
         self.average_data(axis=0, **kwargs)
     
     def drop_axis(self, axis):
         if self.X_labels[axis] == '$t$':
-            self.t_min = self.X[:, 0].min()
-            self.t_max = self.X[:, 0].max()
+            if self.X is not None:
+                self.t_min = self.X[:, 0].min()
+                self.t_max = self.X[:, 0].max()
+            if len(self.transformed) > 0:
+                t_min_T = min([p.X[:, :, 0].min() for p in self.transformed])
+                t_max_T = max([p.X[:, :, 0].max() for p in self.transformed])
+                if self.X is None:
+                    self.t_min = t_min_T
+                    self.t_max = t_max_T
+                else:
+                    self.t_min = min(self.t_min, t_min_T)
+                    self.t_max = max(self.t_max, t_max_T)
         super(BivariatePlasmaProfile, self).drop_axis(axis)
     
     def keep_times(self, times):
@@ -943,7 +961,6 @@ class BivariatePlasmaProfile(Profile):
             else:
                 times = self._get_efit_times_to_average()
                 
-                # TODO: Verify with Martin that rho really means psinorm in his 2007 paper!
                 core_loc = self.efit_tree.rho2rho('psinorm', self.abscissa, times, each_t=True)
                 core_loc = scipy.mean(core_loc)
             
@@ -1130,7 +1147,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
 
     return p
 
-def ne(shot, include=['CTS', 'ETS', 'TCI'], TCI_npts=100, **kwargs):
+def ne(shot, include=['CTS', 'ETS', 'TCI'], TCI_npts=100, TCI_flag_threshold=1e-3, **kwargs):
     """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
 
     Parameters
@@ -1160,7 +1177,14 @@ def ne(shot, include=['CTS', 'ETS', 'TCI'], TCI_npts=100, **kwargs):
         elif system == 'ETS':
             p_list.append(neETS(shot, **kwargs))
         elif system == 'TCI':
-            p_list.append(neTCI(shot, npts=TCI_npts, **kwargs))
+            p_list.append(
+                neTCI(
+                    shot,
+                    npts=TCI_npts,
+                    flag_threshold=TCI_flag_threshold,
+                    **kwargs
+                )
+            )
         else:
             raise ValueError("Unknown profile '%s'." % (system,))
     
@@ -1176,7 +1200,7 @@ def neTS(shot, **kwargs):
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
 def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-           efit_tree=None, npts=100):
+           efit_tree=None, npts=50, flag_threshold=1e-3):
     p = BivariatePlasmaProfile(
         X_dim=3,
         X_units=['s', 'm', 'm'],
@@ -1213,24 +1237,25 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
             if t_max is None:
                 t_max = t_ne.max()
             mask = (t_ne >= t_min) & (t_ne <= t_max)
-        t_ne = t_ne[mask]
-        ne = ne[mask]
-        X = scipy.ones((len(t_ne), len(Z), 3))
-        X = scipy.einsum('i,ijk->ijk', t_ne, X)
-        X[:, :, 1] = r
-        X[:, :, 2] = Z
-        T = scipy.tile(weights, (len(t_ne), 1))
-        
-        p.transformed = scipy.append(
-            p.transformed,
-            Channel(
-                X,
-                ne / 1e20,
-                T=T,
-                y_label='nl_%02d' % (i + 1,),
-                y_units='$10^{20}$ m$^{-2}$'
+        t_ne = t_ne[mask & (ne >= flag_threshold)]
+        if len(t_ne) > 0:
+            ne = ne[mask & (ne >= flag_threshold)]
+            X = scipy.ones((len(t_ne), len(Z), 3))
+            X = scipy.einsum('i,ijk->ijk', t_ne, X)
+            X[:, :, 1] = r
+            X[:, :, 2] = Z
+            T = scipy.tile(weights, (len(t_ne), 1))
+            
+            p.transformed = scipy.append(
+                p.transformed,
+                Channel(
+                    X,
+                    ne / 1e20,
+                    T=T,
+                    y_label='nl_%02d' % (i + 1,),
+                    y_units='$10^{20}$ m$^{-2}$'
+                )
             )
-        )
     
     p.shot = shot
     p.convert_abscissa(abscissa)

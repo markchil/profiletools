@@ -23,6 +23,7 @@ from __future__ import division
 import scipy
 import scipy.stats
 import scipy.io
+import scipy.linalg
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import gptools
@@ -155,6 +156,8 @@ def average_points(X, y, err_X, err_y, axis, T=None, ddof=1, robust=False,
 
 class Channel(object):
     def __init__(self, X, y, err_X=0, err_y=0, T=None, y_label='', y_units=''):
+        self.y_label = y_label
+        self.y_units = y_units
         # Verify y has only one non-trivial dimension:
         y = scipy.atleast_1d(scipy.asarray(y, dtype=float))
         if y.ndim != 1:
@@ -266,6 +269,23 @@ class Channel(object):
         self.err_X = scipy.expand_dims(self.err_X, axis=0)
         self.err_y = scipy.expand_dims(self.err_y, axis=0)
         self.T = scipy.expand_dims(self.T, axis=0)
+    
+    def remove_points(self, conditional):
+        keep_idxs = ~conditional
+        
+        bad_X = self.X[conditional, :, :]
+        bad_y = self.y[conditional]
+        bad_err_X = self.err_X[conditional, :, :]
+        bad_err_y = self.err_y[conditional]
+        bad_T = self.T[conditional, :]
+        
+        self.X = self.X[keep_idxs, :, :]
+        self.y = self.y[keep_idxs]
+        self.err_X = self.err_X[keep_idxs, :, :]
+        self.err_y = self.err_y[keep_idxs]
+        self.T = self.T[keep_idxs, :]
+        
+        return (bad_X, bad_err_X, bad_y, bad_err_y, bad_T)
 
 class Profile(object):
     """Object to abstractly represent a profile.
@@ -512,9 +532,10 @@ class Profile(object):
         if self.X_dim == 1:
             raise ValueError("Can't drop axis from a univariate profile!")
         self.X_dim -= 1
-        self.channels = scipy.delete(self.channels, axis, axis=1)
-        self.X = scipy.delete(self.X, axis, axis=1)
-        self.err_X = scipy.delete(self.err_X, axis, axis=1)
+        if self.X is not None:
+            self.channels = scipy.delete(self.channels, axis, axis=1)
+            self.X = scipy.delete(self.X, axis, axis=1)
+            self.err_X = scipy.delete(self.err_X, axis, axis=1)
         self.X_labels.pop(axis)
         self.X_units.pop(axis)
         
@@ -661,55 +682,56 @@ class Profile(object):
         -------
         The axis instance used.
         """
-        if self.X_dim > 2:
-            raise ValueError("Plotting is not supported for X_dim > 2!")
-        if ax is None:
-            f = plt.figure()
+        if self.X is not None:
+            if self.X_dim > 2:
+                raise ValueError("Plotting is not supported for X_dim > 2!")
+            if ax is None:
+                f = plt.figure()
+                if self.X_dim == 1:
+                    ax = f.add_subplot(1, 1, 1)
+                elif self.X_dim == 2:
+                    ax = f.add_subplot(111, projection='3d')
+            elif ax == 'gca':
+                ax = plt.gca()
+        
+            if 'label' not in kwargs:
+                kwargs['label'] = self.y_label
+        
+            if 'fmt' not in kwargs and 'marker' not in kwargs:
+                kwargs['fmt'] = 'o'
+        
             if self.X_dim == 1:
-                ax = f.add_subplot(1, 1, 1)
+                ax.errorbar(self.X.ravel(), self.y,
+                            yerr=self.err_y, xerr=self.err_X.flatten(),
+                            **kwargs)
+                if label_axes:
+                    ax.set_xlabel(
+                        "%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0]
+                        else self.X_labels[0]
+                    )
+                    ax.set_ylabel(
+                        "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
+                        else self.y_label
+                    )
             elif self.X_dim == 2:
-                ax = f.add_subplot(111, projection='3d')
-        elif ax == 'gca':
-            ax = plt.gca()
+                errorbar3d(ax, self.X[:, 0], self.X[:, 1], self.y,
+                           xerr=self.err_X[:, 0], yerr=self.err_X[:, 1], zerr=self.err_y,
+                           **kwargs)
+                if label_axes:
+                    ax.set_xlabel(
+                        "%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0]
+                        else self.X_labels[0]
+                    )
+                    ax.set_ylabel(
+                        "%s [%s]" % (self.X_labels[1], self.X_units[1],) if self.X_units[1]
+                        else self.X_labels[1]
+                    )
+                    ax.set_zlabel(
+                        "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
+                        else self.y_label
+                    )
         
-        if 'label' not in kwargs:
-            kwargs['label'] = self.y_label
-        
-        if 'fmt' not in kwargs and 'marker' not in kwargs:
-            kwargs['fmt'] = 'o'
-        
-        if self.X_dim == 1:
-            ax.errorbar(self.X.ravel(), self.y,
-                        yerr=self.err_y, xerr=self.err_X.flatten(),
-                        **kwargs)
-            if label_axes:
-                ax.set_xlabel(
-                    "%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0]
-                    else self.X_labels[0]
-                )
-                ax.set_ylabel(
-                    "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
-                    else self.y_label
-                )
-        elif self.X_dim == 2:
-            errorbar3d(ax, self.X[:, 0], self.X[:, 1], self.y,
-                       xerr=self.err_X[:, 0], yerr=self.err_X[:, 1], zerr=self.err_y,
-                       **kwargs)
-            if label_axes:
-                ax.set_xlabel(
-                    "%s [%s]" % (self.X_labels[0], self.X_units[0],) if self.X_units[0]
-                    else self.X_labels[0]
-                )
-                ax.set_ylabel(
-                    "%s [%s]" % (self.X_labels[1], self.X_units[1],) if self.X_units[1]
-                    else self.X_labels[1]
-                )
-                ax.set_zlabel(
-                    "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
-                    else self.y_label
-                )
-        
-        return ax
+            return ax
     
     def remove_points(self, conditional):
         """Remove points where conditional is True.
@@ -754,8 +776,8 @@ class Profile(object):
         
         return (X_bad, y_bad, err_X_bad, err_y_bad)
     
-    def remove_outliers(self, force_update=False, gp_kwargs={}, MAP_kwargs={},
-                        **remove_kwargs):
+    def remove_outliers(self, thresh=3, force_update=False, gp_kwargs={}, MAP_kwargs={},
+                        **predict_kwargs):
         """Remove outliers from the Gaussian process.
         
         The Gaussian process is created if it does not already exist. The
@@ -794,17 +816,101 @@ class Profile(object):
             Uncertainties on the abcissa of the bad values.
         err_y_bad : array
             Uncertainties on the bad values.
+        transformed_bad : array of :py:class:`Channel`
+            Transformed points that were removed.
         """
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not remove_kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         
+        # TODO: Just implement this here to keep it cleaner now that there are transformed quantities to worry about...
+        
+        # Handle single points:
+        mean = self.gp.predict(
+            self.X,
+            return_std=False,
+            **predict_kwargs
+        )
+        deltas = scipy.absolute(mean - self.y) / self.err_y
+        deltas[self.err_y == 0] = 0
+        bad_idxs = (deltas >= thresh)
+        
+        # Pull points out to return:
+        y_bad = self.y[bad_idxs]
+        err_y_bad = self.err_y[bad_idxs]
+        X_bad = self.X[bad_idxs, :]
+        err_X_bad = self.err_X[bad_idxs, :]
+        
+        # Delete offending single points:
+        X_bad, y_bad, err_X_bad, err_y_bad = self.remove_points(bad_idxs)
+        
+        # Handle transformed points:
+        for pt in self.transformed:
+            mean = self.gp.predict(
+                scipy.vstack(pt.X),
+                return_std=False,
+                output_transform=scipy.linalg.block_diagonal(*pt.T)
+                **predict_kwargs
+            )
+            deltas = scipy.absolute(mean - self.y) / self.err_y
+            deltas[self.err_y == 0] = 0
+            bad_idxs = (deltas >= thresh)
+            
+            bad_X, bad_err_X, bad_y, bad_err_y, bad_T = pt.remove_points(bad_idxs)
+            
+            # TODO: Need to do something to return/re-merge the removed points!
+            
+            # TODO: Need to flag points that no longer have contents!
+            
+            # TODO: Finish this!
+        
+        
+        # Re-create the GP now that the points have been removed:
+        if 'k' not in gp_kwargs:
+            gp_kwargs['k'] = self.gp.k
+        if 'noise_k' not in gp_kwargs:
+            gp_kwargs['noise_k'] = self.gp.noise_k
+        if 'diag_factor' not in gp_kwargs:
+            gp_kwargs['diag_factor'] = self.gp.diag_factor
+        
+        self.create_gp(**gp_kwargs)
+        
+        # TODO: Re-run MAP estimate and see what to put back in!
+        
+        
+        
+        
+        
+        
+        
         out = self.gp.remove_outliers(**remove_kwargs)
-        # Chop bad_idxs down with the assumption that all constraints that are
-        # not reflected in self.y are at the end:
-        # TODO: Remove outlying transformed points, too!
-        return self.remove_points(out[4][:len(self.y)])
+        
+        bad_idxs = out[4]
+        
+        regular_flags = bad_idxs[:len(self.y)]
+        
+        # Handle transformed points:
+        if len(self.transformed) == 0:
+            # Chop bad_idxs down with the assumption that all constraints that
+            # are not reflected in self.y are at the end:
+            return (self.remove_points(regular_flags), self.transformed)
+            
+        # Form the array associating the transformed points with their indices
+        # in the combined y array inside the GP:
+        assoc_idxs = []
+        for k in range(0, len(self.transformed)):
+            assoc_idxs.extend([k] * len(self.transformed[k].y))
+        assoc_idxs = scipy.asarray(assoc_idxs, dtype=int)
+        transformed_flags = bad_idxs[len(self.y):len(self.y) + len(assoc_idxs)]
+        # As a stopgap, let's just pull out an entire channel if it has any
+        # bad points in it.
+        # TODO: Go back and do this point-by-point within the channel.
+        bad_transformed_idxs = scipy.unique(assoc_idxs[transformed_flags])
+        bad_transformed = self.transformed[bad_transformed_idxs]
+        self.transformed = scipy.delete(self.transformed, bad_transformed_idxs)
+        
+        return (self.remove_points(regular_flags), bad_transformed)
     
     def remove_extreme_changes(self, thresh=10, logic='and'):
         """Removes points at which there is an extreme change.
@@ -1019,9 +1125,15 @@ class Profile(object):
         elif isinstance(k, str):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
-        self.gp.add_data(X, y, err_y=self.err_y)
+        if self.X is not None:
+            self.gp.add_data(X, y, err_y=self.err_y)
         for p in self.transformed:
-            self.gp.add_data(scipy.vstack(p.X), p.y, err_y=p.err_y, T=p.T)
+            self.gp.add_data(
+                scipy.vstack(p.X),
+                p.y,
+                err_y=p.err_y,
+                T=scipy.linalg.block_diag(*p.T)
+            )
     
     def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):
         """Find the MAP estimate for the hyperparameters of the Profile's Gaussian process.

@@ -516,6 +516,7 @@ import copy
 import re
 import scipy
 import scipy.io
+import scipy.linalg
 import numpy
 import numpy.linalg
 import itertools
@@ -678,7 +679,7 @@ class OptionBox(tk.Frame):
 
 class SystemFrame(tk.Frame):
     SYSTEM_OPTIONS = {'Te': ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE'],
-                      'ne': ['CTS', 'ETS']}
+                      'ne': ['CTS', 'ETS', 'TCI']}
     
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
@@ -1780,9 +1781,23 @@ class FitWindow(tk.Tk):
             if p.X_dim > 1:
                 if window_mode:
                     if t_min is not None:
-                        p.remove_points(p.X[:, 0] < t_min)
+                        if p.X is not None:
+                            p.remove_points(p.X[:, 0] < t_min)
+                        for pt in p.transformed:
+                            good_idxs = (pt.X[:, :, 0] >= t_min).all(axis=1)
+                            pt.X = pt.X[good_idxs]
+                            pt.err_X = pt.err_X[good_idxs]
+                            pt.y = pt.y[good_idxs]
+                            pt.err_y = pt.err_y[good_idxs]
                     if t_max is not None:
-                        p.remove_points(p.X[:, 0] > t_max)
+                        if p.X is not None:
+                            p.remove_points(p.X[:, 0] > t_max)
+                        for pt in p.transformed:
+                            good_idxs = (pt.X[:, :, 0] <= t_max).all(axis=1)
+                            pt.X = pt.X[good_idxs]
+                            pt.err_X = pt.err_X[good_idxs]
+                            pt.y = pt.y[good_idxs]
+                            pt.err_y = pt.err_y[good_idxs]
                 else:
                     if times:
                         p.keep_times(times)
@@ -2002,19 +2017,20 @@ class FitWindow(tk.Tk):
             self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
             self.find_MAP()
             thresh = float(self.control_frame.outlier_frame.outlier_thresh_box.get())
-            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = self.combined_p.remove_outliers(thresh=thresh)
+            bad_points, bad_transformed = self.combined_p.remove_outliers(thresh=thresh)
+            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = bad_points
             X_bad_o = X_bad_o.ravel()
             err_X_bad_o = err_X_bad_o.ravel()
             # Perform a second MAP estimation to put back IN the outliers that
             # now don't look so outlying:
             self.control_frame.status_frame.add_line(
-                "Found %d candidate outliers." % (len(y_bad_o),)
+                "Found %d candidate outliers." % (len(y_bad_o) + len(bad_transformed),)
             )
             if len(y_bad_o) > 0:
                 self.control_frame.status_frame.add_line("Finding second MAP estimate...")
                 self.find_MAP()
-                # TODO: This needs to be updated once gptools supports
-                # transformed quantities!
+                
+                # Handle single points:
                 mean = self.combined_p.gp.predict(X_bad_o, n=0, noise=False, return_std=False)
                 deltas = scipy.absolute(mean - y_bad_o) / err_y_bad_o
                 deltas[err_y_bad_o == 0] = 0
@@ -2026,14 +2042,43 @@ class FitWindow(tk.Tk):
                     err_X=err_X_bad_o[good_idxs],
                     err_y=err_y_bad_o[good_idxs]
                 )
+                
+                # Handle transformed points:
+                bad_idxs_T = scipy.zeros_like(bad_transformed, dtype=bool)
+                for k in xrange(0, len(bad_transformed)):
+                    mean = self.combined_p.gp.predict(
+                        scipy.vstack(bad_transformed[k].X),
+                        output_transform=bad_transformed[k].T,
+                        return_std=False
+                    )
+                    deltas = scipy.absolute(mean - bad_transformed[k].y) / bad_transformed[k].err_y
+                    deltas[bad_transformed[k].err_y == 0] = 0
+                    bad_idxs_T[k] = (delta >= thresh).any()
+                
+                # TODO: This will screw up the order for subsequent passes,
+                # should probably pull gp creation into a method and just
+                # re-call that.
                 self.combined_p.gp.add_data(
                     X_bad_o[good_idxs],
                     y_bad_o[good_idxs],
                     err_y=err_y_bad_o[good_idxs]
                 )
+                for bad, pt in zip(bad_idxs_T, bad_transformed):
+                    if not bad_idxs_T[k]:
+                        self.combined_p.gp.add_data(
+                            scipy.vstack(pt.X),
+                            pt.y,
+                            err_y=pt.err_y,
+                            T=scipy.linalg.block_diag(*pt.T)
+                        )
+                    else:
+                        self.control_frame.status_frame.add_line(
+                            "Removed %s." % (pt.y_label,)
+                        )
                 
                 self.control_frame.status_frame.add_line(
-                    "Removed %d outliers." % (len(y_bad_o[bad_idxs]),)
+                    "Removed %d outliers total."
+                    % (len(y_bad_o[bad_idxs]) + len(bad_transformed[bad_idxs_T]),)
                 )
                 if len(y_bad_o[bad_idxs]) > 0:
                     self.plot_frame.a_val.plot(
@@ -2919,7 +2964,7 @@ if __name__ == "__main__":
         if num_proc < 4:
             args.random_starts = 4
         else:
-            args.random_starts = num_proc
+            args.random_starts = min(num_proc, 20)
     
     if args.signal:
         root.control_frame.data_source_frame.signal_coordinate_frame.signal_var.set(args.signal)
