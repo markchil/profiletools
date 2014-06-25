@@ -126,6 +126,9 @@ parser.add_argument('--shot',
                          "the tree. When pulling data from a file, this is "
                          "needed to specify constraints at the magnetic axis and "
                          "limiter.")
+parser.add_argument('--EFIT-tree',
+                    help="EFIT tree to use. Default is ANALYSIS. Otherwise, give "
+                         "a name like 'EFIT20'.")
 parser.add_argument('--t-min',
                     type=float,
                     help="Starting time of period to average over. If you are "
@@ -171,7 +174,7 @@ parser.add_argument('--x-pts',
                          "this overrides the effect of npts, x-min and x-max.")
 parser.add_argument('--system',
                     nargs='+',
-                    choices=['CTS', 'ETS', 'TS', 'GPC', 'GPC2', 'FRCECE'],
+                    choices=['CTS', 'ETS', 'TS', 'GPC', 'GPC2', 'FRCECE', 'TCI', 'reflect'],
                     help="Which system(s) to take data from. If not provided, "
                          "all applicable systems will be used. The 'TS' option "
                          "is a shortcut to include both the core (CTS) and edge "
@@ -397,6 +400,9 @@ parser.add_argument('--compute-peaking',
                     action='store_true',
                     help="Set this flag to compute the peaking figure of merit "
                          "of the profile.")
+parser.add_argument('--compute-TCI',
+                    action='store_true',
+                    help="Set this flag to compute the integrals along the TCI chords.")
 parser.add_argument('-i', '--input-filename',
                     help="Filename/path to a CSV or NetCDF file containing the "
                          "profile data to be fit. Note that if you wish to make "
@@ -679,7 +685,7 @@ class OptionBox(tk.Frame):
 
 class SystemFrame(tk.Frame):
     SYSTEM_OPTIONS = {'Te': ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE'],
-                      'ne': ['CTS', 'ETS', 'TCI']}
+                      'ne': ['CTS', 'ETS', 'TCI', 'reflect']}
     
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
@@ -696,6 +702,19 @@ class SystemFrame(tk.Frame):
             self.buttons = [OptionBox(sys, self) for sys in self.SYSTEM_OPTIONS[signal]]
             for k in xrange(0, len(self.buttons)):
                 self.buttons[k].grid(row=0, column=k)
+
+class EFITFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.EFIT_label = tk.Label(self, text="EFIT tree:")
+        self.EFIT_label.grid(row=0, column=0, sticky='E')
+        
+        self.EFIT_field = tk.Entry(self)
+        self.EFIT_field.grid(row=0, column=1, sticky='EW')
+        
+        self.grid_columnconfigure(1, weight=1)
 
 class DataSourceFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
@@ -725,6 +744,10 @@ class DataSourceFrame(tk.Frame):
         # Create frame to hold signal selection check buttons:
         self.system_frame = SystemFrame(self)
         self.system_frame.grid(row=5, sticky='W')
+        
+        # Create frame to hold EFIT tree selection:
+        self.EFIT_frame = EFITFrame(self)
+        self.EFIT_frame.grid(row=6, sticky='EW')
         
         # Allow columns to grow:
         self.grid_columnconfigure(0, weight=1)
@@ -1331,6 +1354,13 @@ class EvaluationFrame(tk.Frame):
                                              variable=self.peaking_state)
         self.peaking_button.grid(row=0, column=3, sticky='W')
         
+        # Create checkbox to select whether or not TCI integrals are computed:
+        self.TCI_state = tk.IntVar(self)
+        self.TCI_button = tk.Checkbutton(self.eval_option_frame,
+                                         text="TCI",
+                                         variable=self.TCI_state)
+        self.TCI_button.grid(row=0, column=4, sticky='W')
+        
         self.eval_option_frame.grid(row=3, column=0, sticky='W', columnspan=6)
         
         self.grid_columnconfigure(1, weight=1)
@@ -1386,6 +1416,7 @@ class StatusBox(tk.Frame):
         self.history_box = tk.Text(self,
                                    width=30,
                                    height=6,
+                                   wrap='word',
                                    # font=tkFont.Font(size=8)
                                   )
         self.history_box.grid(row=1, sticky='EWNS')
@@ -1489,8 +1520,39 @@ class PlotParamFrame(tk.Frame):
         self.y_ub_box = tk.Entry(self)
         self.y_ub_box.grid(row=2, column=3, sticky='EW')
         
+        self.update_button = tk.Button(self, text='apply', command=self.update_limits)
+        self.update_button.grid(row=3, column=0, columnspan=4, sticky='W')
+        
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(3, weight=1)
+    
+    def update_limits(self):
+        try:
+            x_lb = float(self.x_lb_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_val.set_xlim(left=x_lb)
+        try:
+            x_ub = float(self.x_ub_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_val.set_xlim(right=x_ub)
+        try:
+            y_lb = float(self.y_lb_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_val.set_ylim(bottom=y_lb)
+        try:
+            y_ub = float(self.y_ub_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_val.set_ylim(top=y_ub)
+        
+        self.master.master.plot_frame.canvas.draw()
 
 frame_params = {'relief': tk.RAISED, 'borderwidth': 2}
 
@@ -1587,7 +1649,22 @@ class FitWindow(tk.Tk):
                 self.control_frame.status_frame.add_line(
                     "Loading data from shot number %d..." % (shot,)
                 )
-                self.efit_tree = eqtools.CModEFITTree(shot)
+                EFIT_tree_name = self.control_frame.data_source_frame.EFIT_frame.EFIT_field.get()
+                if EFIT_tree_name == '':
+                    EFIT_tree_name = 'ANALYSIS'
+                try:
+                    self.efit_tree = eqtools.CModEFITTree(
+                        shot,
+                        tree=EFIT_tree_name
+                    )
+                except MDSplus.TreeException as e:
+                    self.control_frame.status_frame.add_line(
+                        "Could not load EFIT data from tree %s! Loading of data "
+                        "from tree failed." % (EFIT_tree_name,)
+                    )
+                    if args.no_interaction:
+                        raise e
+                    return
             except ValueError:
                 self.control_frame.status_frame.add_line(
                     "Invalid shot number! Loading of data from tree failed."
@@ -1789,6 +1866,7 @@ class FitWindow(tk.Tk):
                             pt.err_X = pt.err_X[good_idxs]
                             pt.y = pt.y[good_idxs]
                             pt.err_y = pt.err_y[good_idxs]
+                            pt.T = pt.T[good_idxs]
                     if t_max is not None:
                         if p.X is not None:
                             p.remove_points(p.X[:, 0] > t_max)
@@ -1798,6 +1876,7 @@ class FitWindow(tk.Tk):
                             pt.err_X = pt.err_X[good_idxs]
                             pt.y = pt.y[good_idxs]
                             pt.err_y = pt.err_y[good_idxs]
+                            pt.T = pt.T[good_idxs]
                 else:
                     if times:
                         p.keep_times(times)
@@ -1826,54 +1905,59 @@ class FitWindow(tk.Tk):
         self.control_frame.status_frame.add_line("Combining profiles...")
         
         p_list = []
-        for p in self.p.values():
-            p_list.append(p)
-        self.combined_p = copy.deepcopy(p_list.pop())
-        for p_other in p_list:
-            self.combined_p.add_profile(p_other)
+        p_include = [b.state_var.get() for b in self.control_frame.data_source_frame.system_frame.buttons]
+        for p, i in zip(self.p.values(), p_include):
+            if i:
+                p_list.append(p)
+        if len(p_list) == 0:
+            self.control_frame.status_frame.add_line("No profiles to combine!")
+        else:
+            self.combined_p = copy.deepcopy(p_list.pop())
+            for p_other in p_list:
+                        self.combined_p.add_profile(p_other)
         
-        if self.control_frame.outlier_frame.extreme_state.get():
-            self.control_frame.status_frame.add_line(
-                "Removing points that exhibit extreme changes..."
-            )
-            try:
-                X_bad_c, y_bad_c, err_X_bad_c, err_y_bad_c = \
-                    self.combined_p.remove_extreme_changes(
-                        thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get())
-                    )
-                X_bad_c = X_bad_c.ravel()
+            if self.control_frame.outlier_frame.extreme_state.get():
                 self.control_frame.status_frame.add_line(
-                    "Removed %d points with extreme changes." % (len(y_bad_c),)
+                    "Removing points that exhibit extreme changes..."
                 )
-                if len(y_bad_c) > 0:
-                    self.plot_frame.a_val.plot(
-                        X_bad_c, y_bad_c, 'mx', label='extreme change', ms=14
+                try:
+                    X_bad_c, y_bad_c, err_X_bad_c, err_y_bad_c = \
+                        self.combined_p.remove_extreme_changes(
+                            thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get())
+                        )
+                    X_bad_c = X_bad_c.ravel()
+                    self.control_frame.status_frame.add_line(
+                        "Removed %d points with extreme changes." % (len(y_bad_c),)
                     )
+                    if len(y_bad_c) > 0:
+                        self.plot_frame.a_val.plot(
+                            X_bad_c, y_bad_c, 'mx', label='extreme change', ms=14
+                        )
+                except ValueError:
+                    self.control_frame.status_frame.add_line("Invalid threshold for extreme change rejection!")
+        
+            self.plot_frame.a_val.set_ylabel(
+                "%s [%s]" % (self.combined_p.y_label, self.combined_p.y_units,) if self.combined_p.y_units
+                else self.combined_p.y_label)
+        
+            try:
+                x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
             except ValueError:
-                self.control_frame.status_frame.add_line("Invalid threshold for extreme change rejection!")
-        
-        self.plot_frame.a_val.set_ylabel(
-            "%s [%s]" % (self.combined_p.y_label, self.combined_p.y_units,) if self.combined_p.y_units
-            else self.combined_p.y_label)
-        
-        try:
-            x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
-        except ValueError:
-            x_min = self.combined_p.X.min()
-        try:
-            x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
-        except ValueError:
-            x_max = self.combined_p.X.max()
-        self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
-        try:
-            y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
-        except ValueError:
-            y_min = 0
-        try:
-            y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
-        except ValueError:
-            y_max = None
-        self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
+                x_min = self.combined_p.X.min()
+            try:
+                x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
+            except ValueError:
+                x_max = self.combined_p.X.max()
+            self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
+            try:
+                y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
+            except ValueError:
+                y_min = 0
+            try:
+                y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
+            except ValueError:
+                y_max = None
+            self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
         
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         self.plot_frame.canvas.draw()
@@ -1960,54 +2044,7 @@ class FitWindow(tk.Tk):
                 return
         
         self.control_frame.status_frame.add_line("Creating Gaussian process...")
-        self.combined_p.create_gp(
-            k=self.control_frame.kernel_frame.kernel_type_frame.k_var.get(),
-            constrain_slope_on_axis=False,
-            constrain_at_limiter=False,
-            upper_factor=args.upper_factor,
-            lower_factor=args.lower_factor
-        )
-        # Process core constraint:
-        if self.control_frame.kernel_frame.constraints_frame.core_state.get():
-            s_core_loc = self.control_frame.kernel_frame.constraints_frame.core_loc.get()
-            if s_core_loc == '':
-                self.combined_p.constrain_slope_on_axis()
-            else:
-                try:
-                    core_loc = float(s_core_loc)
-                    self.combined_p.gp.add_data(core_loc, 0, err_y=0, n=1)
-                except ValueError:
-                    self.control_frame.status_frame.add_line(
-                        "Invalid core constraint location %s, constraint will "
-                        "not be applied!" % (s_core_loc,)
-                    )
-        # Process edge constraint:
-        if self.control_frame.kernel_frame.constraints_frame.edge_state.get():
-            s_edge_locs = self.control_frame.kernel_frame.constraints_frame.edge_loc.get()
-            if s_edge_locs == '':
-                self.combined_p.constrain_at_limiter()
-            else:
-                s_edge_locs = re.findall(r'([0-9.]+)[^0-9.]*', s_edge_locs)
-                edge_locs = []
-                for loc in s_edge_locs:
-                    try:
-                        edge_locs.append(float(loc))
-                    except ValueError:
-                        self.control_frame.status_frame.add_line(
-                            "Invalid edge constraint location %s in edge "
-                            "locations, will be ignored." % (loc,)
-                        )
-                if len(edge_locs) == 0:
-                    self.control_frame.status_frame.add_line(
-                        "No valid edge constraint locations, constraint will not "
-                        "be applied!"
-                    )
-                else:
-                    self.combined_p.gp.add_data(edge_locs, 0, err_y=0.01, n=0)
-                    self.combined_p.gp.add_data(edge_locs, 0, err_y=0.1, n=1)
-        # Process bounds:
-        self.process_bounds()
-        
+        self.create_gp()
         self.control_frame.status_frame.add_line("Gaussian process created.")
         
         # Process outliers:
@@ -2017,16 +2054,28 @@ class FitWindow(tk.Tk):
             self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
             self.find_MAP()
             thresh = float(self.control_frame.outlier_frame.outlier_thresh_box.get())
-            bad_points, bad_transformed = self.combined_p.remove_outliers(thresh=thresh)
-            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o = bad_points
+            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o, bad_transformed = \
+                self.combined_p.remove_outliers(
+                    thresh=thresh,
+                    check_transformed=True
+                )
             X_bad_o = X_bad_o.ravel()
             err_X_bad_o = err_X_bad_o.ravel()
             # Perform a second MAP estimation to put back IN the outliers that
             # now don't look so outlying:
             self.control_frame.status_frame.add_line(
-                "Found %d candidate outliers." % (len(y_bad_o) + len(bad_transformed),)
+                "Found %d candidate outliers." % (len(y_bad_o),)
             )
-            if len(y_bad_o) > 0:
+            truly_bad_transformed = [pt for pt in bad_transformed if len(pt.y) > 0]
+            if len(truly_bad_transformed) > 0:
+                self.control_frame.status_frame.add_line(
+                    "Removed the following %d transformed quantities:" % (len(truly_bad_transformed),)
+                )
+                for pt in truly_bad_transformed:
+                    self.control_frame.status_frame.add_line(pt.y_label)
+                # TODO: Put a test to put transformed quantities back in!
+                
+            if len(y_bad_o) > 1:
                 self.control_frame.status_frame.add_line("Finding second MAP estimate...")
                 self.find_MAP()
                 
@@ -2043,42 +2092,11 @@ class FitWindow(tk.Tk):
                     err_y=err_y_bad_o[good_idxs]
                 )
                 
-                # Handle transformed points:
-                bad_idxs_T = scipy.zeros_like(bad_transformed, dtype=bool)
-                for k in xrange(0, len(bad_transformed)):
-                    mean = self.combined_p.gp.predict(
-                        scipy.vstack(bad_transformed[k].X),
-                        output_transform=bad_transformed[k].T,
-                        return_std=False
-                    )
-                    deltas = scipy.absolute(mean - bad_transformed[k].y) / bad_transformed[k].err_y
-                    deltas[bad_transformed[k].err_y == 0] = 0
-                    bad_idxs_T[k] = (delta >= thresh).any()
-                
-                # TODO: This will screw up the order for subsequent passes,
-                # should probably pull gp creation into a method and just
-                # re-call that.
-                self.combined_p.gp.add_data(
-                    X_bad_o[good_idxs],
-                    y_bad_o[good_idxs],
-                    err_y=err_y_bad_o[good_idxs]
-                )
-                for bad, pt in zip(bad_idxs_T, bad_transformed):
-                    if not bad_idxs_T[k]:
-                        self.combined_p.gp.add_data(
-                            scipy.vstack(pt.X),
-                            pt.y,
-                            err_y=pt.err_y,
-                            T=scipy.linalg.block_diag(*pt.T)
-                        )
-                    else:
-                        self.control_frame.status_frame.add_line(
-                            "Removed %s." % (pt.y_label,)
-                        )
+                self.create_gp()
                 
                 self.control_frame.status_frame.add_line(
-                    "Removed %d outliers total."
-                    % (len(y_bad_o[bad_idxs]) + len(bad_transformed[bad_idxs_T]),)
+                    "Removed %d outliers."
+                    % (len(y_bad_o[bad_idxs]),)
                 )
                 if len(y_bad_o[bad_idxs]) > 0:
                     self.plot_frame.a_val.plot(
@@ -2087,6 +2105,8 @@ class FitWindow(tk.Tk):
                         'rx',
                         label='outlier', ms=14
                     )
+            elif len(y_bad_o) == 1:
+                bad_idxs = scipy.ones_like(y_bad_o, dtype=bool)
             else:
                 bad_idxs = scipy.zeros_like(y_bad_o, dtype=bool)
         
@@ -2095,7 +2115,7 @@ class FitWindow(tk.Tk):
             self.control_frame.fitting_frame.method_frame.method_state.get() ==
             self.control_frame.fitting_frame.method_frame.USE_MCMC
         )
-        if not use_MCMC and (not remove_outliers or len(y_bad_o[bad_idxs]) != 0):
+        if not use_MCMC and (not remove_outliers or not bad_idxs.all()):
             self.control_frame.status_frame.add_line("Finding MAP estimate...")
             self.find_MAP()
         
@@ -2262,6 +2282,49 @@ class FitWindow(tk.Tk):
                 res['special_cov'] = res['cov'][:special_vals, :special_vals]
                 res['mean_val'] = res.pop('mean')[special_vals:]
                 res['std_val'] = res.pop('std')[special_vals:]
+            
+            if (self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get() == 'ne' and
+                    self.control_frame.eval_frame.TCI_state.get()):
+                # TODO: Make this load TCI chords if not present!
+                if 'TCI' not in self.p:
+                    self.control_frame.status_frame.add_line(
+                        "Must have loaded TCI first! TCI integrals will not be computed."
+                    )
+                else:
+                    p_TCI = self.p['TCI']
+                    self.control_frame.status_frame.add_line(
+                        "Computing TCI line integrals..."
+                    )
+                    for pt in p_TCI.transformed:
+                        self.control_frame.status_frame.add_line(pt.y_label)
+                        res_nl = self.combined_p.smooth(
+                            scipy.vstack(pt.X),
+                            use_MCMC=use_MCMC,
+                            sampler=self.sampler,
+                            full_output=True,
+                            full_MC=full_MC,
+                            rejection_func=rejection_func,
+                            num_samples=num_samples,
+                            burn=burn,
+                            thin=thin,
+                            output_transform=scipy.linalg.block_diag(*pt.T)
+                        )
+                        if pt.y_units:
+                            y_units = pt.y_units.translate(None, '\\${}')
+                            self.control_frame.status_frame.add_line(
+                                u"  measured: (%6.4g\u00B1%6.4g) %s\n"
+                                u"  fit:      (%6.4g\u00B1%6.4g) %s"
+                                % (pt.y[0], pt.err_y[0], y_units,
+                                   res_nl['mean'][0], res_nl['std'][0], y_units)
+                            )
+                        else:
+                            self.control_frame.status_frame.add_line(
+                                u"  measured: %6.4g\u00B1%6.4g\n"
+                                u"  fit:      %6.4g\u00B1%6.4g"
+                                % (pt.y[0], pt.err_y[0],
+                                   res_nl['mean'][0], res_nl['std'][0])
+                            )
+        
         except numpy.linalg.LinAlgError as e:
             self.control_frame.status_frame.add_line(
                 "Evaluation failed! Try re-running and/or adjusting bounds/number "
@@ -2282,13 +2345,13 @@ class FitWindow(tk.Tk):
             if compute_vol_avg:
                 if self.combined_p.y_units:
                     self.control_frame.status_frame.add_line(
-                        u"Volume average is (%f\u00b1%f) %s"
+                        u"Volume average is (%g\u00b1%g) %s"
                         % (self.mean_vol_avg, self.std_vol_avg,
                            self.combined_p.y_units.translate(None, '\\${}'),)
                     )
                 else:
                     self.control_frame.status_frame.add_line(
-                        u"Volume average is %f\u00b1%f"
+                        u"Volume average is %g\u00b1%g"
                         % (self.mean_vol_avg, self.std_vol_avg,)
                     )
             if compute_peaking:
@@ -2302,7 +2365,7 @@ class FitWindow(tk.Tk):
                     cov_w2_vol_avg * mean_w2 / self.mean_vol_avg**3
                 )
                 self.control_frame.status_frame.add_line(
-                    u"Peaking is %f\u00b1%f"
+                    u"Peaking is %g\u00b1%g"
                     % (self.mean_peaking, self.std_peaking,)
                 )
                 # Delete the extra points so they don't confuse the plot/file output:
@@ -2404,6 +2467,64 @@ class FitWindow(tk.Tk):
         self.plot_frame.canvas.draw()
         self.plot_frame.canvas._tkcanvas.focus_set()
         self.control_frame.status_frame.add_line("Fitting complete.")
+    
+    def create_gp(self):
+        self.combined_p.create_gp(
+            k=self.control_frame.kernel_frame.kernel_type_frame.k_var.get(),
+            constrain_slope_on_axis=False,
+            constrain_at_limiter=False,
+            upper_factor=args.upper_factor,
+            lower_factor=args.lower_factor
+        )
+        # Process core constraint:
+        if self.control_frame.kernel_frame.constraints_frame.core_state.get():
+            s_core_loc = self.control_frame.kernel_frame.constraints_frame.core_loc.get()
+            if s_core_loc == '':
+                self.combined_p.constrain_slope_on_axis()
+            else:
+                s_core_loc = re.findall(r'([0-9.]+)[^0-9.]*', s_core_loc)
+                core_locs = []
+                for loc in s_core_loc:
+                    try:
+                        core_locs.append(float(loc))
+                    except ValueError:
+                        self.control_frame.status_frame.add_line(
+                            "Invalid core constraint location %s in core "
+                            "locations, will be ignored." % (loc,)
+                        )
+                if len(core_locs) == 0:
+                    self.control_frame.status_frame.add_line(
+                        "No valid core constraint locations, constraint will not "
+                        "be applied!"
+                    )
+                else:
+                    self.combined_p.gp.add_data(core_locs, scipy.zeros_like(core_locs), n=1)
+        # Process edge constraint:
+        if self.control_frame.kernel_frame.constraints_frame.edge_state.get():
+            s_edge_locs = self.control_frame.kernel_frame.constraints_frame.edge_loc.get()
+            if s_edge_locs == '':
+                self.combined_p.constrain_at_limiter()
+            else:
+                s_edge_locs = re.findall(r'([0-9.]+)[^0-9.]*', s_edge_locs)
+                edge_locs = []
+                for loc in s_edge_locs:
+                    try:
+                        edge_locs.append(float(loc))
+                    except ValueError:
+                        self.control_frame.status_frame.add_line(
+                            "Invalid edge constraint location %s in edge "
+                            "locations, will be ignored." % (loc,)
+                        )
+                if len(edge_locs) == 0:
+                    self.control_frame.status_frame.add_line(
+                        "No valid edge constraint locations, constraint will not "
+                        "be applied!"
+                    )
+                else:
+                    self.combined_p.gp.add_data(edge_locs, scipy.zeros_like(edge_locs), err_y=0.01, n=0)
+                    self.combined_p.gp.add_data(edge_locs, scipy.zeros_like(edge_locs), err_y=0.1, n=1)
+        # Process bounds:
+        self.process_bounds()
     
     def find_MAP(self):
         try:
@@ -3104,6 +3225,8 @@ if __name__ == "__main__":
         root.control_frame.eval_frame.vol_avg_button.select()
     if args.compute_peaking:
         root.control_frame.eval_frame.peaking_button.select()
+    if args.compute_TCI:
+        root.control_frame.eval_frame.TCI_button.select()
     if args.x_lim:
         root.control_frame.plot_param_frame.x_lb_box.delete(0, tk.END)
         root.control_frame.plot_param_frame.x_lb_box.insert(0, str(args.x_lim[0]))
@@ -3114,6 +3237,9 @@ if __name__ == "__main__":
         root.control_frame.plot_param_frame.y_lb_box.insert(0, str(args.y_lim[0]))
         root.control_frame.plot_param_frame.y_ub_box.delete(0, tk.END)
         root.control_frame.plot_param_frame.y_ub_box.insert(0, str(args.y_lim[1]))
+    if args.EFIT_tree:
+        root.control_frame.data_source_frame.EFIT_frame.EFIT_field.delete(0, tk.END)
+        root.control_frame.data_source_frame.EFIT_frame.EFIT_field.insert(0, args.EFIT_tree)
     
     if args.full_auto or args.no_interaction:
         root.load_data()

@@ -510,16 +510,18 @@ class Profile(object):
             raise ValueError("When merging profiles, the y_units must agree!")
         if self.X_units != other.X_units:
             raise ValueError("When merging profiles, the X_units must agree!")
-        # Modify the channels of self.channels to avoid clashes:
-        if other.channels is not None and self.channels is not None:
-            self.channels = (
-                self.channels - self.channels.min(axis=0) +
-                other.channels.max(axis=0) + 1
-            )
-        self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y,
-                      channels=other.channels)
+        if len(other.y) > 0:
+            # Modify the channels of self.channels to avoid clashes:
+            if other.channels is not None and self.channels is not None:
+                self.channels = (
+                    self.channels - self.channels.min(axis=0) +
+                    other.channels.max(axis=0) + 1
+                )
+            self.add_data(other.X, other.y, err_X=other.err_X, err_y=other.err_y,
+                          channels=other.channels)
         
-        self.transformed = scipy.append(self.transformed, other.transformed)
+        if len(other.transformed) > 0:
+            self.transformed = scipy.append(self.transformed, other.transformed)
     
     def drop_axis(self, axis):
         """Drops a selected axis from `X`.
@@ -776,7 +778,8 @@ class Profile(object):
         
         return (X_bad, y_bad, err_X_bad, err_y_bad)
     
-    def remove_outliers(self, thresh=3, force_update=False, gp_kwargs={}, MAP_kwargs={},
+    def remove_outliers(self, thresh=3, check_transformed=False,
+                        force_update=False, gp_kwargs={}, MAP_kwargs={},
                         **predict_kwargs):
         """Remove outliers from the Gaussian process.
         
@@ -846,24 +849,30 @@ class Profile(object):
         X_bad, y_bad, err_X_bad, err_y_bad = self.remove_points(bad_idxs)
         
         # Handle transformed points:
-        for pt in self.transformed:
-            mean = self.gp.predict(
-                scipy.vstack(pt.X),
-                return_std=False,
-                output_transform=scipy.linalg.block_diagonal(*pt.T)
-                **predict_kwargs
-            )
-            deltas = scipy.absolute(mean - self.y) / self.err_y
-            deltas[self.err_y == 0] = 0
-            bad_idxs = (deltas >= thresh)
+        if check_transformed:
+            bad_transformed = scipy.zeros_like(self.transformed, dtype=Channel)
+            for k, pt in zip(range(0, len(self.transformed)), self.transformed):
+                mean = self.gp.predict(
+                    scipy.vstack(pt.X),
+                    return_std=False,
+                    output_transform=scipy.linalg.block_diag(*pt.T),
+                    **predict_kwargs
+                )
+                deltas = scipy.absolute(mean - pt.y) / pt.err_y
+                deltas[pt.err_y == 0] = 0
+                bad_idxs = (deltas >= thresh)
             
-            bad_X, bad_err_X, bad_y, bad_err_y, bad_T = pt.remove_points(bad_idxs)
+                bad_X, bad_err_X, bad_y, bad_err_y, bad_T = pt.remove_points(bad_idxs)
+                bad_transformed[k] = Channel(
+                    bad_X, bad_y, err_X=bad_err_X, err_y=bad_err_y, T=bad_T,
+                    y_label=pt.y_label, y_units=pt.y_units
+                )
             
-            # TODO: Need to do something to return/re-merge the removed points!
+                # TODO: Need to do something to return/re-merge the removed points!
             
-            # TODO: Need to flag points that no longer have contents!
+                # TODO: Need to flag points that no longer have contents!
             
-            # TODO: Finish this!
+                # TODO: Finish this!
         
         
         # Re-create the GP now that the points have been removed:
@@ -874,43 +883,15 @@ class Profile(object):
         if 'diag_factor' not in gp_kwargs:
             gp_kwargs['diag_factor'] = self.gp.diag_factor
         
-        self.create_gp(**gp_kwargs)
+        # self.create_gp(**gp_kwargs)
+        # TODO: This will screw up edge constraints!
+        
+        if check_transformed:
+            return (X_bad, y_bad, err_X_bad, err_y_bad, bad_transformed)
+        else:
+            return (X_bad, y_bad, err_X_bad, err_y_bad)
         
         # TODO: Re-run MAP estimate and see what to put back in!
-        
-        
-        
-        
-        
-        
-        
-        out = self.gp.remove_outliers(**remove_kwargs)
-        
-        bad_idxs = out[4]
-        
-        regular_flags = bad_idxs[:len(self.y)]
-        
-        # Handle transformed points:
-        if len(self.transformed) == 0:
-            # Chop bad_idxs down with the assumption that all constraints that
-            # are not reflected in self.y are at the end:
-            return (self.remove_points(regular_flags), self.transformed)
-            
-        # Form the array associating the transformed points with their indices
-        # in the combined y array inside the GP:
-        assoc_idxs = []
-        for k in range(0, len(self.transformed)):
-            assoc_idxs.extend([k] * len(self.transformed[k].y))
-        assoc_idxs = scipy.asarray(assoc_idxs, dtype=int)
-        transformed_flags = bad_idxs[len(self.y):len(self.y) + len(assoc_idxs)]
-        # As a stopgap, let's just pull out an entire channel if it has any
-        # bad points in it.
-        # TODO: Go back and do this point-by-point within the channel.
-        bad_transformed_idxs = scipy.unique(assoc_idxs[transformed_flags])
-        bad_transformed = self.transformed[bad_transformed_idxs]
-        self.transformed = scipy.delete(self.transformed, bad_transformed_idxs)
-        
-        return (self.remove_points(regular_flags), bad_transformed)
     
     def remove_extreme_changes(self, thresh=10, logic='and'):
         """Removes points at which there is an extreme change.
@@ -1128,12 +1109,13 @@ class Profile(object):
         if self.X is not None:
             self.gp.add_data(X, y, err_y=self.err_y)
         for p in self.transformed:
-            self.gp.add_data(
-                scipy.vstack(p.X),
-                p.y,
-                err_y=p.err_y,
-                T=scipy.linalg.block_diag(*p.T)
-            )
+            if len(p.y) > 0:
+                self.gp.add_data(
+                    scipy.vstack(p.X),
+                    p.y,
+                    err_y=p.err_y,
+                    T=scipy.linalg.block_diag(*p.T)
+                )
     
     def find_gp_MAP_estimate(self, force_update=False, gp_kwargs={}, **kwargs):
         """Find the MAP estimate for the hyperparameters of the Profile's Gaussian process.

@@ -474,6 +474,7 @@ class BivariatePlasmaProfile(Profile):
                 ), axis=0
             )
             xa = rho_lim.min()
+            print("limiter location=%g" % (xa,))
             x_pts = scipy.linspace(xa, xa * expansion, n_pts)
             y = scipy.zeros_like(x_pts)
             self.gp.add_data(x_pts, y, err_y=err_y, n=0)
@@ -1185,6 +1186,8 @@ def ne(shot, include=['CTS', 'ETS', 'TCI'], TCI_npts=100, TCI_flag_threshold=1e-
                     **kwargs
                 )
             )
+        elif system == 'reflect':
+            p_list.append(neReflect(shot, **kwargs))
         else:
             raise ValueError("Unknown profile '%s'." % (system,))
     
@@ -1200,7 +1203,7 @@ def neTS(shot, **kwargs):
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
 def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-           efit_tree=None, npts=50, flag_threshold=1e-3):
+           efit_tree=None, npts=20, flag_threshold=1e-3):
     p = BivariatePlasmaProfile(
         X_dim=3,
         X_units=['s', 'm', 'm'],
@@ -1251,6 +1254,7 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                 Channel(
                     X,
                     ne / 1e20,
+                    err_y=0.1 * ne / 1e20,
                     T=T,
                     y_label='nl_%02d' % (i + 1,),
                     y_units='$10^{20}$ m$^{-2}$'
@@ -1262,8 +1266,61 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     return p
 
+def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
+              efit_tree=None, remove_edge=False, rf=None):
+    p = BivariatePlasmaProfile(X_dim=2,
+                               X_units=['s', 'm'],
+                               y_units='$10^{20}$ m$^{-3}$',
+                               X_labels=['$t$', '$R_{mid}$'],
+                               y_label='$n_e$, reflect')
+    if rf is None:
+        rf = MDSplus.Tree('rf', shot)
+    if efit_tree is None:
+        p.efit_tree = eqtools.CModEFITTree(shot)
+    else:
+        p.efit_tree = efit_tree
+    
+    t = rf.getNode(r'\rf::top.reflect:result:tavg').getData().data()
+    R = rf.getNode(r'\rf::top.reflect:result:radius').getData().data()
+    ne = rf.getNode(r'\rf::top.reflect:result:density').getData().data() / 1e20
+    
+    try:
+        print("SOL reflectometer reliability=%d" % (rf.getNode(r'\rf::top.reflect:result:reliability').data(),))
+    except:
+        print("Unable to fetch reflectometer reliability!")
+    
+    channels = range(0, ne.shape[1])
+
+    channel_grid, t_grid = scipy.meshgrid(channels, t)
+
+    ne = ne.ravel()
+    R = R.ravel()
+    channels = channel_grid.ravel()
+    t = t_grid.ravel()
+
+    X = scipy.vstack((t, R)).T
+
+    p.shot = shot
+    p.abscissa = 'Rmid'
+
+    p.add_data(X, ne, channels={1: channels}, err_y=0.1 * scipy.absolute(ne))
+    
+    # Remove flagged points:
+    p.remove_points(p.y == 0)
+    if t_min is not None:
+        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
+    if t_max is not None:
+        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
+
+    p.convert_abscissa(abscissa)
+
+    if remove_edge:
+        p.remove_edge_points()
+
+    return p
+
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None):
+          efit_tree=None, remove_zeros=True, remove_edge=False):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
 
     Parameters
