@@ -484,6 +484,13 @@ parser.add_argument('--y-lim',
                     nargs=2,
                     help="The upper and lower bounds for the vertical plot axis. "
                          "If not provided, these will be set from the data.")
+parser.add_argument('--plot-idxs',
+                    action='store_true',
+                    help="Set this flag to overplot the indices of the points.")
+parser.add_argument('--remove-points',
+                    type=int,
+                    nargs='+',
+                    help="Indices of points to remove.")
 
 args = parser.parse_args()
 
@@ -529,6 +536,9 @@ import itertools
 import getpass
 import inspect
 import csv
+
+SYSTEM_OPTIONS = {'Te': ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE'],
+                  'ne': ['CTS', 'ETS', 'TCI', 'reflect']}
 
 DATE_FORMAT = '%d %b %Y %H:%M:%S'
 
@@ -684,9 +694,6 @@ class OptionBox(tk.Frame):
         self.button.select()
 
 class SystemFrame(tk.Frame):
-    SYSTEM_OPTIONS = {'Te': ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE'],
-                      'ne': ['CTS', 'ETS', 'TCI', 'reflect']}
-    
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
         tk.Frame.__init__(self, *args, **kwargs)
@@ -699,7 +706,7 @@ class SystemFrame(tk.Frame):
             self.signal = signal
             for b in self.buttons:
                 b.destroy()
-            self.buttons = [OptionBox(sys, self) for sys in self.SYSTEM_OPTIONS[signal]]
+            self.buttons = [OptionBox(sys, self) for sys in SYSTEM_OPTIONS[signal]]
             for k in xrange(0, len(self.buttons)):
                 self.buttons[k].grid(row=0, column=k)
 
@@ -938,6 +945,28 @@ class OutlierFrame(tk.Frame):
         self.outlier_thresh_unit_label = tk.Label(self, text=u"\u03C3")
         self.outlier_thresh_unit_label.grid(row=2, column=3, sticky='W')
         
+        # Create label, entry and checkbox to remove specific points:
+        self.specific_frame = tk.Frame(self)
+        self.specific_label = tk.Label(self.specific_frame, text="remove points:")
+        self.specific_label.grid(row=0, column=0, sticky='E')
+        self.specific_box = tk.Entry(self.specific_frame)
+        self.specific_box.grid(row=0, column=1, sticky='EW')
+        self.show_idx_state = tk.IntVar(self.specific_frame)
+        self.show_idx_button = tk.Checkbutton(
+            self.specific_frame,
+            text="plot indices",
+            variable=self.show_idx_state,
+            command=self.update_show_idx
+        )
+        self.show_idx_button.grid(row=0, column=2, sticky='W')
+        
+        self.specific_frame.grid_columnconfigure(1, weight=1)
+        self.specific_frame.grid(row=3, column=0, columnspan=4, sticky='EW')
+        
+        self.grid_columnconfigure(3, weight=1)
+        
+        self.idx_plotted = None
+        
         self.update_extreme()
         self.update_outlier()
     
@@ -960,6 +989,26 @@ class OutlierFrame(tk.Frame):
             self.outlier_thresh_label.config(state=tk.DISABLED)
             self.outlier_thresh_box.config(state=tk.DISABLED)
             self.outlier_thresh_unit_label.config(state=tk.DISABLED)
+    
+    def update_show_idx(self):
+        if self.idx_plotted is not None:
+            for l in self.idx_plotted:
+                try:
+                    l.remove()
+                except ValueError:
+                    pass
+            self.idx_plotted = None
+        if self.show_idx_state.get():
+            if self.master.master.master.combined_p is not None:
+                self.idx_plotted = [
+                    self.master.master.master.plot_frame.a_val.text(x, y, str(i))
+                    for i, x, y in zip(
+                        range(0, len(self.master.master.master.combined_p.y)),
+                        self.master.master.master.combined_p.X[:, 0],
+                        self.master.master.master.combined_p.y
+                    )
+                ]
+        self.master.master.master.plot_frame.canvas.draw()
 
 HYPERPARAMETERS = collections.OrderedDict([
     ('gibbstanh', collections.OrderedDict([(u"\u03C3f", "signal variance"),
@@ -1479,20 +1528,43 @@ class PlotFrame(tk.Frame):
         self.canvas.show()
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky='NESW')
         
+        # self.flag_mode_state = tk.IntVar(self)
+        # self.flag_mode_button = tk.Checkbutton(
+        #     self,
+        #     text="select/deselect points",
+        #     variable=self.flag_mode_state
+        # )
+        # self.flag_mode_button.grid(row=1, column=0, sticky='W')
+        
         self.toolbar_frame = tk.Frame(self)
         self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.toolbar_frame)
         self.toolbar.update()
-        # self.canvas._tkcanvas.grid(row=1, column=0, sticky='EW')
         self.toolbar_frame.grid(row=1, column=0, sticky='EW')
         
         self.canvas.mpl_connect('button_press_event', lambda event: self.canvas._tkcanvas.focus_set())
         self.canvas.mpl_connect('key_press_event', self.on_key_event)
+        # self.canvas.mpl_connect('button_press_event', self.on_click_event)
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         
     def on_key_event(self, evt):
         key_press_handler(evt, self.canvas, self.toolbar)
+    
+    # def on_click_event(self, event):
+    #     if self.flag_mode_state.get() and event.inaxes and self.toolbar.mode == '':
+    #         # TODO: Why the hell doesn't this work?
+    #         D_ax = self.a_val.transData.transform(
+    #             zip(self.master.combined_p.X[:, 0], self.master.combined_p.y)
+    #         )
+    #         x_ax = D_ax[:, 0]
+    #         y_ax = D_ax[:, 1]
+    #         x_pt, y_pt = self.a_val.transData.transform(
+    #             [event.xdata, event.ydata]
+    #         )
+    #         distances = scipy.sqrt((x_ax - x_pt)**2 + (y_ax - y_pt)**2)
+    #         idx = distances.argmin()
+    #         print(idx)
 
 class PlotParamFrame(tk.Frame):
     def __init__(self, *args, **kwargs):
@@ -1637,9 +1709,16 @@ class FitWindow(tk.Tk):
         
         self.X = None
         self.res = None
+        
+        self.flagged_plt = None
     
     def load_data(self):
-        self.master_p = collections.OrderedDict()
+        self.master_p = collections.OrderedDict(
+            zip(
+                SYSTEM_OPTIONS[self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get()],
+                [[]] * len(SYSTEM_OPTIONS[self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get()])
+            )
+        )
         self.efit_tree = None
         
         if (self.control_frame.data_source_frame.tree_file_frame.source_state.get() ==
@@ -1698,11 +1777,6 @@ class FitWindow(tk.Tk):
                         "Could not fetch data from the tree for system %s. "
                         "Exception was: %s" % (system, e,)
                     )
-            if not self.master_p:
-                self.control_frame.status_frame.add_line(
-                    "No systems loaded! Loading of data from tree failed."
-                )
-                return
         else:
             path = self.control_frame.data_source_frame.tree_file_frame.path_entry.get()
             root, ext = os.path.splitext(path)
@@ -1851,57 +1925,58 @@ class FitWindow(tk.Tk):
         self.p = copy.deepcopy(self.master_p)
         
         for k, p in self.p.iteritems():
-            self.control_frame.status_frame.add_line("Processing data from %s..." % (k,))
-            # Restore the master tree so they can all share data:
-            p.efit_tree = self.efit_tree
-            # Restrict data to desired time points:
-            if p.X_dim > 1:
-                if window_mode:
-                    if t_min is not None:
-                        if p.X is not None:
-                            p.remove_points(p.X[:, 0] < t_min)
-                        for pt in p.transformed:
-                            good_idxs = (pt.X[:, :, 0] >= t_min).all(axis=1)
-                            pt.X = pt.X[good_idxs]
-                            pt.err_X = pt.err_X[good_idxs]
-                            pt.y = pt.y[good_idxs]
-                            pt.err_y = pt.err_y[good_idxs]
-                            pt.T = pt.T[good_idxs]
-                    if t_max is not None:
-                        if p.X is not None:
-                            p.remove_points(p.X[:, 0] > t_max)
-                        for pt in p.transformed:
-                            good_idxs = (pt.X[:, :, 0] <= t_max).all(axis=1)
-                            pt.X = pt.X[good_idxs]
-                            pt.err_X = pt.err_X[good_idxs]
-                            pt.y = pt.y[good_idxs]
-                            pt.err_y = pt.err_y[good_idxs]
-                            pt.T = pt.T[good_idxs]
+            if p != []:
+                self.control_frame.status_frame.add_line("Processing data from %s..." % (k,))
+                # Restore the master tree so they can all share data:
+                p.efit_tree = self.efit_tree
+                # Restrict data to desired time points:
+                if p.X_dim > 1:
+                    if window_mode:
+                        if t_min is not None:
+                            if p.X is not None:
+                                p.remove_points(p.X[:, 0] < t_min)
+                            for pt in p.transformed:
+                                good_idxs = (pt.X[:, :, 0] >= t_min).all(axis=1)
+                                pt.X = pt.X[good_idxs]
+                                pt.err_X = pt.err_X[good_idxs]
+                                pt.y = pt.y[good_idxs]
+                                pt.err_y = pt.err_y[good_idxs]
+                                pt.T = pt.T[good_idxs]
+                        if t_max is not None:
+                            if p.X is not None:
+                                p.remove_points(p.X[:, 0] > t_max)
+                            for pt in p.transformed:
+                                good_idxs = (pt.X[:, :, 0] <= t_max).all(axis=1)
+                                pt.X = pt.X[good_idxs]
+                                pt.err_X = pt.err_X[good_idxs]
+                                pt.y = pt.y[good_idxs]
+                                pt.err_y = pt.err_y[good_idxs]
+                                pt.T = pt.T[good_idxs]
+                    else:
+                        if times:
+                            p.keep_times(times)
+                # Convert abscissa if needed:
+                try:
+                    p.convert_abscissa(abscissa)
+                except Exception as e:
+                    self.control_frame.status_frame.add_line(
+                        "Conversion to coordinate %s from %s failed for system %s."
+                        % (abscissa, p.abscissa, k)
+                    )
+                    print(e)
+                if len(times) == 1 or method == "all points":
+                    p.drop_axis(0)
                 else:
-                    if times:
-                        p.keep_times(times)
-            # Convert abscissa if needed:
-            try:
-                p.convert_abscissa(abscissa)
-            except Exception as e:
-                self.control_frame.status_frame.add_line(
-                    "Conversion to coordinate %s from %s failed for system %s."
-                    % (abscissa, p.abscissa, k)
-                )
-                print(e)
-            if len(times) == 1 or method == "all points":
-                p.drop_axis(0)
-            else:
-                p.time_average(
-                    robust=(method == "robust"),
-                    y_method=y_method,
-                    weighted=weighted
-                )
-            if 'GPC' in k or 'ECE' in k or core_only:
-                p.remove_edge_points()
-            
-            p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
-            
+                    p.time_average(
+                        robust=(method == "robust"),
+                        y_method=y_method,
+                        weighted=weighted
+                    )
+                if 'GPC' in k or 'ECE' in k or core_only:
+                    p.remove_edge_points()
+                
+                p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
+        
         self.control_frame.status_frame.add_line("Combining profiles...")
         
         p_list = []
@@ -1912,20 +1987,23 @@ class FitWindow(tk.Tk):
         if len(p_list) == 0:
             self.control_frame.status_frame.add_line("No profiles to combine!")
         else:
-            self.combined_p = copy.deepcopy(p_list.pop())
+            self.combined_p = copy.deepcopy(p_list.pop(0))
             for p_other in p_list:
-                        self.combined_p.add_profile(p_other)
-        
+                self.combined_p.add_profile(p_other)
+            
+            self.control_frame.outlier_frame.update_show_idx()
+            
             if self.control_frame.outlier_frame.extreme_state.get():
                 self.control_frame.status_frame.add_line(
                     "Removing points that exhibit extreme changes..."
                 )
                 try:
-                    X_bad_c, y_bad_c, err_X_bad_c, err_y_bad_c = \
-                        self.combined_p.remove_extreme_changes(
-                            thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get())
-                        )
-                    X_bad_c = X_bad_c.ravel()
+                    self.extreme_flagged = self.combined_p.remove_extreme_changes(
+                        thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get()),
+                        mask_only=True
+                    )
+                    y_bad_c = self.combined_p.y[self.extreme_flagged]
+                    X_bad_c = self.combined_p.X[self.extreme_flagged, :].ravel()
                     self.control_frame.status_frame.add_line(
                         "Removed %d points with extreme changes." % (len(y_bad_c),)
                     )
@@ -1935,6 +2013,9 @@ class FitWindow(tk.Tk):
                         )
                 except ValueError:
                     self.control_frame.status_frame.add_line("Invalid threshold for extreme change rejection!")
+                    self.extreme_flagged = scipy.zeros_like(self.combined_p.y, dtype=bool)
+            else:
+                self.extreme_flagged = scipy.zeros_like(self.combined_p.y, dtype=bool)
         
             self.plot_frame.a_val.set_ylabel(
                 "%s [%s]" % (self.combined_p.y_label, self.combined_p.y_units,) if self.combined_p.y_units
@@ -1962,7 +2043,9 @@ class FitWindow(tk.Tk):
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         self.plot_frame.canvas.draw()
         self.plot_frame.canvas._tkcanvas.focus_set()
-        # TODO: Add printing of transformed quantities, if present.
+        
+        self.outlier_flagged = scipy.zeros_like(self.combined_p.y, dtype=bool)
+        
         self.control_frame.status_frame.add_line("Averaging and plotting of data complete.")
     
     def process_bounds(self):
@@ -2054,13 +2137,17 @@ class FitWindow(tk.Tk):
             self.control_frame.status_frame.add_line("Finding initial MAP estimate...")
             self.find_MAP()
             thresh = float(self.control_frame.outlier_frame.outlier_thresh_box.get())
-            X_bad_o, y_bad_o, err_X_bad_o, err_y_bad_o, bad_transformed = \
+            self.outlier_flagged, bad_transformed = \
                 self.combined_p.remove_outliers(
                     thresh=thresh,
-                    check_transformed=True
+                    check_transformed=True,
+                    mask_only=True
                 )
-            X_bad_o = X_bad_o.ravel()
-            err_X_bad_o = err_X_bad_o.ravel()
+            X_bad_o = self.combined_p.X[self.outlier_flagged, :].ravel()
+            err_X_bad_o = self.combined_p.err_X[self.outlier_flagged, :].ravel()
+            y_bad_o = self.combined_p.y[self.outlier_flagged]
+            err_y_bad_o = self.combined_p.err_y[self.outlier_flagged]
+            
             # Perform a second MAP estimation to put back IN the outliers that
             # now don't look so outlying:
             self.control_frame.status_frame.add_line(
@@ -2077,7 +2164,11 @@ class FitWindow(tk.Tk):
                 
             if len(y_bad_o) > 1:
                 self.control_frame.status_frame.add_line("Finding second MAP estimate...")
+                
+                self.create_gp()
                 self.find_MAP()
+                
+                idxs = scipy.where(self.outlier_flagged)[0]
                 
                 # Handle single points:
                 mean = self.combined_p.gp.predict(X_bad_o, n=0, noise=False, return_std=False)
@@ -2085,12 +2176,8 @@ class FitWindow(tk.Tk):
                 deltas[err_y_bad_o == 0] = 0
                 bad_idxs = (deltas >= thresh)
                 good_idxs = ~bad_idxs
-                self.combined_p.add_data(
-                    X_bad_o[good_idxs],
-                    y_bad_o[good_idxs],
-                    err_X=err_X_bad_o[good_idxs],
-                    err_y=err_y_bad_o[good_idxs]
-                )
+                
+                self.outlier_flagged[idxs[good_idxs]] = False
                 
                 self.create_gp()
                 
@@ -2264,6 +2351,17 @@ class FitWindow(tk.Tk):
                     special_vals=special_vals,
                     special_X_vals=int(compute_peaking)
                 )
+                # Print summary of fit:
+                self.control_frame.status_frame.add_line(
+                    "Median relative uncertainty in value: %.2f%%\n"
+                    "Median relative uncertainty in gradient: %.2f%%\n"
+                    "Median relative uncertainty in a/L: %.2f%%" %
+                    (
+                        100 * scipy.median(scipy.absolute(res['std_val'] / res['mean_val'])),
+                        100 * scipy.median(scipy.absolute(res['std_grad'] / res['mean_grad'])),
+                        100 * scipy.median(scipy.absolute(res['std_a_L'] / res['mean_a_L']))
+                    )
+                )
             else:
                 res = self.combined_p.smooth(
                     X,
@@ -2282,6 +2380,12 @@ class FitWindow(tk.Tk):
                 res['special_cov'] = res['cov'][:special_vals, :special_vals]
                 res['mean_val'] = res.pop('mean')[special_vals:]
                 res['std_val'] = res.pop('std')[special_vals:]
+                
+                # Print summary of fit:
+                self.control_frame.status_frame.add_line(
+                    "Median relative uncertainty in value: %.2f%%" %
+                    (100 * scipy.median(scipy.absolute(res['std_val'] / res['mean_val'])),)
+                )
             
             if (self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get() == 'ne' and
                     self.control_frame.eval_frame.TCI_state.get()):
@@ -2469,12 +2573,50 @@ class FitWindow(tk.Tk):
         self.control_frame.status_frame.add_line("Fitting complete.")
     
     def create_gp(self):
+        s_flagged_idxs = re.findall(
+            r'([0-9.]+)[^0-9.]*',
+            self.control_frame.outlier_frame.specific_box.get()
+        )
+        flagged_idxs = set()
+        for s in s_flagged_idxs:
+            try:
+                i = float(s)
+                if i >= len(self.combined_p.y):
+                    self.control_frame.status_frame.add_line(
+                        "Value %d out of range, will be ignored." % (i,)
+                    )
+                else:
+                    flagged_idxs.add(i)
+            except ValueError:
+                self.control_frame.status_frame.add_line(
+                    "Invalid index to remove '%s', will be ignored." % (s,)
+                )
+        flagged_idxs = list(flagged_idxs)
+        if self.flagged_plt is not None:
+            for p in self.flagged_plt:
+                try:
+                    p.remove()
+                except ValueError:
+                    pass
+        if len(flagged_idxs) > 0:
+            self.flagged_plt = self.plot_frame.a_val.plot(
+                self.combined_p.X[flagged_idxs, :].ravel(),
+                self.combined_p.y[flagged_idxs],
+                'x',
+                color='orange',
+                label='flagged',
+                ms=14
+            )
+        mask = scipy.ones_like(self.combined_p.y, dtype=bool)
+        mask[flagged_idxs] = False
+        mask = mask & (~self.extreme_flagged) & (~self.outlier_flagged)
         self.combined_p.create_gp(
             k=self.control_frame.kernel_frame.kernel_type_frame.k_var.get(),
             constrain_slope_on_axis=False,
             constrain_at_limiter=False,
             upper_factor=args.upper_factor,
-            lower_factor=args.lower_factor
+            lower_factor=args.lower_factor,
+            mask=mask
         )
         # Process core constraint:
         if self.control_frame.kernel_frame.constraints_frame.core_state.get():
@@ -3240,6 +3382,10 @@ if __name__ == "__main__":
     if args.EFIT_tree:
         root.control_frame.data_source_frame.EFIT_frame.EFIT_field.delete(0, tk.END)
         root.control_frame.data_source_frame.EFIT_frame.EFIT_field.insert(0, args.EFIT_tree)
+    if args.plot_idxs:
+        root.control_frame.outlier_frame.show_idx_button.select()
+    if args.remove_points:
+        root.control_frame.outlier_frame.specific_box.insert(0, str(args.remove_points)[1:-1])
     
     if args.full_auto or args.no_interaction:
         root.load_data()

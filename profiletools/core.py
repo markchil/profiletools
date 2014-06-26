@@ -779,7 +779,7 @@ class Profile(object):
         return (X_bad, y_bad, err_X_bad, err_y_bad)
     
     def remove_outliers(self, thresh=3, check_transformed=False,
-                        force_update=False, gp_kwargs={}, MAP_kwargs={},
+                        force_update=False, mask_only=False, gp_kwargs={}, MAP_kwargs={},
                         **predict_kwargs):
         """Remove outliers from the Gaussian process.
         
@@ -821,6 +821,11 @@ class Profile(object):
             Uncertainties on the bad values.
         transformed_bad : array of :py:class:`Channel`
             Transformed points that were removed.
+        mask_only : bool, optional
+            Set this flag to return only a mask of the non-transformed points
+            that are flagged. Default is False (completely remove bad points).
+            In either case, the bad transformed points will ALWAYS be remove if
+            `check_transformed` is True.
         """
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
@@ -839,14 +844,9 @@ class Profile(object):
         deltas[self.err_y == 0] = 0
         bad_idxs = (deltas >= thresh)
         
-        # Pull points out to return:
-        y_bad = self.y[bad_idxs]
-        err_y_bad = self.err_y[bad_idxs]
-        X_bad = self.X[bad_idxs, :]
-        err_X_bad = self.err_X[bad_idxs, :]
-        
-        # Delete offending single points:
-        X_bad, y_bad, err_X_bad, err_y_bad = self.remove_points(bad_idxs)
+        if not mask_only:
+            # Delete offending single points:
+            X_bad, y_bad, err_X_bad, err_y_bad = self.remove_points(bad_idxs)
         
         # Handle transformed points:
         if check_transformed:
@@ -876,24 +876,30 @@ class Profile(object):
         
         
         # Re-create the GP now that the points have been removed:
-        if 'k' not in gp_kwargs:
-            gp_kwargs['k'] = self.gp.k
-        if 'noise_k' not in gp_kwargs:
-            gp_kwargs['noise_k'] = self.gp.noise_k
-        if 'diag_factor' not in gp_kwargs:
-            gp_kwargs['diag_factor'] = self.gp.diag_factor
+        # if 'k' not in gp_kwargs:
+        #     gp_kwargs['k'] = self.gp.k
+        # if 'noise_k' not in gp_kwargs:
+        #     gp_kwargs['noise_k'] = self.gp.noise_k
+        # if 'diag_factor' not in gp_kwargs:
+        #     gp_kwargs['diag_factor'] = self.gp.diag_factor
         
         # self.create_gp(**gp_kwargs)
         # TODO: This will screw up edge constraints!
         
         if check_transformed:
-            return (X_bad, y_bad, err_X_bad, err_y_bad, bad_transformed)
+            if mask_only:
+                return (bad_idxs, bad_transformed)
+            else:
+                return (X_bad, y_bad, err_X_bad, err_y_bad, bad_transformed)
         else:
-            return (X_bad, y_bad, err_X_bad, err_y_bad)
+            if mask_only:
+                return bad_idxs
+            else:
+                return (X_bad, y_bad, err_X_bad, err_y_bad)
         
         # TODO: Re-run MAP estimate and see what to put back in!
     
-    def remove_extreme_changes(self, thresh=10, logic='and'):
+    def remove_extreme_changes(self, thresh=10, logic='and', mask_only=False):
         """Removes points at which there is an extreme change.
         
         Only for univariate data!
@@ -910,12 +916,16 @@ class Profile(object):
         thresh : float, optional
             The threshold as a multiplier times `err_y`. Default is 10 (i.e.,
             throw away all 10-sigma changes).
-        logic : {'and', 'or'}
+        logic : {'and', 'or'}, optional
             Whether the logical operation performed should be an and or an or
             when looking at left-hand and right-hand differences. 'and' is more
             conservative, but 'or' will help if you have multiple bad channels
             in a row. Default is 'and' (point must have a drastic change in both 
             directions to be rejected).
+        mask_only : bool, optional
+            If True, only the boolean mask indicated where the bad points are
+            will be removed, and it is up to the user to remove them. Default is
+            False (actually remove the bad points).
         """
         if self.X_dim != 1:
             raise NotImplementedError("Extreme change removal is not supported "
@@ -933,10 +943,13 @@ class Profile(object):
             extreme_changes = (forward_diff >= thresh) | (backward_diff >= thresh)
         else:
             raise ValueError("Unsupported logic '%s'." % (logic,))
-        return self.remove_points(extreme_changes[sort_idx.argsort()])
+        if mask_only:
+            return extreme_changes[sort_idx.argsort()]
+        else:
+            return self.remove_points(extreme_changes[sort_idx.argsort()])
     
     def create_gp(self, k=None, noise_k=None, upper_factor=5, lower_factor=5,
-                  x0_bounds=None, k_kwargs={}, **kwargs):
+                  x0_bounds=None, mask=None, k_kwargs={}, **kwargs):
         """Create a Gaussian process to handle the data.
         
         Parameters
@@ -985,6 +998,9 @@ class Profile(object):
             Gibbs covariance function with tanh warping. This is the
             hyperparameter that tends to need the most tuning on C-Mod data.
             Default is None (use range of X).
+        mask : array of bool, optional
+            Boolean mask of values to actually include in the GP. Default is to
+            include all values.
         k_kwargs : dict, optional
             All entries are passed as kwargs to the constructor for the kernel
             if a kernel instance is not provided.
@@ -998,6 +1014,11 @@ class Profile(object):
         # Note that using this form only gets the non-transformed values.
         y = self.y
         X = self.X
+        err_y = self.err_y
+        if mask is not None:
+            y = y[mask]
+            X = X[mask, :]
+            err_y = err_y[mask]
         if isinstance(k, gptools.Kernel):
             # Skip to the end for pure kernel instances, no need to do all the
             # testing...
@@ -1107,7 +1128,7 @@ class Profile(object):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
         if self.X is not None:
-            self.gp.add_data(X, y, err_y=self.err_y)
+            self.gp.add_data(X, y, err_y=err_y)
         for p in self.transformed:
             if len(p.y) > 0:
                 self.gp.add_data(
