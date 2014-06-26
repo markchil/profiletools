@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Provides the base :py:class:`Profile` class.
+"""Provides the base :py:class:`Profile` class and other utilities.
 """
 
 from __future__ import division
@@ -33,8 +33,63 @@ import csv
 import warnings
 import re
 
-def average_points(X, y, err_X, err_y, axis, T=None, ddof=1, robust=False,
+def average_points(X, y, err_X, err_y, T=None, ddof=1, robust=False,
                    y_method='sample', X_method='sample', weighted=False):
+    """Find the average of the points with the given uncertainties using a variety of techniques.
+    
+    Parameters
+    ----------
+    X : array, (`M`, `D`) or (`M`, `N`, `D`)
+        Abscissa values to average.
+    y : array, (`M`)
+        Data values to average.
+    err_X : array, same shape as `X`
+        Uncertainty in `X`.
+    err_y : array, same shape as `y`
+        Uncertainty in `y`.
+    T : array, (`M`, `N`), optional
+        Transform for `y`. Default is None (`y` is not transformed).
+    ddof : int, optional
+        The degree of freedom correction used in computing the standard
+        deviation. The default is 1, the standard Bessel correction to
+        give an unbiased estimate of the variance.
+    robust : bool, optional
+        Set this flag to use robust estimators (median, IQR). Default is False.
+    y_method : {'sample', 'RMS', 'total', 'of mean', 'of mean sample'}, optional
+        The method to use in computing the uncertainty in the averaged `y`.
+        
+        * 'sample' computes the sample standard deviation.
+        * 'RMS' computes the root-mean-square of the individual error bars.
+        * 'total' computes the square root of the sum of the sample variance and
+          the mean variance. This is only statistically reasonable if the points
+          represent sample means/variances already.
+        * 'of mean' computes the uncertainty in the mean using error propagation
+          with the given uncertainties.
+        * 'of mean sample' computes the uncertainty in the mean using error
+          propagation with the sample variance.
+        
+        Default is 'sample' (use sample variance).
+    X_method : {'sample', 'RMS', 'total', 'of mean', 'of mean sample'}, optional
+        The method to use in computing the uncertainty in the averaged `X`.
+        Options are the same as `y_method`. Default is 'sample' (use sample
+        variance).
+    weighted : bool, optional
+        Set this flag to use weighted estimators. The weights are 1/err_y^2.
+        Default is False (use unweighted estimators).
+    
+    Returns
+    -------
+    mean_X : array, (`D`,) or (`N`, `D`)
+        Mean of abscissa values.
+    mean_y : float
+        Mean of data values.
+    err_X : array, same shape as `mean_X`
+        Uncertainty in abscissa values.
+    err_y : float
+        Uncertainty in data values.
+    T : array, (`N`,) or None
+        Mean of transformation.
+    """
     allowed_methods = ['sample', 'RMS', 'total', 'of mean', 'of mean sample']
     if y_method not in allowed_methods:
         raise ValueError("Unsupported y_method '%s'!" % (y_method,))
@@ -155,6 +210,29 @@ def average_points(X, y, err_X, err_y, axis, T=None, ddof=1, robust=False,
     return (mean_X, mean_y, err_X, err_y, T)
 
 class Channel(object):
+    """Class to store data from a single channel.
+    
+    This is particularly useful for storing linearly transformed data, but
+    should work for general data just as well.
+    
+    Parameters
+    ----------
+    X : array, (`M`, `N`, `D`)
+        Abscissa values to use.
+    y : array, (`M`,)
+        Data values.
+    err_X : array, same shape as `X`
+        Uncertainty in `X`.
+    err_y : array, (`M`,)
+        Uncertainty in data.
+    T : array, (`M`, `N`), optional
+        Linear transform to get from latent variables to data in `y`. Default is
+        that `y` represents untransformed data.
+    y_label : str, optional
+        Label for the `y` data. Default is empty string.
+    y_units : str, optional
+        Units of the `y` data. Default is empty string.
+    """
     def __init__(self, X, y, err_X=0, err_y=0, T=None, y_label='', y_units=''):
         self.y_label = y_label
         self.y_units = y_units
@@ -230,6 +308,24 @@ class Channel(object):
         self.T = T
     
     def keep_slices(self, axis, vals, keep_mixed=False):
+        """Only keep the indices closest to given `vals`.
+        
+        Parameters
+        ----------
+        axis : int
+            The column in `X` to check values on.
+        vals : float or 1-d array
+            The value(s) to keep the points that are nearest to.
+        keep_mixed : bool, optional
+            Set this flag to keep transformed quantities that depend on multiple
+            values of `X[:, :, axis]`. Default is False (drop mixed quantities).
+        
+        Returns
+        -------
+        still_good : bool
+            Returns True if there are still any points left in the channel,
+            False otherwise.
+        """
         unique_vals = []
         num_unique = []
         for pt in self.X:
@@ -253,6 +349,15 @@ class Channel(object):
             return True
         
     def average_data(self, axis=0, **kwargs):
+        """Average the data along the given `axis`.
+        
+        Parameters
+        ----------
+        axis : int, optional
+            Axis to average along. Default is 0.
+        **kwargs : optional keyword arguments
+            All additional kwargs are passed to :py:func:`average_points`.
+        """
         reduced_X = scipy.delete(self.X, axis, axis=2)
         reduced_err_X = scipy.delete(self.err_X, axis, axis=2)
         self.X, self.y, self.err_X, self.err_y, self.T = average_points(
@@ -260,7 +365,6 @@ class Channel(object):
             self.y,
             reduced_err_X,
             self.err_y,
-            axis,
             T=self.T,
             **kwargs
         )
@@ -271,6 +375,26 @@ class Channel(object):
         self.T = scipy.expand_dims(self.T, axis=0)
     
     def remove_points(self, conditional):
+        """Remove points satisfying `conditional`.
+        
+        Parameters
+        ----------
+        conditional : array, same shape as `self.y`
+            Boolean array with True wherever a point should be removed.
+        
+        Returns
+        -------
+        bad_X : array
+            The removed `X` values.
+        bad_err_X : array
+            The uncertainty in the removed `X` values.
+        bad_y : array
+            The removed `y` values.
+        bad_err_y : array
+            The uncertainty in the removed `y` values.
+        bad_T : array
+            The transformation matrix of the removed `y` values.
+        """
         keep_idxs = ~conditional
         
         bad_X = self.X[conditional, :, :]
@@ -554,6 +678,8 @@ class Profile(object):
             The axis to take the slice(s) of.
         vals : array of float
             The values the axis should be close to.
+        **kwargs : optional kwargs
+            All additional kwargs are passed to :py:meth:`~gptools.core.Channel.keep_slices`.
         """
         try:
             iter(vals)
@@ -603,29 +729,8 @@ class Profile(object):
         ----------
         axis : int, optional
             The index of the dimension to average over. Default is 0.
-        ddof : int, optional
-            The degree of freedom correction used in computing the standard
-            deviation. The default is 1, the standard Bessel correction to
-            give an unbiased estimate of the variance.
-        robust : bool, optional
-            If True, the median is used for the central value and the
-            interquartile range is used for the distributional width.
-        y_method : {'sample', 'RMS', 'total'}, optional
-            The method to use in computing the error bar on the averaged
-            ordinate. 'sample' takes the sampled standard deviation, and is the
-            default. 'RMS' uses the mean of the individual variances. 'total'
-            uses the law of total variance, and is essentially the sum of the
-            two. This is only statistically valid if the data have already been
-            binned in some manner.
-        X_method : {'sample', 'RMS', 'total'}, optional
-            Same as `y_method`, but used for the uncertainty in the abscissa.
-            Default is again 'sample' (use the sample standard deviation).
-        weighted : bool, optional
-            Set to True to use weighted estimators (weighted with the provided
-            error bars). Default is False (use conventional, unweighted
-            estimators). Note that, when weighting is used, the weights obtained
-            from `y` are used to weight `X` so that the two sets are consistently
-            weighted.
+        **kwargs : optional kwargs
+            All additional kwargs are passed to :py:func:`average_points`.
         """
         # TODO: Add support for custom bins!
         if self.X is not None:
@@ -647,7 +752,6 @@ class Profile(object):
                     self.y[chan_mask],
                     reduced_err_X[chan_mask, :],
                     self.err_y[chan_mask],
-                    axis,
                     **kwargs
                 )
             
@@ -794,20 +898,28 @@ class Profile(object):
         thresh : float, optional
             The threshold as a multiplier times `err_y`. Default is 3 (i.e.,
             throw away all 3-sigma points).
+        check_transformed : bool, optional
+            Set this flag to check if transformed quantities are outliers.
+            Default is False (don't check transformed quantities).
         force_update : bool, optional
             If True, a new Gaussian process will be created even if one already
             exists. Set this if you have added data or constraints since you
             created the Gaussian process. Default is False (use current Gaussian
             process if it exists).
+        mask_only : bool, optional
+            Set this flag to return only a mask of the non-transformed points
+            that are flagged. Default is False (completely remove bad points).
+            In either case, the bad transformed points will ALWAYS be removed if
+            `check_transformed` is True.
         gp_kwargs : dict, optional
             The entries of this dictionary are passed as kwargs to
             :py:meth:`create_gp` if it gets called. Default is {}.
         MAP_kwargs : dict, optional
             The entries of this dictionary are passed as kwargs to
             :py:meth:`find_gp_MAP_estimate` if it gets called. Default is {}.
-        **remove_kwargs : optional parameters
+        **predict_kwargs : optional parameters
             All other parameters are passed to the Gaussian process'
-            :py:meth:`remove_outliers` method.
+            :py:meth:`predict` method.
         
         Returns
         -------
@@ -821,18 +933,11 @@ class Profile(object):
             Uncertainties on the bad values.
         transformed_bad : array of :py:class:`Channel`
             Transformed points that were removed.
-        mask_only : bool, optional
-            Set this flag to return only a mask of the non-transformed points
-            that are flagged. Default is False (completely remove bad points).
-            In either case, the bad transformed points will ALWAYS be remove if
-            `check_transformed` is True.
         """
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not remove_kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
-        
-        # TODO: Just implement this here to keep it cleaner now that there are transformed quantities to worry about...
         
         # Handle single points:
         mean = self.gp.predict(
@@ -1246,7 +1351,6 @@ class Profile(object):
         full_output : dict
             Dictionary with fields for mean, std, cov and possibly random samples. Only returned if `full_output` is True.
         """
-        # TODO: Add a lot more intelligence!
         if force_update or self.gp is None:
             self.create_gp(**gp_kwargs)
             if not kwargs.get('use_MCMC', False):
@@ -1268,6 +1372,7 @@ class Profile(object):
         """
         # TODO: Add support for transformed quantities!
         # TODO: Add metadata (probably in CMod...)!
+        # Could put metadata as a kwarg...
         
         # Only build these arrays once to save a bit of time:
         # Note that this form does not write any of the transformed quantities!
@@ -1472,6 +1577,8 @@ def read_NetCDF(filename, X_names, y_name, metadata=[]):
     return p
 
 def parse_column_name(name):
+    """Parse a column header `name` into label and units.
+    """
     name_split = re.split(r'^([^ \t]*)[ \t]*\[(.*)\]$', name)
     if len(name_split) == 1:
         name = name_split[0]
@@ -1615,6 +1722,8 @@ class RejectionFunc(object):
             return True
 
 def leading_axis_product(w, x):
+    """Perform a product along the leading axis, as is needed when applying weights.
+    """
     return scipy.einsum('i...,i...->i...', w, x)
 
 def meanw(x, weights=None, axis=None):
@@ -1749,6 +1858,19 @@ def robust_std(y, axis=None):
             scipy.stats.scoreatpercentile(y, 25.0, axis=axis)) / IQR_TO_STD
 
 def scoreatpercentilew(x, p, weights):
+    """Computes the weighted score at the given percentile.
+    
+    Does not work on small data sets!
+    
+    Parameters
+    ----------
+    x : array
+        Array of data to apply to. Only works properly on 1d data!
+    p : float or array of float
+        Percentile(s) to find.
+    weights : array, same shape as `x`
+        The weights to apply to the values in `x`.
+    """
     # TODO: Vectorize this!
     x = scipy.asarray(x)
     weights = scipy.asarray(weights)
@@ -1764,6 +1886,21 @@ def scoreatpercentilew(x, p, weights):
     # TODO: This returns an array for a scalar input!
 
 def medianw(x, weights=None, axis=None):
+    """Computes the weighted median of the given data.
+    
+    Does not work on small data sets!
+    
+    Parameters
+    ----------
+    x : array
+        Array of data to apply to. Only works properly on 1d, 2d and 3d data.
+    weights : array, optional
+        Weights to apply to the values in `x`. Default is to use an unweighted
+        estimator.
+    axis : int, optional
+        The axis to take the median along. Default is None (apply to flattened
+        array).
+    """
     # TODO: This could be done a whole lot better!
     if weights is None:
         return scipy.median(x, axis=axis)
@@ -1785,6 +1922,21 @@ def medianw(x, weights=None, axis=None):
             raise NotImplementedError("That shape/axis is not supported!")
 
 def robust_stdw(x, weights=None, axis=None):
+    """Computes the weighted robust standard deviation from the weighted IQR.
+    
+    Does not work on small data sets!
+    
+    Parameters
+    ----------
+    x : array
+        Array of data to apply to. Only works properly on 1d, 2d and 3d data.
+    weights : array, optional
+        Weights to apply to the values in `x`. Default is to use an unweighted
+        estimator.
+    axis : int, optional
+        The axis to take the robust standard deviation along. Default is None
+        (apply to flattened array).
+    """
     # TODO: This could be done a whole lot better!
     if weights is None:
         return robust_std(x, axis=axis)

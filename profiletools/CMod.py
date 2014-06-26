@@ -58,6 +58,7 @@ class BivariatePlasmaProfile(Profile):
     second column is `R` and the third is `Z`. Otherwise the second column is
     the desired abscissa (psinorm, etc.).
     """
+    
     def convert_abscissa(self, new_abscissa, drop_nan=True, ddof=1):
         """Convert the internal representation of the abscissa to new coordinates.
         
@@ -272,6 +273,13 @@ class BivariatePlasmaProfile(Profile):
         self.average_data(axis=0, **kwargs)
     
     def drop_axis(self, axis):
+        """Drops a selected axis from `X`.
+        
+        Parameters
+        ----------
+        axis : int
+            The index of the axis to drop.
+        """
         if self.X_labels[axis] == '$t$':
             if self.X is not None:
                 self.t_min = self.X[:, 0].min()
@@ -287,7 +295,16 @@ class BivariatePlasmaProfile(Profile):
                     self.t_max = max(self.t_max, t_max_T)
         super(BivariatePlasmaProfile, self).drop_axis(axis)
     
-    def keep_times(self, times):
+    def keep_times(self, times, **kwargs):
+        """Keeps only the nearest points to vals along the time axis for each channel.
+        
+        Parameters
+        ----------
+        times : array of float
+            The values the time should be close to.
+        **kwargs : optional kwargs
+            All additional kwargs are passed to :py:meth:`~gptools.core.Channel.keep_slices`.
+        """
         if self.X_labels[0] != '$t$':
             raise ValueError("Cannot keep specific time slices after time-averaging!")
         try:
@@ -295,10 +312,10 @@ class BivariatePlasmaProfile(Profile):
         except TypeError:
             times = [times]
         self.times = times
-        self.keep_slices(0, times)
+        self.keep_slices(0, times, **kwargs)
     
     def add_profile(self, other):
-        """Absorbs the data from one profile object.
+        """Absorbs the data from another profile object.
         
         Parameters
         ----------
@@ -331,10 +348,15 @@ class BivariatePlasmaProfile(Profile):
         """
         if self.abscissa == 'RZ':
             if allow_conversion:
-                warnings.warn("Removal of edge points not supported with abscissa RZ. Will convert to psinorm.")
+                warnings.warn(
+                    "Removal of edge points not supported with abscissa RZ. Will "
+                    "convert to psinorm."
+                )
                 self.convert_abscissa('psinorm')
             else:
-                raise ValueError("Removal of edge points not supported with abscissa RZ!")
+                raise ValueError(
+                    "Removal of edge points not supported with abscissa RZ!"
+                )
         if 'r/a' in self.abscissa or 'norm' in self.abscissa:
             x_out = 1.0
         elif self.abscissa == 'Rmid':
@@ -345,7 +367,9 @@ class BivariatePlasmaProfile(Profile):
                 assert self.X_dim == 2
                 x_out = self.efit_tree.getRmidOutSpline()(scipy.asarray(self.X[:, 0]).ravel())
         else:
-            raise ValueError("Removal of edge points not supported with abscissa %s!" % (self.abscissa,))
+            raise ValueError(
+                "Removal of edge points not supported with abscissa %s!" % (self.abscissa,)
+            )
         self.remove_points((self.X[:, -1] >= x_out) | scipy.isnan(self.X[:, -1]))
     
     def constrain_slope_on_axis(self, err=0, times=None):
@@ -1148,62 +1172,31 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
 
     return p
 
-def ne(shot, include=['CTS', 'ETS', 'TCI'], TCI_npts=100, TCI_flag_threshold=1e-3, **kwargs):
-    """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
+def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
+           efit_tree=None, npts=20, flag_threshold=1e-3):
+    """Returns a profile representing electron density from the two color interferometer system.
 
     Parameters
     ----------
     shot : int
         The shot number to load.
-    include : list of str, optional
-        The data sources to include. Valid options are:
-
-            === =======================
-            CTS Core Thomson scattering
-            ETS Edge Thomson scattering
-            === =======================
-
-        The default is to include all data sources.
-    **kwargs
-        All remaining parameters are passed to the individual loading methods.
+    abscissa : str, optional
+        The abscissa to use for the data. The default is 'RZ'.
+    t_min : float, optional
+        The smallest time to include. Default is None (no lower bound).
+    t_max : float, optional
+        The largest time to include. Default is None (no upper bound).
+    electrons : MDSplus.Tree, optional
+        An MDSplus.Tree object open to the electrons tree of the correct shot.
+        The shot of the given tree is not checked! Default is None (open tree).
+    efit_tree : eqtools.CModEFITTree, optional
+        An eqtools.CModEFITTree object open to the correct shot. The shot of the
+        given tree is not checked! Default is None (open tree).
+    npts : int, optional
+        The number of points to use for the line integral. Default is 20.
+    flag_threshold : float, optional
+        The threshold below which points are considered bad. Default is 1e-3.
     """
-    if 'electrons' not in kwargs:
-        kwargs['electrons'] = MDSplus.Tree('electrons', shot)
-    if 'efit_tree' not in kwargs:
-        kwargs['efit_tree'] = eqtools.CModEFITTree(shot)
-    p_list = []
-    for system in include:
-        if system == 'CTS':
-            p_list.append(neCTS(shot, **kwargs))
-        elif system == 'ETS':
-            p_list.append(neETS(shot, **kwargs))
-        elif system == 'TCI':
-            p_list.append(
-                neTCI(
-                    shot,
-                    npts=TCI_npts,
-                    flag_threshold=TCI_flag_threshold,
-                    **kwargs
-                )
-            )
-        elif system == 'reflect':
-            p_list.append(neReflect(shot, **kwargs))
-        else:
-            raise ValueError("Unknown profile '%s'." % (system,))
-    
-    p = p_list.pop()
-    for p_other in p_list:
-        p.add_profile(p_other)
-
-    return p
-
-def neTS(shot, **kwargs):
-    """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
-    """
-    return ne(shot, include=['CTS', 'ETS'], **kwargs)
-
-def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-           efit_tree=None, npts=20, flag_threshold=1e-3):
     p = BivariatePlasmaProfile(
         X_dim=3,
         X_units=['s', 'm', 'm'],
@@ -1268,6 +1261,31 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
 
 def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
               efit_tree=None, remove_edge=False, rf=None):
+    """Returns a profile representing electron density from the LH/SOL reflectometer system.
+
+    Parameters
+    ----------
+    shot : int
+        The shot number to load.
+    abscissa : str, optional
+        The abscissa to use for the data. The default is 'Rmid'.
+    t_min : float, optional
+        The smallest time to include. Default is None (no lower bound).
+    t_max : float, optional
+        The largest time to include. Default is None (no upper bound).
+    electrons : MDSplus.Tree, optional
+        An MDSplus.Tree object open to the electrons tree of the correct shot.
+        The shot of the given tree is not checked! Default is None (open tree).
+    efit_tree : eqtools.CModEFITTree, optional
+        An eqtools.CModEFITTree object open to the correct shot. The shot of the
+        given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
+    rf : MDSplus.Tree, optional
+        An MDSplus.Tree object open to the RF tree of the correct shot.
+        The shot of the given tree is not checked! Default is None (open tree).
+    """
     p = BivariatePlasmaProfile(X_dim=2,
                                X_units=['s', 'm'],
                                y_units='$10^{20}$ m$^{-3}$',
@@ -1318,6 +1336,63 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         p.remove_edge_points()
 
     return p
+
+def ne(shot, include=['CTS', 'ETS'], TCI_npts=100, TCI_flag_threshold=1e-3, **kwargs):
+    """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
+
+    Parameters
+    ----------
+    shot : int
+        The shot number to load.
+    include : list of str, optional
+        The data sources to include. Valid options are:
+
+            ======= ========================
+            CTS     Core Thomson scattering
+            ETS     Edge Thomson scattering
+            TCI     Two color interferometer
+            reflect SOL reflectometer
+            ======= ========================
+
+        The default is to include all TS data sources, but not TCI or the
+        reflectometer.
+    **kwargs
+        All remaining parameters are passed to the individual loading methods.
+    """
+    if 'electrons' not in kwargs:
+        kwargs['electrons'] = MDSplus.Tree('electrons', shot)
+    if 'efit_tree' not in kwargs:
+        kwargs['efit_tree'] = eqtools.CModEFITTree(shot)
+    p_list = []
+    for system in include:
+        if system == 'CTS':
+            p_list.append(neCTS(shot, **kwargs))
+        elif system == 'ETS':
+            p_list.append(neETS(shot, **kwargs))
+        elif system == 'TCI':
+            p_list.append(
+                neTCI(
+                    shot,
+                    npts=TCI_npts,
+                    flag_threshold=TCI_flag_threshold,
+                    **kwargs
+                )
+            )
+        elif system == 'reflect':
+            p_list.append(neReflect(shot, **kwargs))
+        else:
+            raise ValueError("Unknown profile '%s'." % (system,))
+    
+    p = p_list.pop()
+    for p_other in p_list:
+        p.add_profile(p_other)
+
+    return p
+
+def neTS(shot, **kwargs):
+    """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
+    """
+    return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_zeros=True, remove_edge=False):
@@ -1902,13 +1977,3 @@ def read_plasma_NetCDF(*args, **kwargs):
                 p.abscissa = p.X_labels[-1].strip('$ ')
     
     return p
-
-# def make_Z_of_rho_spline(efit_tree, rho, R):
-#     Z = efit_tree.getZGrid()
-#     R = R * scipy.ones_like(Z)
-#     t = efit_tree.getTimeBase()
-#     rho_grid = efit_tree.rz2rho(rho, R, Z, t, each_t=True)
-#     ZZ, TT = scipy.meshgrid(Z, t)
-#     return scipy.interpolate.SmoothBivariateSpline(
-#         rho_grid.ravel(), TT.ravel(), ZZ.ravel()
-#     )
