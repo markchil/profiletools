@@ -2390,6 +2390,7 @@ class FitWindow(tk.Tk):
             if (self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get() == 'ne' and
                     self.control_frame.eval_frame.TCI_state.get()):
                 # TODO: Make this load TCI chords if not present!
+                # TODO: This breaks with full Monte Carlo!
                 if 'TCI' not in self.p:
                     self.control_frame.status_frame.add_line(
                         "Must have loaded TCI first! TCI integrals will not be computed."
