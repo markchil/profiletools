@@ -1879,6 +1879,120 @@ def TeTS(shot, **kwargs):
     """
     return Te(shot, include=['CTS', 'ETS'], **kwargs)
 
+def emissAX(shot, system, abscissa='Rmid', t_min=None, t_max=None, tree=None,
+            efit_tree=None, remove_edge=False):
+    """Returns a profile representing emissivity from the AXA system.
+
+    Parameters
+    ----------
+    shot : int
+        The shot number to load.
+    system : {AXA, AXJ}
+        The system to use.
+    abscissa : str, optional
+        The abscissa to use for the data. The default is 'Rmid'.
+    t_min : float, optional
+        The smallest time to include. Default is None (no lower bound).
+    t_max : float, optional
+        The largest time to include. Default is None (no upper bound).
+    tree : MDSplus.Tree, optional
+        An MDSplus.Tree object open to the cmod tree of the correct shot.
+        The shot of the given tree is not checked! Default is None (open tree).
+    efit_tree : eqtools.CModEFITTree, optional
+        An eqtools.CModEFITTree object open to the correct shot. The shot of the
+        given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
+    """
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', 'm'],
+        y_units='MW/m$^3$',
+        X_labels=['$t$', '$R_{mid}$'],
+        y_label='$\epsilon$, AXA'
+    )
+    if tree is None:
+        tree = MDSplus.Tree('cmod', shot)
+    if efit_tree is None:
+        p.efit_tree = eqtools.CModEFITTree(shot)
+    else:
+        p.efit_tree = efit_tree
+    
+    # Based on what was done in /usr/local/cmod/idl/GENIE/widgets/w_axuv.pro:
+    N_emiss = tree.getNode('spectroscopy.bolometer.results.diode.%s.emiss' % (system,))
+    emiss = N_emiss.data() * 1e-6
+    R_mid = N_emiss.dim_of(idx=2).data()
+    t = N_emiss.dim_of(idx=1).data()
+    err_emiss = N_emiss.dim_of(idx=3).data() * 1e-6
+    err_R_mid = 0.5 * (N_emiss.dim_of(idx=4).data() - N_emiss.dim_of(idx=5).data())
+    
+    t_grid = scipy.tile(t, (emiss.shape[1], 1)).T
+    channels = scipy.tile(range(0, emiss.shape[1]), (emiss.shape[0], 1))
+    
+    X = scipy.vstack((t_grid.ravel(), R_mid.ravel())).T
+    err_X = scipy.zeros_like(X)
+    err_X[:, 1] = err_R_mid.ravel()
+    
+    p.shot = shot
+    p.abscissa = 'Rmid'
+    
+    # Add the data directly, since add_data seemed to cause a memory explosion.
+    # Note that this will leave the arrays as float32, which could cause
+    # problems elsewhere.
+    p.X = X
+    p.y = emiss.ravel()
+    p.err_y = err_emiss.ravel()
+    p.err_X = err_X
+    
+    p.channels = scipy.tile(scipy.arange(0, len(p.y)), (X.shape[1], 1)).T
+    p.channels[:, 1] = channels.ravel()
+    
+    # Remove flagged points:
+    if t_min is not None:
+        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
+    if t_max is not None:
+        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
+    
+    p.convert_abscissa(abscissa)
+    
+    if remove_edge:
+        p.remove_edge_points()
+
+    return p
+
+def emiss(shot, include=['AXA', 'AXJ'], **kwargs):
+    """Returns a profile representing emissivity.
+
+    Parameters
+    ----------
+    shot : int
+        The shot number to load.
+    include : list of str, optional
+        The data sources to include. Valid options are: {AXA, AXJ}. The default
+        is to include both data sources.
+    **kwargs
+        All remaining parameters are passed to the individual loading methods.
+    """
+    if 'tree' not in kwargs:
+        kwargs['tree'] = MDSplus.Tree('cmod', shot)
+    if 'efit_tree' not in kwargs:
+        kwargs['efit_tree'] = eqtools.CModEFITTree(shot)
+    p_list = []
+    for system in include:
+        if system == 'AXA':
+            p_list.append(emissAX(shot, 'AXA', **kwargs))
+        elif system == 'AXJ':
+            p_list.append(emissAX(shot, 'AXJ', **kwargs))
+        else:
+            raise ValueError("Unknown profile '%s'." % (system,))
+    
+    p = p_list.pop()
+    for p_other in p_list:
+        p.add_profile(p_other)
+    
+    return p
+
 def read_plasma_csv(*args, **kwargs):
     """Returns a profile containing the data from a CSV file.
     

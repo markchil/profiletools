@@ -112,7 +112,7 @@ of the file. The supported metadata are:
     formatter_class=CustomFormatter
 )
 parser.add_argument('--signal',
-                    choices=['ne', 'Te'],
+                    choices=['ne', 'Te', 'emiss'],
                     help="Which signal to fit when pulling data from the tree.")
 parser.add_argument('--shot',
                     type=int,
@@ -168,7 +168,7 @@ parser.add_argument('--x-pts',
                          "this overrides the effect of npts, x-min and x-max.")
 parser.add_argument('--system',
                     nargs='+',
-                    choices=['CTS', 'ETS', 'TS', 'GPC', 'GPC2', 'FRCECE', 'TCI', 'reflect'],
+                    choices=['CTS', 'ETS', 'TS', 'GPC', 'GPC2', 'FRCECE', 'TCI', 'reflect', 'AXA', 'AXJ'],
                     help="Which system(s) to take data from. If not provided, "
                          "all applicable systems will be used. The 'TS' option "
                          "is a shortcut to include both the core (CTS) and edge "
@@ -562,7 +562,8 @@ import csv
 # Define the systems that can be selected for each signal:
 SYSTEM_OPTIONS = collections.OrderedDict([
     ('ne', ['CTS', 'ETS', 'TCI', 'reflect']),
-    ('Te', ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE'])
+    ('Te', ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE']),
+    ('emiss', ['AXA', 'AXJ'])
 ])
 
 # Define which systems are excluded by default:
@@ -2012,6 +2013,12 @@ class FitWindow(tk.Tk):
                             shot,
                             include=[system],
                             remove_ECE_edge=False,
+                            efit_tree=self.efit_tree
+                        )
+                    elif signal == 'emiss':
+                        self.master_p[system] = profiletools.emiss(
+                            shot,
+                            include=[system],
                             efit_tree=self.efit_tree
                         )
                     else:
