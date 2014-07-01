@@ -22,13 +22,19 @@ from __future__ import division
 
 from .core import Profile, Channel, read_csv, read_NetCDF
 
-import MDSplus
+import warnings
+try:
+    import MDSplus
+except ImportError:
+    warnings.warn("Module MDSplus could not be loaded!", RuntimeWarning)
+try:
+    import eqtools
+except ImportError:
+    warnings.warn("Module eqtools could not be loaded!", RuntimeWarning)
 import scipy
 import scipy.interpolate
 import scipy.stats
-import eqtools
 import gptools
-import warnings
 import matplotlib.pyplot as plt
 
 _X_label_mapping = {'psinorm': r'$\psi_n$',
@@ -1910,7 +1916,7 @@ def emissAX(shot, system, abscissa='Rmid', t_min=None, t_max=None, tree=None,
         X_units=['s', 'm'],
         y_units='MW/m$^3$',
         X_labels=['$t$', '$R_{mid}$'],
-        y_label='$\epsilon$, AXA'
+        y_label='$\epsilon$, %s' % (system.upper())
     )
     if tree is None:
         tree = MDSplus.Tree('cmod', shot)

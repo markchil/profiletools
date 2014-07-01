@@ -1,0 +1,5 @@
+numpy
+scipy
+numpydoc==0.4
+matplotlib
+gptools

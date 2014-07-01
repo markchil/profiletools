@@ -558,6 +558,7 @@ import itertools
 import getpass
 import inspect
 import csv
+import cPickle as pickle
 
 # Define the systems that can be selected for each signal:
 SYSTEM_OPTIONS = collections.OrderedDict([
@@ -3191,6 +3192,64 @@ class FitWindow(tk.Tk):
                     else:
                         writer.writerow([X_name, y_name, 'err_' + y_name])
                         writer.writerows(zip(self.X, self.res['mean_val'], self.res['std_val']))
+            elif ext.lower() == 'pkl':
+                # Write output to dictionary in pickle file:
+                self.control_frame.status_frame.add_line(
+                    "Writing results to CSV file %s..." % os.path.basename(path)
+                )
+                X_name = (
+                    self.combined_p.X_labels[0] + ' [' + self.combined_p.X_units[0] + ']'
+                    if self.combined_p.X_units[0]
+                    else self.combined_p.X_labels[0]
+                )
+                y_name = (
+                    self.combined_p.y_label + ' [' + self.combined_p.y_units + ']'
+                    if self.combined_p.y_units
+                    else self.combined_p.y_label
+                )
+                res_dict = {
+                    X_name: self.X,
+                    y_name: self.res['mean_val'],
+                    'err_' + y_name: self.res['std_val']
+                }
+                if 'mean_a_L' in self.res:
+                    res_dict["d%s/d%s" % (y_name, X_name)] = self.res['mean_grad']
+                    res_dict["err_d%s/d%s" % (y_name, X_name)] = self.res['std_grad']
+                    res_dict["a_L%s" % (y_name, X_name)] = self.res['mean_a_L']
+                    res_dict["err_a_L%s" % (y_name, X_name)] = self.res['std_a_L']
+                
+                # Add metadata:
+                res_dict['history'] = history
+                try:
+                    res_dict['shot'] = self.combined_p.shot
+                except AttributeError:
+                    pass
+                try:
+                    res_dict['t_min'] = self.combined_p.t_min
+                except AttributeError:
+                    pass
+                try:
+                    res_dict['t_max']  = self.combined_p.t_max
+                except AttributeError:
+                    pass
+                try:
+                    res_dict['times'] = list(self.combined_p.times)
+                except AttributeError:
+                    pass
+                try:
+                    res_dict['coordinate'] = self.combined_p.abscissa
+                except AttributeError:
+                    pass
+                
+                if self.mean_vol_avg:
+                    res_dict['vol_avg'] = self.mean_vol_avg
+                    res_dict['err_vol_avg'] = self.std_vol_avg
+                if self.mean_peaking:
+                    res_dict['peaking'] = self.mean_peaking
+                    res_dict['err_peaking'] = self.std_peaking
+                
+                with open(os.path.expanduser(path), 'wb') as f:
+                    pickle.dump(res_dict, f)
             else:
                 # Write output to NetCDF file:
                 self.control_frame.status_frame.add_line(
