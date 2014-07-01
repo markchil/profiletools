@@ -4,22 +4,6 @@ profiletools package
 Submodules
 ----------
 
-profiletools.._CMod module
---------------------------
-
-.. automodule:: profiletools.._CMod
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-profiletools.._core module
---------------------------
-
-.. automodule:: profiletools.._core
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
 profiletools.CMod module
 ------------------------
 
