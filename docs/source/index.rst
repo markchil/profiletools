@@ -25,7 +25,7 @@ Contents
 .. toctree::
    :maxdepth: 4
    
-   gptools
+   profiletools
 
 Indices and tables
 ==================
