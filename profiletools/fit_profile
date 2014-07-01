@@ -2612,13 +2612,13 @@ class FitWindow(tk.Tk):
                     else:
                         times = self.combined_p._get_efit_times_to_average()
                         
-                        core_loc = self.combined_p.efit_tree.rho2rho(
-                            'psinorm',
+                        core_loc = self.combined_p.efit_tree.psinorm2rho(
                             self.combined_p.abscissa,
+                            0.2,
                             times,
                             each_t=True
                         )
-                        core_loc = scipy.mean(core_loc)
+                        core_loc = scipy.stats.nanmean(core_loc.ravel())
                     X = scipy.insert(X, 0, core_loc)
                     output_transform = scipy.insert(output_transform, 0, 0, axis=1)
                     core_select = scipy.zeros(output_transform.shape[1])
@@ -3192,10 +3192,10 @@ class FitWindow(tk.Tk):
                     else:
                         writer.writerow([X_name, y_name, 'err_' + y_name])
                         writer.writerows(zip(self.X, self.res['mean_val'], self.res['std_val']))
-            elif ext.lower() == 'pkl':
+            elif ext.lower() == '.pkl':
                 # Write output to dictionary in pickle file:
                 self.control_frame.status_frame.add_line(
-                    "Writing results to CSV file %s..." % os.path.basename(path)
+                    "Writing results to pickle file %s..." % os.path.basename(path)
                 )
                 X_name = (
                     self.combined_p.X_labels[0] + ' [' + self.combined_p.X_units[0] + ']'

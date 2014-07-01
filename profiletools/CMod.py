@@ -848,15 +848,16 @@ class BivariatePlasmaProfile(Profile):
                         times,
                         each_t=True
                     )
+                    # Use nanmean in case there is a value which is teetering
+                    # -- we want to keep it in.
+                    vol_grid = scipy.stats.nanmean(vol_grid, axis=0)
                 else:
                     if self.abscissa.startswith('sqrt'):
-                        vol_grid = scipy.asarray(rho_grid)**2
+                        vol_grid = scipy.asarray(rho_grid, dtype=float)**2
                     else:
-                        vol_grid = rho_grid
-                # Use nanmean in case there is a value which is teetering -- we
-                # want to keep it in.
-                vol_grid = scipy.stats.nanmean(vol_grid, axis=0)
-                ok_mask = ~scipy.isnan(vol_grid)
+                        vol_grid = scipy.asarray(rho_grid, dtype=float)
+                
+                ok_mask = (~scipy.isnan(vol_grid)) & (vol_grid <= 1.0)
                 delta_vol = scipy.diff(vol_grid[ok_mask])
                 weights = scipy.zeros_like(vol_grid)
                 weights[ok_mask] = (
