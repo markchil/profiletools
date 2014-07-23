@@ -1931,8 +1931,14 @@ def emissAX(shot, system, abscissa='Rmid', t_min=None, t_max=None, tree=None,
     emiss = N_emiss.data() * 1e-6
     R_mid = N_emiss.dim_of(idx=2).data()
     t = N_emiss.dim_of(idx=1).data()
-    err_emiss = N_emiss.dim_of(idx=3).data() * 1e-6
-    err_R_mid = 0.5 * (N_emiss.dim_of(idx=4).data() - N_emiss.dim_of(idx=5).data())
+    try:
+        err_emiss = N_emiss.dim_of(idx=3).data() * 1e-6
+    except MDSplus.TdiException:
+        err_emiss = 0.1 * emiss
+    try:
+        err_R_mid = 0.5 * (N_emiss.dim_of(idx=4).data() - N_emiss.dim_of(idx=5).data())
+    except MDSplus.TdiException:
+        err_R_mid = scipy.zeros_like(emiss)
     
     t_grid = scipy.tile(t, (emiss.shape[1], 1)).T
     channels = scipy.tile(range(0, emiss.shape[1]), (emiss.shape[0], 1))
