@@ -1088,7 +1088,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
+    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) | scipy.isinf(p.err_y))
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
@@ -1167,7 +1167,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
-                    ((p.y == 0.0) & (p.err_y == 2)))
+                    ((p.y == 0.0) & (p.err_y == 2)) | scipy.isinf(p.err_y))
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
@@ -1464,7 +1464,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0))
+    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) | scipy.isinf(p.err_y))
     if remove_zeros:
         p.remove_points(p.y == 0.0)
     if t_min is not None:
@@ -1544,8 +1544,12 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
-                    ((p.y == 0) & (p.err_y == 1)))
+    p.remove_points(
+        scipy.isnan(p.err_y) |
+        (p.err_y == 0.0) |
+        ((p.y == 0) & (p.err_y == 1)) |
+        scipy.isinf(p.err_y)
+    )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
