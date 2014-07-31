@@ -1120,7 +1120,7 @@ class Profile(object):
         y = self.y
         X = self.X
         err_y = self.err_y
-        if mask is not None:
+        if mask is not None and X is not None:
             y = y[mask]
             X = X[mask, :]
             err_y = err_y[mask]
@@ -1141,11 +1141,18 @@ class Profile(object):
                                                  param_bounds=bounds,
                                                  **k_kwargs)
         elif k == 'gibbstanh':
+            # TODO: This is a very hackish way of supporting transformed data. Fix it!
             if self.X_dim != 1:
                 raise ValueError('Gibbs kernel is only supported for univariate data!')
-            y_range = y.max() - y.min()
+            try:
+                y_range = y.max() - y.min()
+            except (TypeError, ValueError):
+                y_range = 10
             sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
-            X_range = X[:, 0].max() - X[:, 0].min()
+            try:
+                X_range = X[:, 0].max() - X[:, 0].min()
+            except TypeError:
+                X_range = 1.2
             l1_bounds = (X_range / lower_factor, upper_factor * X_range)
             l2_bounds = (10 * sys.float_info.epsilon, l1_bounds[1])
             lw_bounds = (l2_bounds[0], l1_bounds[1] / 50.0)

@@ -563,7 +563,7 @@ import cPickle as pickle
 # Define the systems that can be selected for each signal:
 SYSTEM_OPTIONS = collections.OrderedDict([
     ('ne', ['CTS', 'ETS', 'TCI', 'reflect']),
-    ('Te', ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE']),
+    ('Te', ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE', 'Mic']),
     ('emiss', ['AXA', 'AXJ'])
 ])
 

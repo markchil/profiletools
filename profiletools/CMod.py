@@ -1787,7 +1787,7 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
         )
         
         channels.extend([k + 1] * len(Te))
-
+    
     Te = scipy.asarray(Te_GPC)
     t = scipy.atleast_2d(scipy.asarray(t_GPC))
     R_mid = scipy.atleast_2d(scipy.asarray(R_mid_GPC))
@@ -1814,7 +1814,86 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
 
     return p
 
-def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
+def TeMic(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None,
+          electrons=None, efit_tree=None, remove_edge=False, remove_zeros=True):
+    """Returns a profile representing electron temperature from the Michelson interferometer.
+
+    Parameters
+    ----------
+    shot : int
+        The shot number to load.
+    abscissa : str, optional
+        The abscissa to use for the data. The default is 'Rmid'.
+    t_min : float, optional
+        The smallest time to include. Default is None (no lower bound).
+    t_max : float, optional
+        The largest time to include. Default is None (no upper bound).
+    electrons : MDSplus.Tree, optional
+        An MDSplus.Tree object open to the electrons tree of the correct shot.
+        The shot of the given tree is not checked! Default is None (open tree).
+    efit_tree : eqtools.CModEFITTree, optional
+        An eqtools.CModEFITTree object open to the correct shot. The shot of the
+        given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
+    """
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', 'm'],
+        y_units='keV',
+        X_labels=['$t$', '$R_{mid}$'],
+        y_label='$T_e$, Mic'
+    )
+    
+    if electrons is None:
+        electrons = MDSplus.Tree('electrons', shot)
+    
+    N_Te = electrons.getNode(r'\electrons::top.ece.results.ece_te')
+    
+    t_Te = N_Te.dim_of(idx=1).data()
+    Te = N_Te.data() / 1e3
+    Rmid_Te = N_Te.dim_of(idx=0).data()
+    channels = range(0, len(Rmid_Te))
+    
+    dev_Te = 0.1 * scipy.absolute(Te)
+    
+    Rmid_grid, t_grid = scipy.meshgrid(Rmid_Te, t_Te)
+    channel_grid, t_grid = scipy.meshgrid(channels, t_Te)
+    
+    Te = Te.flatten()
+    err_Te = dev_Te.flatten()
+    Rmid = scipy.atleast_2d(Rmid_grid.flatten())
+    t = scipy.atleast_2d(t_grid.flatten())
+    channels = channel_grid.flatten()
+    
+    X = scipy.hstack((t.T, Rmid.T))
+    
+    p.shot = shot
+    if efit_tree is None:
+        p.efit_tree = eqtools.CModEFITTree(shot)
+    else:
+        p.efit_tree = efit_tree
+    p.abscissa = 'Rmid'
+    
+    p.add_data(X, Te, err_y=err_Te, channels={1: channels})
+    # Remove flagged points:
+    p.remove_points(scipy.isnan(p.err_y) | scipy.isinf(p.err_y))
+    p.remove_points(p.y < cutoff)
+    if remove_zeros:
+        p.remove_points(p.y == 0.0)
+    if t_min is not None:
+        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
+    if t_max is not None:
+        p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
+    p.convert_abscissa(abscissa)
+    
+    if remove_edge:
+        p.remove_edge_points()
+    
+    return p
+
+def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC', 'Mic'], FRCECE_rate='s',
        FRCECE_cutoff=0.15, GPC_cutoff=0.15, remove_ECE_edge=True, **kwargs):
     """Returns a profile representing electron temperature from the Thomson scattering and ECE systems.
 
@@ -1872,6 +1951,10 @@ def Te(shot, include=['CTS', 'ETS', 'FRCECE', 'GPC2', 'GPC'], FRCECE_rate='s',
                 p_list[-1].remove_edge_points()
         elif system == 'GPC':
             p_list.append(TeGPC(shot, cutoff=GPC_cutoff, **kwargs))
+            if remove_ECE_edge:
+                p_list[-1].remove_edge_points()
+        elif system == 'Mic':
+            p_list.append(TeMic(shot, cutoff=GPC_cutoff, **kwargs))
             if remove_ECE_edge:
                 p_list[-1].remove_edge_points()
         else:
