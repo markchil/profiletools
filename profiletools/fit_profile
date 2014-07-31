@@ -3215,8 +3215,8 @@ class FitWindow(tk.Tk):
                 if 'mean_a_L' in self.res:
                     res_dict["d%s/d%s" % (y_name, X_name)] = self.res['mean_grad']
                     res_dict["err_d%s/d%s" % (y_name, X_name)] = self.res['std_grad']
-                    res_dict["a_L%s" % (y_name, X_name)] = self.res['mean_a_L']
-                    res_dict["err_a_L%s" % (y_name, X_name)] = self.res['std_a_L']
+                    res_dict["a_L%s" % (y_name,)] = self.res['mean_a_L']
+                    res_dict["err_a_L%s" % (y_name,)] = self.res['std_a_L']
                 
                 # Add metadata:
                 res_dict['history'] = history
