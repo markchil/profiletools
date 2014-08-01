@@ -1023,7 +1023,7 @@ class BivariatePlasmaProfile(Profile):
                                       "supported for X_dim > 1!")
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False):
+          efit_tree=None, remove_edge=False, remove_zeros=True):
     """Returns a profile representing electron density from the core Thomson scattering system.
 
     Parameters
@@ -1089,6 +1089,8 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
     p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) | scipy.isinf(p.err_y))
+    if remove_zeros:
+        p.remove_points(p.y == 0.0)
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
