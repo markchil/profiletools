@@ -21,6 +21,115 @@ from __future__ import division
 __version__ = '0.0'
 PROG_NAME = 'fit_profile'
 
+import collections
+
+# Define the systems that can be selected for each signal:
+SYSTEM_OPTIONS = collections.OrderedDict([
+    ('ne', ['CTS', 'ETS', 'TCI', 'reflect']),
+    ('Te', ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE', 'Mic']),
+    ('emiss', ['AXA', 'AXJ'])
+])
+
+# List of all valid systems:
+valid_systems = set()
+for sig, sys in SYSTEM_OPTIONS.iteritems():
+    for s in sys:
+        valid_systems.add(s)
+
+# Define which systems are excluded by default:
+DEFAULT_EXCLUDE = ['TCI', 'reflect']
+
+# Define the coordinates that can be specified:
+COORDINATE_OPTIONS = [
+    'psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
+    'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'
+]
+
+# Define averaging methods available. First entry is default.
+METHOD_OPTIONS = ['conventional', 'robust', 'all points']
+
+# Define uncertainty methods available. First entry is default.
+ERROR_METHOD_OPTIONS = ['sample', 'RMS', 'total', 'of mean', 'of mean sample']
+
+# Make form suitable for command line entry:
+error_method_cl = [s.replace(' ', '_') for s in ERROR_METHOD_OPTIONS]
+
+# Define the kernels supported and their hyperparameters.
+# The first entry is the label, the second is the description.
+HYPERPARAMETERS = collections.OrderedDict([
+    (
+        'gibbstanh',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u21131", "core covariance length scale"),
+            (u"\u21132", "edge covariance length scale"),
+            (u"\u2113w", "core/edge transition width"),
+            (u"x0", "core/edge transition location")
+        ])
+    ),
+    (
+        'gibbsdoubletanh',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u2113c", "core covariance length scale"),
+            (u"\u2113m", "mid covariance length scale"),
+            (u"\u2113e", "edge covariance length scale"),
+            (u"\u2113a", "first transition width"),
+            (u"\u2113b", "second transition width"),
+            ("xa", "first transition"),
+            ("xb", "second transition")
+        ])
+    ),
+    (
+        'SE',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u2113", "covariance length scale")
+        ])
+    ),
+    (
+        'SEsym1d',
+        collections.OrderedDict([
+            ("1", "VOID"),
+            ("2", "VOID"),
+            (u"\u03C3f 2", "signal variance"),
+            (u"\u2113 2", "covariance length scale")
+        ])
+    ),
+    (
+        'SEbeta',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u2113", "covariance length scale"),
+            (u"\u03B1", "warping alpha"),
+            (u"\u03B2", "warping beta")
+        ])
+    ),
+    (
+        'RQ',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u03B1", "order"),
+            (u"\u2113", "covariance length scale")
+        ])
+    ),
+    (
+        'matern',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u03BD", "order"),
+            (u"\u2113", "covariance length scale")
+        ])
+    ),
+    (
+        'matern52',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u2113", "covariance length scale")
+        ])
+    ),
+])
+
 # Configure and parse command line arguments:
 import argparse
 
@@ -112,7 +221,7 @@ of the file. The supported metadata are:
     formatter_class=CustomFormatter
 )
 parser.add_argument('--signal',
-                    choices=['ne', 'Te', 'emiss'],
+                    choices=SYSTEM_OPTIONS.keys(),
                     help="Which signal to fit when pulling data from the tree.")
 parser.add_argument('--shot',
                     type=int,
@@ -168,7 +277,7 @@ parser.add_argument('--x-pts',
                          "this overrides the effect of npts, x-min and x-max.")
 parser.add_argument('--system',
                     nargs='+',
-                    choices=['CTS', 'ETS', 'TS', 'GPC', 'GPC2', 'FRCECE', 'TCI', 'reflect', 'AXA', 'AXJ'],
+                    choices=valid_systems,
                     help="Which system(s) to take data from. If not provided, "
                          "all applicable systems will be used. The 'TS' option "
                          "is a shortcut to include both the core (CTS) and edge "
@@ -178,7 +287,7 @@ parser.add_argument('--system',
                          "you uncertainties should be taken with a grain of salt "
                          "when using those data.")
 parser.add_argument('--kernel',
-                    choices=['gibbstanh', 'SE', 'RQ', 'SEsym1d', 'matern', 'gibbsdoubletanh'],
+                    choices=HYPERPARAMETERS.keys(),
                     # default='gibbstanh',
                     help="Which covariance kernel to use. This dictates the "
                          "properties of the fit. "
@@ -186,28 +295,34 @@ parser.add_argument('--kernel',
                          "the length scale. This kernel allows the entire "
                          "profile to be fit at once, and should be used if you "
                          "have edge data. "
+                         "* gibbsdoubletanh is an experimental Gibbs kernel "
+                         "whose warping function is the sum of two hyperbolic "
+                         "tangents. This may be useful for whole profiles with "
+                         "complicated shapes. "
                          "* SE is the squared exponential kernel, which is good "
                          "for core data. "
-                         "* RQ is the rational quadratic kernel, also good for "
-                         "core data. "
                          "* SEsym1d is an experimental SE kernel with symmetry "
                          "constraint imposed by construction. This is primarily "
                          "useful for core data. "
-                         "* matern is the matern kernel, which is also "
+                         "* SEbeta is an experimental SE kernel whose arguments "
+                         "are warped using the regularized incomplete beta "
+                         "function. This is good when you have edge data. "
+                         "* RQ is the rational quadratic kernel, good for "
+                         "core data. "
+                         "* matern is the Matern kernel, which is also "
                          "potentially useful for core data. Note that the matern "
-                         "kernel is very VERY to evaluate, particularly if you "
+                         "kernel is very SLOW to evaluate, particularly if you "
                          "need gradients. "
-                         "* gibbsdoubletanh is an experimental Gibbs kernel "
-                         "whose warping function is the sum of two hyperbolic "
-                         "tangents. This may be useful for entire profiles "
-                         "with complicated shapes. "
+                         "* matern52 is a task-specific implementation of the "
+                         "Matern kernel with the order fixed at nu=5/2. This is "
+                         "MUCH faster than the basic matern. This is mostly "
+                         "suitable for core data. "
                          "You will typically want to set --no-edge-constraint "
                          "and/or --core-only if you specify any kernel other "
                          "gibbstanh and gibbsdoubletanh. See also --core-only. "
                          "The default is gibbstanh, or SE if --core-only is set.")
 parser.add_argument('--coordinate',
-                    choices=['psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
-                             'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'],
+                    choices=COORDINATE_OPTIONS,
                     default='',
                     help="Which coordinate to fit against. Defaults to psinorm "
                          "when pulling data from the tree. Used to determine how "
@@ -253,7 +368,7 @@ parser.add_argument('--robust',
                          "weighted estimators will not work for small numbers of "
                          "data points.")
 parser.add_argument('--uncertainty-method',
-                    choices=['sample', 'RMS', 'total', 'of_mean', 'of_mean_sample'],
+                    choices=error_method_cl,
                     default='sample',
                     help="Method by which the uncertainty should be propagated "
                          "when time-averaging. "
@@ -539,7 +654,6 @@ import Tkinter as tk
 import tkFileDialog
 import tkFont
 import ttk
-import collections
 import time
 import multiprocessing
 import profiletools
@@ -559,88 +673,6 @@ import getpass
 import inspect
 import csv
 import cPickle as pickle
-
-# Define the systems that can be selected for each signal:
-SYSTEM_OPTIONS = collections.OrderedDict([
-    ('ne', ['CTS', 'ETS', 'TCI', 'reflect']),
-    ('Te', ['CTS', 'ETS', 'GPC', 'GPC2', 'FRCECE', 'Mic']),
-    ('emiss', ['AXA', 'AXJ'])
-])
-
-# Define which systems are excluded by default:
-DEFAULT_EXCLUDE = ['TCI', 'reflect']
-
-# Define the coordinates that can be specified:
-COORDINATE_OPTIONS = [
-    'psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
-    'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'
-]
-
-# Define averaging methods available. First entry is default.
-METHOD_OPTIONS = ['conventional', 'robust', 'all points']
-
-# Define uncertainty methods available. First entry is default.
-ERROR_METHOD_OPTIONS = ['sample', 'RMS', 'total', 'of mean', 'of mean sample']
-
-# Define the kernels supported and their hyperparameters.
-# The first entry is the label, the second is the description.
-HYPERPARAMETERS = collections.OrderedDict([
-    (
-        'gibbstanh',
-        collections.OrderedDict([
-            (u"\u03C3f", "signal variance"),
-            (u"\u21131", "core covariance length scale"),
-            (u"\u21132", "edge covariance length scale"),
-            (u"\u2113w", "core/edge transition width"),
-            (u"x0", "core/edge transition location")
-        ])
-    ),
-    (
-        'SE',
-        collections.OrderedDict([
-            (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale")
-        ])
-    ),
-    (
-        'RQ',
-        collections.OrderedDict([
-            (u"\u03C3f", "signal variance"),
-            (u"\u03B1", "order"),
-            (u"\u2113", "covariance length scale")
-        ])
-    ),
-    (
-        'SEsym1d',
-        collections.OrderedDict([
-            ("1", "VOID"),
-            ("2", "VOID"),
-            (u"\u03C3f 2", "signal variance"),
-            (u"\u2113 2", "covariance length scale")
-        ])
-    ),
-    (
-        'matern',
-        collections.OrderedDict([
-            (u"\u03C3f", "signal variance"),
-            (u"\u03BD", "order"),
-            (u"\u2113", "covariance length scale")
-        ])
-    ),
-    (
-        'gibbsdoubletanh',
-        collections.OrderedDict([
-            (u"\u03C3f", "signal variance"),
-            (u"\u2113c", "core covariance length scale"),
-            (u"\u2113m", "mid covariance length scale"),
-            (u"\u2113e", "edge covariance length scale"),
-            (u"\u2113a", "first transition width"),
-            (u"\u2113b", "second transition width"),
-            ("xa", "first transition"),
-            ("xb", "second transition")
-        ])
-    )
-])
 
 # Define the format used to print the date:
 DATE_FORMAT = '%d %b %Y %H:%M:%S'

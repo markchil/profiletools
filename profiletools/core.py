@@ -1223,6 +1223,26 @@ class Profile(object):
             kM1 = gptools.MaskedKernel(k_base, mask=[0], total_dim=1, scale=[1, 1])
             kM2 = gptools.MaskedKernel(k_base, mask=[0], total_dim=1, scale=[-1, 1])
             k = kM1 + kM2
+        elif k == 'SEbeta':
+            # TODO: Add support for k_kwargs!
+            y_range = y.max() - y.min()
+            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            for i in xrange(0, self.X_dim):
+                X_range = X[:, i].max() - X[:, i].min()
+                bounds.append((X_range / lower_factor,
+                               upper_factor * X_range))
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            
+            k_SE = gptools.SquaredExponentialKernel(
+                num_dim=self.X_dim,
+                param_bounds=bounds,
+                initial_params=initial
+            )
+            # TODO: Put in hooks to vary the hyperhyperparameters!
+            lognormal_prior = gptools.LogNormalJointPrior([0, 1], [0.25, 1])
+            k_SE_beta = gptools.BetaWarpedKernel(k_SE, hyperprior=lognormal_prior)
+            # TODO: Make this more intelligent!
+            k = gptools.LinearWarpedKernel(k_SE_beta, -1e-3, 1.5)
         elif k == 'matern':
             y_range = y.max() - y.min()
             bounds = [(y_range / lower_factor, upper_factor * y_range),
@@ -1236,6 +1256,19 @@ class Profile(object):
                                         initial_params=initial,
                                         param_bounds=bounds,
                                         **k_kwargs)
+        elif k == 'matern52':
+            y_range = y.max() - y.min()
+            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            for i in xrange(0, self.X_dim):
+                X_range = X[:, i].max() - X[:, i].min()
+                bounds.append((X_range / lower_factor, upper_factor * X_range))
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            k = gptools.Matern52Kernel(
+                num_dim=self.X_dim,
+                initial_params=initial,
+                param_bounds=bounds,
+                **k_kwargs
+            )
         elif isinstance(k, str):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
