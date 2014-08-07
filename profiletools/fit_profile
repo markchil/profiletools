@@ -128,6 +128,15 @@ HYPERPARAMETERS = collections.OrderedDict([
             (u"\u2113", "covariance length scale")
         ])
     ),
+    (
+        'matern52beta',
+        collections.OrderedDict([
+            (u"\u03C3f", "signal variance"),
+            (u"\u2113", "covariance length scale"),
+            (u"\u03B1", "warping alpha"),
+            (u"\u03B2", "warping beta")
+        ])
+    ),
 ])
 
 # Configure and parse command line arguments:
@@ -317,6 +326,9 @@ parser.add_argument('--kernel',
                          "Matern kernel with the order fixed at nu=5/2. This is "
                          "MUCH faster than the basic matern. This is mostly "
                          "suitable for core data. "
+                         "* matern52beta is the same as matern52, but with the "
+                         "same warping as SEbeta applied. This is potentially "
+                         "suitable for fitting entire profiles. "
                          "You will typically want to set --no-edge-constraint "
                          "and/or --core-only if you specify any kernel other "
                          "gibbstanh and gibbsdoubletanh. See also --core-only. "

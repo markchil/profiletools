@@ -1130,16 +1130,17 @@ class Profile(object):
             pass
         elif k is None or k == 'SE':
             y_range = y.max() - y.min()
-            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            bounds = [(0.0, upper_factor * y_range)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
-                bounds.append((X_range / lower_factor,
-                               upper_factor * X_range))
+                bounds.append((0.0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
-            k = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
-                                                 initial_params=initial,
-                                                 param_bounds=bounds,
-                                                 **k_kwargs)
+            k = gptools.SquaredExponentialKernel(
+                num_dim=self.X_dim,
+                initial_params=initial,
+                param_bounds=bounds,
+                **k_kwargs
+            )
         elif k == 'gibbstanh':
             # TODO: This is a very hackish way of supporting transformed data. Fix it!
             if self.X_dim != 1:
@@ -1148,30 +1149,32 @@ class Profile(object):
                 y_range = y.max() - y.min()
             except (TypeError, ValueError):
                 y_range = 10
-            sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
+            sigma_f_bounds = (0, upper_factor * y_range)
             try:
                 X_range = X[:, 0].max() - X[:, 0].min()
             except TypeError:
                 X_range = 1.2
-            l1_bounds = (X_range / lower_factor, upper_factor * X_range)
-            l2_bounds = (10 * sys.float_info.epsilon, l1_bounds[1])
+            l1_bounds = (0.0, upper_factor * X_range)
+            l2_bounds = (0.0, l1_bounds[1])
             lw_bounds = (l2_bounds[0], l1_bounds[1] / 50.0)
             if x0_bounds is None:
                 x0_bounds = (X[:, 0].min(), X[:, 0].max())
             bounds = [sigma_f_bounds, l1_bounds, l2_bounds, lw_bounds, x0_bounds]
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
             initial[2] = initial[2] / 2
-            k = gptools.GibbsKernel1dTanh(initial_params=initial,
-                                          hyperprior=gptools.CoreEdgeJointPrior(bounds),
-                                          **k_kwargs)
+            k = gptools.GibbsKernel1dTanh(
+                initial_params=initial,
+                hyperprior=gptools.CoreEdgeJointPrior(bounds),
+                **k_kwargs
+            )
         elif k == 'gibbsdoubletanh':
             if self.X_dim != 1:
                 raise ValueError('Gibbs kernel is only supported for univariate data!')
             y_range = y.max() - y.min()
-            sigma_f_bounds = (y_range / lower_factor, upper_factor * y_range)
+            sigma_f_bounds = (0.0, upper_factor * y_range)
             X_range = X[:, 0].max() - X[:, 0].min()
-            lcore_bounds = (10 * sys.float_info.epsilon, upper_factor * X_range)
-            la_bounds = (10 * sys.float_info.epsilon, lcore_bounds[1] / 50.0)
+            lcore_bounds = (0.0, upper_factor * X_range)
+            la_bounds = (0.0, lcore_bounds[1] / 50.0)
             if x0_bounds is None:
                 x0_bounds = (X[:, 0].min(), X[:, 0].max())
             bounds = [
@@ -1192,17 +1195,17 @@ class Profile(object):
             )
         elif k == 'RQ':
             y_range = y.max() - y.min()
-            bounds = [(y_range / lower_factor, upper_factor * y_range),
-                      (10 * sys.float_info.epsilon, 1e2)]
+            bounds = [(0.0, upper_factor * y_range), (0.0, 1e2)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
-                bounds.append((X_range / lower_factor,
-                               upper_factor * X_range))
+                bounds.append((0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
-            k = gptools.RationalQuadraticKernel(num_dim=self.X_dim,
-                                                initial_params=initial,
-                                                param_bounds=bounds,
-                                                **k_kwargs)
+            k = gptools.RationalQuadraticKernel(
+                num_dim=self.X_dim,
+                initial_params=initial,
+                param_bounds=bounds,
+                **k_kwargs
+            )
             # Try to avoid some issues that were coming up during MCMC sampling:
             if 'diag_factor' not in kwargs:
                 kwargs['diag_factor'] = 1e3
@@ -1210,58 +1213,58 @@ class Profile(object):
             if self.X_dim != 1:
                 raise ValueError("Symmetric SE kernel only supported for univariate data!")
             y_range = y.max() - y.min()
-            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            bounds = [(0.0, upper_factor * y_range)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
-                bounds.append((X_range / lower_factor,
-                               upper_factor * X_range))
+                bounds.append((0.0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
-            k_base = gptools.SquaredExponentialKernel(num_dim=self.X_dim,
-                                                      initial_params=initial,
-                                                      param_bounds=bounds,
-                                                      **k_kwargs)
+            k_base = gptools.SquaredExponentialKernel(
+                num_dim=self.X_dim,
+                initial_params=initial,
+                param_bounds=bounds,
+                **k_kwargs
+            )
             kM1 = gptools.MaskedKernel(k_base, mask=[0], total_dim=1, scale=[1, 1])
             kM2 = gptools.MaskedKernel(k_base, mask=[0], total_dim=1, scale=[-1, 1])
             k = kM1 + kM2
         elif k == 'SEbeta':
-            # TODO: Add support for k_kwargs!
+            # TODO: Add support for k_kwargs on warp steps!
             y_range = y.max() - y.min()
-            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            bounds = [(0.0, upper_factor * y_range)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
-                bounds.append((X_range / lower_factor,
-                               upper_factor * X_range))
+                bounds.append((0.0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
-            
             k_SE = gptools.SquaredExponentialKernel(
                 num_dim=self.X_dim,
                 param_bounds=bounds,
-                initial_params=initial
+                initial_params=initial,
+                **k_kwargs
             )
-            # TODO: Put in hooks to vary the hyperhyperparameters!
+            # TODO: Put in hooks to vary the hyperhyperparameters/hyperprior!
             lognormal_prior = gptools.LogNormalJointPrior([0, 1], [0.25, 1])
             k_SE_beta = gptools.BetaWarpedKernel(k_SE, hyperprior=lognormal_prior)
             # TODO: Make this more intelligent!
             k = gptools.LinearWarpedKernel(k_SE_beta, -1e-3, 1.5)
         elif k == 'matern':
             y_range = y.max() - y.min()
-            bounds = [(y_range / lower_factor, upper_factor * y_range),
-                      (0.51, 1e2)]
+            bounds = [(0.0, upper_factor * y_range), (0.51, 1e2)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
-                bounds.append((X_range / lower_factor,
-                               upper_factor * X_range))
+                bounds.append((0.0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
-            k = gptools.MaternKernelArb(num_dim=self.X_dim,
-                                        initial_params=initial,
-                                        param_bounds=bounds,
-                                        **k_kwargs)
+            k = gptools.MaternKernelArb(
+                num_dim=self.X_dim,
+                initial_params=initial,
+                param_bounds=bounds,
+                **k_kwargs
+            )
         elif k == 'matern52':
             y_range = y.max() - y.min()
-            bounds = [(y_range / lower_factor, upper_factor * y_range)]
+            bounds = [(0.0, upper_factor * y_range)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
-                bounds.append((X_range / lower_factor, upper_factor * X_range))
+                bounds.append((0.0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
             k = gptools.Matern52Kernel(
                 num_dim=self.X_dim,
@@ -1269,6 +1272,25 @@ class Profile(object):
                 param_bounds=bounds,
                 **k_kwargs
             )
+        elif k == 'matern52beta':
+            y_range = y.max() - y.min()
+            bounds = [(0.0, upper_factor * y_range)]
+            for i in xrange(0, self.X_dim):
+                X_range = X[:, i].max() - X[:, i].min()
+                bounds.append((0.0, upper_factor * X_range))
+            initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            k_M = gptools.Matern52Kernel(
+                num_dim=self.X_dim,
+                initial_params=initial,
+                param_bounds=bounds,
+                **k_kwargs
+            )
+            # TODO: Put in hooks to vary the hyperhyperparameters!
+            lognormal_prior = gptools.LogNormalJointPrior([0.0, 1.0], [0.25, 1.0])
+            k_M_beta = gptools.BetaWarpedKernel(k_M, hyperprior=lognormal_prior)
+            # TODO: Make this more intelligent!
+            k = gptools.LinearWarpedKernel(k_M_beta, -1e-3, 1.5)
+        # TODO: I can probably just handle all of the beta-warps at once...
         elif isinstance(k, str):
             raise NotImplementedError("That kernel specification is not supported!")
         self.gp = gptools.GaussianProcess(k, noise_k=noise_k, **kwargs)
