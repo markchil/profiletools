@@ -1778,7 +1778,7 @@ class RejectionFunc(object):
         """
         k = len(self.mask)
         if ((self.positivity and (samp[:k][self.mask].min() < 0)) or 
-                (self.monotonicity and (samp[k:][self.mask].max() > 0))):
+                (self.monotonicity and (samp[k:2*k][self.mask].max() > 0))):
             return False
         else:
             return True

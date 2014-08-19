@@ -574,7 +574,7 @@ class BivariatePlasmaProfile(Profile):
     def compute_a_over_L(self, X, force_update=False, plot=False,
                          gp_kwargs={}, MAP_kwargs={}, plot_kwargs={},
                          return_prediction=False, special_vals=0,
-                         special_X_vals=0, **predict_kwargs):
+                         special_X_vals=0, compute_2=False, **predict_kwargs):
         """Compute the normalized inverse gradient scale length.
         
         Only works on data that have already been time-averaged at the moment.
@@ -612,6 +612,11 @@ class BivariatePlasmaProfile(Profile):
             The number of special points included in the abscissa that should
             not be included in the evaluation of a/L. Default is 0 (no extra
             values).
+        compute_2 : bool, optional
+            If True, the second derivative and some derived quantities will be
+            computed and added to the output structure (if `return_prediction`
+            is True). Note that the derived quantities are only valid if the
+            abscissa is r/a. Default is False (don't compute second derivative).
         **predict_kwargs : optional parameters
             All other parameters are passed to the Gaussian process'
             :py:meth:`predict` method.
@@ -625,7 +630,13 @@ class BivariatePlasmaProfile(Profile):
         if self.X_dim == 1:
             # Get GP fit:
             XX = scipy.concatenate((X, X[special_X_vals:]))
-            n = scipy.concatenate((scipy.zeros_like(X), scipy.ones_like(X[special_X_vals:])))
+            if compute_2:
+                XX = scipy.concatenate((XX, X[special_X_vals:]))
+            n = scipy.concatenate((
+                scipy.zeros_like(X), scipy.ones_like(X[special_X_vals:])
+            ))
+            if compute_2:
+                n = scipy.concatenate((n, 2*scipy.ones_like(X[special_X_vals:])))
             out = self.gp.predict(XX, n=n, full_output=True,
                                   **predict_kwargs)
             mean = out['mean']
@@ -642,11 +653,19 @@ class BivariatePlasmaProfile(Profile):
             var = scipy.diagonal(cov)
             mean_val = mean[:len(X)]
             var_val = var[:len(X)]
-            mean_grad = mean[len(X):]
-            var_grad = var[len(X):]
+            mean_grad = mean[len(X):2*len(X)]
+            var_grad = var[len(X):2*len(X)]
+            if compute_2:
+                mean_2 = mean[2*len(X):]
+                var_2 = var[2*len(X):]
             i = range(0, len(X))
             j = range(len(X), 2 * len(X))
             cov_val_grad = scipy.asarray(cov[i, j]).flatten()
+            
+            if compute_2:
+                k = range(2 * len(X), 3 * len(X))
+                cov_val_2 = scipy.asarray(cov[i, k]).flatten()
+                cov_grad_2 = scipy.asarray(cov[j, k]).flatten()
             
             # Get geometry from EFIT:
             t_efit = self.efit_tree.getTimeBase()
@@ -702,11 +721,20 @@ class BivariatePlasmaProfile(Profile):
                 # TODO: Doesn't include uncertainty in EFIT quantities!
                 # Use samples:
                 val_samps = out['samp'][special_vals:len(X)+special_vals]
-                grad_samps = out['samp'][len(X)+special_vals:]
+                grad_samps = out['samp'][len(X)+special_vals:2*len(X)+special_vals]
+                g2_samps = out['samp'][2*len(X)+special_vals:]
                 dX_dRmid = scipy.tile(mean_dX_dRmid, (val_samps.shape[1], 1)).T
                 a_L_samps = -mean_a * grad_samps * dX_dRmid / val_samps
                 mean_a_L = scipy.mean(a_L_samps, axis=1)
                 std_a_L = scipy.std(a_L_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
+                if compute_2:
+                    # TODO: Extend for coordinates other than r/a!
+                    a_L_grad_samps = g2_samps / grad_samps
+                    mean_a_L_grad = scipy.mean(a_L_grad_samps, axis=1)
+                    std_a_L_grad = scipy.std(a_L_grad_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
+                    a2_2_samps = g2_samps / val_samps
+                    mean_a2_2 = scipy.mean(a2_2_samps, axis=1)
+                    std_a2_2 = scipy.std(a2_2_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
             else:
                 # Compute using error propagation:
                 mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
@@ -718,6 +746,12 @@ class BivariatePlasmaProfile(Profile):
                     cov_val_grad * ((-mean_a * mean_grad * mean_dX_dRmid / mean_val**2) *
                                     (mean_a * mean_dX_dRmid / mean_val))
                 )
+                if compute_2:
+                    # TODO: Extend for coordinates other than r/a!
+                    mean_a_L_grad = mean_2 / mean_grad
+                    std_a_L_grad = scipy.sqrt(var_2 / mean_grad**2 + var_grad * mean_2**2 / mean_grad**4)
+                    mean_a2_2 = mean_2 / mean_val
+                    std_a2_2 = scipy.sqrt(var_2 / mean_val**2 + var_val * mean_2**2 / mean_val**4)
             # Plot result:
             if plot:
                 ax = plot_kwargs.pop('ax', None)
@@ -755,6 +789,13 @@ class BivariatePlasmaProfile(Profile):
                       'special_mean': special_mean,
                       'special_cov': special_cov
                      }
+            if compute_2:
+                retval['mean_2'] = mean_2
+                retval['std_2'] = scipy.sqrt(var_2)
+                retval['mean_a_L_grad'] = mean_a_L_grad
+                retval['std_a_L_grad'] = std_a_L_grad
+                retval['mean_a2_2'] = mean_a2_2
+                retval['std_a2_2'] = std_a2_2
             if predict_kwargs.get('full_MC', False):
                 retval['samp'] = out['samp']
             return retval
