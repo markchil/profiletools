@@ -84,7 +84,7 @@ HYPERPARAMETERS = collections.OrderedDict([
         'SE',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale")
+            (u"\u2113", "covariance length scale"),
         ])
     ),
     (
@@ -406,15 +406,15 @@ parser.add_argument('--uncertainty-method',
                          "using the sample standard deviation, and is only "
                          "appropriate if the data are steady in time. It is very "
                          "questionable to use this with robust estimators.")
-parser.add_argument('--weighted',
+parser.add_argument('--unweighted',
                     action='store_true',
-                    help="Set this flag to use weighted estimators when averaging "
-                         "the data. The weights used are 1/sigma_i^2. Note that "
-                         "using robust weighted estimators will not work for "
-                         "small numbers of data points. Note that this is "
-                         "questionable when applied to diagnostics other than "
-                         "TS for which the individual error bars are estimated "
-                         "as some fixed percent of the value.")
+                    help="Set this flag to use unweighted estimators when "
+                         "averaging the data. Otherwise the weights used are "
+                         "1/sigma_i^2. Note that using robust weighted estimators "
+                         "will not work for small numbers of data points. Note "
+                         "that this is questionable when applied to diagnostics "
+                         "other than TS for which the individual error bars are "
+                         "estimated as some fixed percent of the value.")
 parser.add_argument('--all-points', '--no-average',
                     action='store_true',
                     help="Set this flag to keep all points from the time window "
@@ -502,8 +502,8 @@ parser.add_argument('--walkers',
                          "a time.")
 parser.add_argument('--MCMC-samp',
                     type=int,
-                    default=100,
-                    help="The number of samples to take with each walker. 100 is "
+                    default=200,
+                    help="The number of samples to take with each walker. 200 is "
                          "a good number to get a look at the sample space and "
                          "dial in the bounds.")
 parser.add_argument('--burn',
@@ -1085,6 +1085,7 @@ class MethodFrame(tk.Frame):
         # Create checkbox for weighted averaging:
         self.weighted_state = tk.IntVar(self)
         self.weighted_button = tk.Checkbutton(self, text="weighted", variable=self.weighted_state)
+        self.weighted_button.select()
         self.weighted_button.grid(row=0, column=2, sticky='W')
     
     def update_method(self, new_meth):
@@ -1477,7 +1478,7 @@ class MCMCFrame(tk.Frame):
         self.sample_label = tk.Label(self, text="samples:")
         self.sample_label.grid(row=0, column=2, sticky='E')
         self.sample_box = tk.Entry(self, width=4)
-        self.sample_box.insert(tk.END, '100')
+        self.sample_box.insert(tk.END, '200')
         self.sample_box.grid(row=0, column=3, sticky='EW')
         
         self.burn_label = tk.Label(self, text="burn:")
@@ -2378,10 +2379,10 @@ class FitWindow(tk.Tk):
         If a field is blank, take the bound from the GP's hyperprior. If a field
         is populated, put that into the GP's hyperprior.
         """
-        for k, l, u in zip(range(0, len(self.combined_p.gp.k.hyperprior.bounds)),
+        for k, l, u in zip(range(0, len(self.combined_p.gp.free_param_bounds)),
                            self.control_frame.kernel_frame.bounds_frame.lower_bounds,
                            self.control_frame.kernel_frame.bounds_frame.upper_bounds):
-            old_bounds = self.combined_p.gp.k.hyperprior.bounds[k]
+            old_bounds = self.combined_p.gp.free_param_bounds[k]
             new_bounds = list(old_bounds)
             
             new_lb = l.get()
@@ -2408,7 +2409,7 @@ class FitWindow(tk.Tk):
                         "instead." % (new_ub, k,)
                     )
             
-            self.combined_p.gp.k.hyperprior.bounds[k] = new_bounds
+            self.combined_p.gp.free_param_bounds[k] = new_bounds
     
     def fit_data(self):
         """Perform the actual fit and evaluation.
@@ -3051,7 +3052,8 @@ class FitWindow(tk.Tk):
         try:
             res_min, complete = self.combined_p.find_gp_MAP_estimate(
                 random_starts=int(self.control_frame.fitting_frame.method_frame.starts_box.get()),
-                verbose=True
+                verbose=True,
+                method='SLSQP'
             )
         except ValueError as e:
             self.control_frame.status_frame.add_line(
@@ -3065,8 +3067,7 @@ class FitWindow(tk.Tk):
             self.control_frame.status_frame.add_line(
                 "MAP estimate complete. Result is:"
             )
-            k_nk = self.combined_p.gp.k + self.combined_p.gp.noise_k
-            for v, l in zip(k_nk.free_params, k_nk.free_param_names):
+            for v, l in zip(self.combined_p.gp.free_params, self.combined_p.gp.free_param_names):
                 self.control_frame.status_frame.add_line("%s\t%.3e" % (l.translate(None, '\\'), v))
             if complete < 4:
                 self.control_frame.status_frame.add_line(
@@ -3082,7 +3083,7 @@ class FitWindow(tk.Tk):
                     "of random starts used."
                     % (res_min.status, res_min.message)
                 )
-            bounds = scipy.asarray(k_nk.free_param_bounds)
+            bounds = scipy.asarray(self.combined_p.gp.free_param_bounds)
             if ((res_min.x <= 1.001 * bounds[:, 0]).any() or
                 (res_min.x >= 0.999 * bounds[:, 1]).any()):
                 self.control_frame.status_frame.add_line(
@@ -3432,6 +3433,19 @@ class MCMCResultsFrame(tk.Frame):
         except RuntimeError:
             box.add_line("Could not compute MCMC sampler autocorrelation times.")
         box.add_line("MCMC sampler mean acceptance fraction: %.2f%%" % (100 * scipy.mean(sampler.acceptance_fraction),))
+        box.add_line("Parameter summary:")
+        box.add_line("param\tmean\t95% posterior interval")
+        try:
+            burn = int(self.master.master.control_frame.fitting_frame.MCMC_frame.burn_box.get())
+        except ValueError:
+            self.master.MCMC_control_frame.help_box.add_line("Invalid value for burn! Defaulting to 0.")
+            burn = 0
+        if burn >= sampler.chain.shape[1]:
+            burn = 0
+        mean, ci_l, ci_u = gptools.summarize_sampler(sampler, burn=burn)
+        names = HYPERPARAMETERS[self.master.master.control_frame.kernel_frame.kernel_type_frame.k_var.get()]
+        for n, m, l, u in zip(names, mean, ci_l, ci_u):
+            box.add_line("%s\t%4.4g\t[%4.4g, %4.4g]" % (n, m, l, u))
     
     def refresh(self, print_stats=True):
         """Refresh the plot.
@@ -3441,7 +3455,7 @@ class MCMCResultsFrame(tk.Frame):
         if sampler:
             if print_stats:
                 self.print_stats(self.master.MCMC_control_frame.help_box)
-            labels = ['$%s$' % (l,) for l in self.master.master.combined_p.gp.k.free_param_names]
+            labels = ['$%s$' % (l,) for l in self.master.master.combined_p.gp.free_param_names]
             k = sampler.flatchain.shape[1]
             
             try:
@@ -3611,11 +3625,11 @@ looks correct.
     def process_bounds(self):
         """Process the hyperparameter bounds and propagate back to the parent Frame.
         """
-        for k, l, u in zip(range(0, len(self.master.master.combined_p.gp.k.hyperprior.bounds)),
+        for k, l, u in zip(range(0, len(self.master.master.combined_p.gp.free_param_bounds)),
                            self.bounds_frame.lower_bounds,
                            self.bounds_frame.upper_bounds):
             # We know that by the point this gets called, the hyperprior has the right bounds as set in the main window:
-            old_bounds = self.master.master.combined_p.gp.k.hyperprior.bounds[k]
+            old_bounds = self.master.master.combined_p.gp.free_param_bounds[k]
             new_bounds = list(old_bounds)
             
             new_lb = l.get()
@@ -3642,7 +3656,7 @@ looks correct.
                         "instead." % (new_ub, k,)
                     )
             
-            self.master.master.combined_p.gp.k.hyperprior.bounds[k] = new_bounds
+            self.master.master.combined_p.gp.free_param_bounds[k] = new_bounds
         
         # Propagate the bounds back to the main window:
         for l, u in zip(self.master.master.control_frame.kernel_frame.bounds_frame.lower_bounds,
@@ -3828,8 +3842,8 @@ if __name__ == "__main__":
         root.control_frame.kernel_frame.constraints_frame.update_edge()
     if args.core_only:
         root.control_frame.kernel_frame.kernel_type_frame.core_only_button.select()
-    if args.weighted:
-        root.control_frame.averaging_frame.method_frame.weighted_button.select()
+    if args.unweighted:
+        root.control_frame.averaging_frame.method_frame.weighted_button.deselect()
     if args.robust:
         root.control_frame.averaging_frame.method_frame.method_var.set('robust')
     if args.all_points:
