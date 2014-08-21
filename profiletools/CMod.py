@@ -1252,7 +1252,8 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         X_units=['s', 'm', 'm'],
         y_units='$10^{20}$ m$^{-3}$',
         X_labels=['$t$','$R$', '$Z$'],
-        y_label='$n_e$, TCI'
+        y_label='$n_e$, TCI',
+        weightable=False
     )
     
     if efit_tree is None:
@@ -1336,11 +1337,14 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         An MDSplus.Tree object open to the RF tree of the correct shot.
         The shot of the given tree is not checked! Default is None (open tree).
     """
-    p = BivariatePlasmaProfile(X_dim=2,
-                               X_units=['s', 'm'],
-                               y_units='$10^{20}$ m$^{-3}$',
-                               X_labels=['$t$', '$R_{mid}$'],
-                               y_label='$n_e$, reflect')
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', 'm'],
+        y_units='$10^{20}$ m$^{-3}$',
+        X_labels=['$t$', '$R_{mid}$'],
+        y_label='$n_e$, reflect',
+        weightable=False
+    )
     if rf is None:
         rf = MDSplus.Tree('rf', shot)
     if efit_tree is None:
@@ -1633,11 +1637,14 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
     """
-    p = BivariatePlasmaProfile(X_dim=2,
-                               X_units=['s', 'm'],
-                               y_units='keV',
-                               X_labels=['$t$', '$R_{mid}$'],
-                               y_label='$T_e$, FRCECE (%s)' % (rate,))
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', 'm'],
+        y_units='keV',
+        X_labels=['$t$', '$R_{mid}$'],
+        y_label='$T_e$, FRCECE (%s)' % (rate,),
+        weightable=False
+    )
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1716,11 +1723,14 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
     """
-    p = BivariatePlasmaProfile(X_dim=2,
-                               X_units=['s', 'm'],
-                               y_units='keV',
-                               X_labels=['$t$', '$R_{mid}$'],
-                               y_label='$T_e$, GPC2')
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', 'm'],
+        y_units='keV',
+        X_labels=['$t$', '$R_{mid}$'],
+        y_label='$T_e$, GPC2',
+        weightable=False
+    )
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
     if efit_tree is None:
@@ -1799,11 +1809,14 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
     """
-    p = BivariatePlasmaProfile(X_dim=2,
-                               X_units=['s', 'm'],
-                               y_units='keV',
-                               X_labels=['$t$', '$R_{mid}$'],
-                               y_label='$T_e$, GPC')
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', 'm'],
+        y_units='keV',
+        X_labels=['$t$', '$R_{mid}$'],
+        y_label='$T_e$, GPC',
+        weightable=False
+    )
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
     if efit_tree is None:
@@ -1886,7 +1899,8 @@ def TeMic(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None,
         X_units=['s', 'm'],
         y_units='keV',
         X_labels=['$t$', '$R_{mid}$'],
-        y_label='$T_e$, Mic'
+        y_label='$T_e$, Mic',
+        weightable=False
     )
     
     if electrons is None:

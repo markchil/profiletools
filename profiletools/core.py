@@ -432,6 +432,10 @@ class Profile(object):
         meaning a list of empty strings will be used.
     y_label : str, optional
         Descriptive label for the dependent variable. Default is an empty string.
+    weightable : bool, optional
+        Whether or not it is valid to use weighted estimators on the data, or if
+        the error bars are too suspect for this to be valid. Default is True
+        (allow use of weighted estimators).
     
     Attributes
     ----------
@@ -457,8 +461,10 @@ class Profile(object):
         The logical groups of points into channels along each of the independent
         variables.
     """
-    def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label=''):
+    def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label='',
+                 weightable=True):
         self.X_dim = X_dim
+        self.weightable = weightable
         if X_units is None:
             X_units = [''] * X_dim
         elif X_dim == 1:
@@ -732,6 +738,7 @@ class Profile(object):
         **kwargs : optional kwargs
             All additional kwargs are passed to :py:func:`average_points`.
         """
+        kwargs['weighted'] = self.weightable and kwargs.get('weighted', False)
         # TODO: Add support for custom bins!
         if self.X is not None:
             reduced_channels = scipy.delete(self.channels, axis, axis=1)
