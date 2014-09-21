@@ -686,6 +686,9 @@ import inspect
 import csv
 import cPickle as pickle
 
+# What key to use for keyboard shortcuts: command on Mac, control otherwise:
+COMMAND_KEY = 'Command' if sys.platform == 'darwin' else 'Control'
+
 # Define the format used to print the date:
 DATE_FORMAT = '%d %b %Y %H:%M:%S'
 
@@ -1815,6 +1818,7 @@ class PlotFrame(tk.Frame):
         tk.Frame.__init__(self, *args, **kwargs)
         
         self.f = Figure()
+        self.suptitle = self.f.suptitle('')
         self.a_val = self.f.add_subplot(3, 1, 1)
         self.a_grad = self.f.add_subplot(3, 1, 2, sharex=self.a_val)
         self.a_a_L = self.f.add_subplot(3, 1, 3, sharex=self.a_val)
@@ -1913,6 +1917,7 @@ class ControlFrame(tk.Frame):
         
         # Use Notebook to get tabs.
         self.note = ttk.Notebook(self)
+        # self.note.enable_traversal()
         
         self.data_time_frame = tk.Frame(self)
         self.fit_eval_frame = tk.Frame(self)
@@ -1942,14 +1947,26 @@ class ControlFrame(tk.Frame):
         
         self.plot_param_frame = PlotParamFrame(self, **FRAME_PARAMS)
         
-        self.note.add(self.data_time_frame,
-                      text="Data")
-        self.note.add(self.kernel_frame,
-                      text="Kernel")
-        self.note.add(self.fit_eval_frame,
-                      text="Fit")
-        self.note.add(self.plot_param_frame,
-                      text="Plot")
+        self.note.add(
+            self.data_time_frame,
+            text="Data",
+            # underline=0
+        )
+        self.note.add(
+            self.kernel_frame,
+            text="Kernel",
+            # underline=0
+        )
+        self.note.add(
+            self.fit_eval_frame,
+            text="Fit",
+            # underline=0
+        )
+        self.note.add(
+            self.plot_param_frame,
+            text="Plot",
+            # underline=0
+        )
         
         self.note.grid(row=0, sticky='EWNS')
         
@@ -1993,6 +2010,27 @@ class FitWindow(tk.Tk):
         self.res = None
         
         self.flagged_plt = None
+        
+        self.bind("<%s-d>" % (COMMAND_KEY,), self.set_tab)
+        self.bind("<%s-k>" % (COMMAND_KEY,), self.set_tab)
+        self.bind("<%s-f>" % (COMMAND_KEY,), self.set_tab)
+        self.bind("<%s-p>" % (COMMAND_KEY,), self.set_tab)
+        self.bind("<F1>", self.set_tab)
+        self.bind("<F2>", self.set_tab)
+        self.bind("<F3>", self.set_tab)
+        self.bind("<F4>", self.set_tab)
+    
+    def set_tab(self, event):
+        """Set the tab as indicated by the keysym in the event.
+        """
+        if event.keysym.lower() in ('d', 'f1'):
+            self.control_frame.note.select(0)
+        elif event.keysym.lower() in ('k', 'f2'):
+            self.control_frame.note.select(1)
+        elif event.keysym.lower() in ('f', 'f3'):
+            self.control_frame.note.select(2)
+        elif event.keysym.lower() in ('p', 'f4'):
+            self.control_frame.note.select(3)
     
     def load_data(self):
         """Load the data from the relevant source.
@@ -2362,6 +2400,29 @@ class FitWindow(tk.Tk):
             self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
         
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
+        
+        # Produce a descriptive title for the plot:
+        title = ''
+        try:
+            title += "shot %d" % (self.combined_p.shot)
+        except AttributeError:
+            pass
+        try:
+            title += " t_min %f" % (self.combined_p.t_min)
+        except AttributeError:
+            pass
+        try:
+            title += " t_max %f" % (self.combined_p.t_max)
+        except AttributeError:
+            pass
+        if hasattr(self.combined_p, 'times'):
+            times = list(self.combined_p.times)
+            title += " times %f" % (times.pop())
+            for t in times:
+                title += ",%f" % (t,)
+        
+        self.plot_frame.suptitle.set_text(title)
+        
         self.control_frame.outlier_frame.update_show_idx()
         # update_show_idx always calls draw, so we don't need to here.
         # self.plot_frame.canvas.draw()
@@ -3153,7 +3214,7 @@ class FitWindow(tk.Tk):
                 except AttributeError:
                     pass
                 
-                self.plot_frame.f.suptitle(title)
+                self.plot_frame.suptitle.set_text(title)
                 
                 self.plot_frame.f.savefig(
                     os.path.expanduser(root) + '.pdf',
