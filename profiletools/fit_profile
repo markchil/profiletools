@@ -3335,6 +3335,7 @@ class FitWindow(tk.Tk):
                         f.peaking = self.mean_peaking
                         f.err_peaking = self.std_peaking
                     
+                    f.x_name = X_name
                     f.createDimension(X_name, len(self.X))
                     v_X = f.createVariable(X_name, float, (X_name,))
                     v_X[:] = self.X
