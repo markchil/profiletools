@@ -1255,13 +1255,13 @@ class Profile(object):
             k = gptools.LinearWarpedKernel(k_SE_beta, -1e-3, 1.5)
         elif k == 'matern':
             y_range = y.max() - y.min()
-            bounds = [(0.0, upper_factor * y_range), (0.51, 1e2)]
+            bounds = [(0.0, upper_factor * y_range), (1.0, 50)]
             for i in xrange(0, self.X_dim):
                 X_range = X[:, i].max() - X[:, i].min()
                 bounds.append((0.0, upper_factor * X_range))
             initial = [(b[1] - b[0]) / 2.0 for b in bounds]
-            k = gptools.MaternKernelArb(
-                num_dim=self.X_dim,
+            k = gptools.MaternKernel1d(
+                # num_dim=self.X_dim,
                 initial_params=initial,
                 param_bounds=bounds,
                 **k_kwargs
