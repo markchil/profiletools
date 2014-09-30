@@ -1144,7 +1144,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False):
+          efit_tree=None, remove_edge=False, remove_zeros=False):
     """Returns a profile representing electron density from the edge Thomson scattering system.
 
     Parameters
@@ -1166,6 +1166,10 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     remove_edge : bool, optional
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
+    remove_zeros: bool, optional
+        If True, will remove points that are identically zero. Default is False
+        (keep zero points). This was added because clearly bad points aren't
+        always flagged with a sentinel value of errorbar.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -1209,8 +1213,13 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) |
-                    ((p.y == 0.0) & (p.err_y == 2)) | scipy.isinf(p.err_y))
+    p.remove_points(
+        scipy.isnan(p.err_y) |
+        scipy.isinf(p.err_y) |
+        (p.err_y == 0.0) |
+        ((p.y == 0.0) & (p.err_y == 2)) |
+        ((p.y == 0.0) & remove_zeros)
+    )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
@@ -1593,9 +1602,10 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     # Remove flagged points:
     p.remove_points(
         scipy.isnan(p.err_y) |
+        scipy.isinf(p.err_y) |
         (p.err_y == 0.0) |
         ((p.y == 0) & (p.err_y == 1)) |
-        scipy.isinf(p.err_y)
+        ((p.y == 0) & (p.err_y == 0.029999999329447746))  # This seems to be an old way of flagging. Could be risky...
     )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
