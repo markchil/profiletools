@@ -796,7 +796,7 @@ class BivariatePlasmaProfile(Profile):
                 retval['std_a_L_grad'] = std_a_L_grad
                 retval['mean_a2_2'] = mean_a2_2
                 retval['std_a2_2'] = std_a2_2
-            if predict_kwargs.get('full_MC', False):
+            if predict_kwargs.get('full_MC', False) or predict_kwargs.get('return_samples', False):
                 retval['samp'] = out['samp']
             return retval
         else:
