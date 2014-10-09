@@ -35,6 +35,8 @@ valid_systems = set()
 for sig, sys in SYSTEM_OPTIONS.iteritems():
     for s in sys:
         valid_systems.add(s)
+# Shortcut flag for ETS+CTS:
+valid_systems.add('TS')
 
 # Define which systems are excluded by default:
 DEFAULT_EXCLUDE = ['TCI', 'reflect']
