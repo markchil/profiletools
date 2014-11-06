@@ -1425,7 +1425,7 @@ class Profile(object):
             if not kwargs.get('use_MCMC', False):
                 self.find_gp_MAP_estimate(**MAP_kwargs)
         if plot:
-            plot_kwargs.pop('return_prediction', True)
+            kwargs.pop('return_prediction', True)
             return self.gp.plot(X=X, n=n, return_prediction=True, **kwargs)
         else:
             return self.gp.predict(X, n=n, **kwargs)
