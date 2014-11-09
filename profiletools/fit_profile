@@ -43,7 +43,7 @@ DEFAULT_EXCLUDE = ['TCI', 'reflect']
 
 # Define the coordinates that can be specified:
 COORDINATE_OPTIONS = [
-    'psinorm', 'Rmid', 'r/a', 'volnorm', 'phinorm',
+    'r/a', 'psinorm', 'Rmid', 'volnorm', 'phinorm',
     'sqrtpsinorm', 'sqrtr/a', 'sqrtvolnorm', 'sqrtphinorm'
 ]
 
@@ -338,7 +338,7 @@ parser.add_argument('--kernel',
 parser.add_argument('--coordinate',
                     choices=COORDINATE_OPTIONS,
                     default='',
-                    help="Which coordinate to fit against. Defaults to psinorm "
+                    help="Which coordinate to fit against. Defaults to r/a "
                          "when pulling data from the tree. Used to determine how "
                          "to apply core/edge constraints when pulling data from "
                          "a file.")

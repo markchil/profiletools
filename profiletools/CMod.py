@@ -738,6 +738,7 @@ class BivariatePlasmaProfile(Profile):
             else:
                 # Compute using error propagation:
                 mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
+                # TODO: This needs to change for X=r/a!
                 std_a_L = scipy.sqrt(
                     var_a * (mean_grad * mean_dX_dRmid / mean_val)**2 +
                     var_val * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
