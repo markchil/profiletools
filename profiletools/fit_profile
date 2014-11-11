@@ -2915,6 +2915,7 @@ class FitWindow(tk.Tk):
             ax=self.plot_frame.a_val,
             color='b'
         )
+        
         if self.control_frame.eval_frame.a_L_state.get():
             color = plt.getp(self.l[0], 'color')
             core_mask = X <= 1
@@ -2931,6 +2932,7 @@ class FitWindow(tk.Tk):
             )
             self.l.extend(l)
             self.e.extend(e)
+            
             l, e = gptools.univariate_envelope_plot(
                 X,
                 res['mean_a_L'],
@@ -2938,10 +2940,13 @@ class FitWindow(tk.Tk):
                 ax=self.plot_frame.a_a_L,
                 color=color
             )
-            self.plot_frame.a_a_L.set_ylim(
-                bottom=(res['mean_a_L'][core_mask] - 3 * res['std_a_L'][core_mask]).min(),
-                top=(res['mean_a_L'][core_mask] + 3 * res['std_a_L'][core_mask]).max()
-            )
+            
+            # Avoid bug in MPL v. 1.4.2:
+            if matplotlib.__version__ != '1.4.2':
+                self.plot_frame.a_a_L.set_ylim(
+                    bottom=(res['mean_a_L'][core_mask] - 3 * res['std_a_L'][core_mask]).min(),
+                    top=(res['mean_a_L'][core_mask] + 3 * res['std_a_L'][core_mask]).max()
+                )
             self.l.extend(l)
             self.e.extend(e)
         

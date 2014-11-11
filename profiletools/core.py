@@ -806,13 +806,13 @@ class Profile(object):
                     ax = f.add_subplot(111, projection='3d')
             elif ax == 'gca':
                 ax = plt.gca()
-        
+            
             if 'label' not in kwargs:
                 kwargs['label'] = self.y_label
-        
+            
             if 'fmt' not in kwargs and 'marker' not in kwargs:
                 kwargs['fmt'] = 'o'
-        
+            
             if self.X_dim == 1:
                 ax.errorbar(self.X.ravel(), self.y,
                             yerr=self.err_y, xerr=self.err_X.flatten(),
@@ -843,7 +843,7 @@ class Profile(object):
                         "%s [%s]" % (self.y_label, self.y_units,) if self.y_units
                         else self.y_label
                     )
-        
+            
             return ax
     
     def remove_points(self, conditional):
