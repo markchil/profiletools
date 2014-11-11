@@ -1284,7 +1284,7 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     weights *= (Z.max() - Z.min()) / (2 * (len(Z) - 1))
     
     mask = None
-    for i, r in zip(range(0, 10), R):
+    for i, r in zip(range(0, len(R)), R):
         N_NL = electrons.getNode(r'tci.results:nl_%02d' % (i + 1,))
         ne = N_NL.data()
         t_ne = N_NL.dim_of().data()
