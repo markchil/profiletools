@@ -307,7 +307,7 @@ class Channel(object):
         self.err_y = err_y
         self.T = T
     
-    def keep_slices(self, axis, vals, keep_mixed=False):
+    def keep_slices(self, axis, vals, tol=None, keep_mixed=False):
         """Only keep the indices closest to given `vals`.
         
         Parameters
@@ -337,8 +337,15 @@ class Channel(object):
             else:
                 return False
         else:
-            unique_vals = scipy.asarray(unique_vals)
-            keep_idxs = scipy.unique(get_nearest_idx(vals, unique_vals))
+            # TODO: Make sure raveling doesn't have unexpected consequences...
+            unique_vals = scipy.asarray(unique_vals).ravel()
+            
+            keep_idxs = get_nearest_idx(vals, unique_vals)
+            if tol is not None:
+                keep_idxs = keep_idxs[
+                    scipy.absolute(unique_vals[keep_idxs] - vals) <= tol
+                ]
+            keep_idxs = scipy.unique(keep_idxs)
             
             self.X = self.X[keep_idxs, :, :]
             self.y = self.y[keep_idxs]
@@ -675,7 +682,7 @@ class Profile(object):
             p.X = scipy.delete(p.X, axis, axis=2)
             p.err_X = scipy.delete(p.err_X, axis, axis=2)
     
-    def keep_slices(self, axis, vals, **kwargs):
+    def keep_slices(self, axis, vals, tol=None, **kwargs):
         """Keeps only the nearest points to vals along the given axis for each channel.
         
         Parameters
@@ -684,6 +691,9 @@ class Profile(object):
             The axis to take the slice(s) of.
         vals : array of float
             The values the axis should be close to.
+        tol : float or None
+            Tolerance on nearest values -- if the nearest value is farther than
+            this, it is not kept. If None, this is not applied.
         **kwargs : optional kwargs
             All additional kwargs are passed to :py:meth:`~gptools.core.Channel.keep_slices`.
         """
@@ -706,20 +716,31 @@ class Profile(object):
             for ch in channels:
                 channel_idxs = (reduced_channels == ch.flatten()).all(axis=1)
                 ch_axis_X = self.X[channel_idxs, axis].flatten()
-                keep_idxs = scipy.unique(get_nearest_idx(vals, ch_axis_X))
+                
+                keep_idxs = get_nearest_idx(vals, ch_axis_X)
+                if tol is not None:
+                    keep_idxs = keep_idxs[
+                        scipy.absolute(ch_axis_X[keep_idxs] - vals) <= tol
+                    ]
+                keep_idxs = scipy.unique(keep_idxs)
                 
                 new_X.extend(self.X[channel_idxs, :][keep_idxs, :])
                 new_y.extend(self.y[channel_idxs][keep_idxs])
                 new_err_X.extend(self.err_X[channel_idxs, :][keep_idxs, :])
                 new_err_y.extend(self.err_y[channel_idxs][keep_idxs])
                 new_channels.extend(self.channels[channel_idxs, :][keep_idxs, :])
-            self.X = scipy.vstack(new_X)
-            self.y = scipy.asarray(new_y)
-            self.err_X = scipy.vstack(new_err_X)
-            self.err_y = scipy.asarray(new_err_y)
-            self.channels = scipy.vstack(new_channels)
+            
+            # Raise an error if there aren't any points to keep:
+            if new_X:
+                self.X = scipy.vstack(new_X)
+                self.y = scipy.asarray(new_y)
+                self.err_X = scipy.vstack(new_err_X)
+                self.err_y = scipy.asarray(new_err_y)
+                self.channels = scipy.vstack(new_channels)
+            else:
+                raise ValueError("No valid points!")
         
-        mask = [p.keep_slices(axis, vals, **kwargs) for p in self.transformed]
+        mask = [p.keep_slices(axis, vals, tol=tol, **kwargs) for p in self.transformed]
         self.transformed = self.transformed[scipy.asarray(mask, dtype=bool)]
     
     def average_data(self, axis=0, **kwargs):
