@@ -13,6 +13,10 @@ Notes
 
 :py:mod:`profiletools` has been developed and tested on Python 2.7 and scipy 0.14.0. It may work just as well on other versions, but has not been tested.
 
+`profiletools` uses the module `gptools` for GPR. You can find the source at https://github.com/markchil/gptools/ and the documentation at http://gptools.readthedocs.org/
+
+`profiletools` uses the module `eqtools` for tokamak coordinate transformations. You can find the source at https://github.com/PSFCPlasmaTools/eqtools/ and the documentation at http://eqtools.readthedocs.org/
+
 If you find this software useful, please be sure to cite it:
 
 M.A. Chilenski (2014). profiletools: Classes for working with profile data of arbitrary dimension, GNU General Public License. github.com/markchil/profiletools
