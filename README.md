@@ -1,7 +1,7 @@
 profiletools
 ============
 
-Tools for working with plasma profile data.
+Tools for working with (plasma) profile data.
 
 `profiletools` is a Python package that provides a convenient way of accessing plasma profile data, combining data from multiple sources and applying Gaussian process regression (GPR) to the combined data sets.
 

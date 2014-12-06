@@ -6,7 +6,7 @@ Source home: https://github.com/markchil/profiletools
 Overview
 --------
 
-:py:mod:`profiletools` is a Python package that provides a convenient, powerful and extensible way of working with multivariate data, particularly profile data from magnetic plasma confinement devices. :py:mod:`profiletools` features deep integration with :py:mod:`gptools` to support Gaussian process regression (GPR). Refer to https://github.com/markchil/gptools for more information.
+:py:mod:`profiletools` is a Python package that provides a convenient, powerful and extensible way of working with multivariate data, particularly profile data from magnetic plasma confinement devices. :py:mod:`profiletools` features deep integration with :py:mod:`gptools` to support Gaussian process regression (GPR).
 
 Notes
 -----
