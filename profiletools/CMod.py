@@ -1130,9 +1130,14 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) | scipy.isinf(p.err_y))
-    if remove_zeros:
-        p.remove_points(p.y == 0.0)
+    p.remove_points(
+        scipy.isnan(p.err_y) |
+        scipy.isinf(p.err_y) |
+        (p.err_y == 0.0) |
+        (p.err_y == 1.0) |
+        (p.err_y == 2.0) |
+        ((p.y == 0.0) & remove_zeros)
+    )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
@@ -1145,7 +1150,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=False):
+          efit_tree=None, remove_edge=False, remove_zeros=True):
     """Returns a profile representing electron density from the edge Thomson scattering system.
 
     Parameters
@@ -1214,11 +1219,17 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
     # Remove flagged points:
+    try:
+        pm = electrons.getNode(r'yag_edgets.data:pointmask').data().flatten()
+    except MDSplus.TreeException:
+        pm = scipy.ones_like(p.y)
     p.remove_points(
+        (pm == 0) |
         scipy.isnan(p.err_y) |
         scipy.isinf(p.err_y) |
         (p.err_y == 0.0) |
-        ((p.y == 0.0) & (p.err_y == 2)) |
+        (p.err_y == 1.0) |
+        (p.err_y == 2.0) |
         ((p.y == 0.0) & remove_zeros)
     )
     if t_min is not None:
@@ -1521,9 +1532,13 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: channels})
     # Remove flagged points:
-    p.remove_points(scipy.isnan(p.err_y) | (p.err_y == 0.0) | scipy.isinf(p.err_y))
-    if remove_zeros:
-        p.remove_points(p.y == 0.0)
+    p.remove_points(
+        scipy.isnan(p.err_y) |
+        scipy.isinf(p.err_y) |
+        (p.err_y == 0.0) |
+        (p.err_y == 1.0) |
+        ((p.y == 0.0) & remove_zeros)
+    )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
@@ -1536,7 +1551,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False):
+          efit_tree=None, remove_edge=False, remove_zeros=False):
     """Returns a profile representing electron temperature from the edge Thomson scattering system.
 
     Parameters
@@ -1601,22 +1616,30 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     
     p.add_data(X, Te, err_y=err_Te, channels={1: channels, 2: channels})
     # Remove flagged points:
+    try:
+        pm = electrons.getNode(r'yag_edgets.data:pointmask').data().flatten()
+    except MDSplus.TreeException:
+        pm = scipy.ones_like(p.y)
     p.remove_points(
+        (pm == 0) |
         scipy.isnan(p.err_y) |
         scipy.isinf(p.err_y) |
         (p.err_y == 0.0) |
-        ((p.y == 0) & (p.err_y == 1)) |
+        (p.err_y == 1.0) |
+        (p.err_y == 0.5) |
+        ((p.y == 0.0) & remove_zeros) |
         ((p.y == 0) & (p.err_y == 0.029999999329447746))  # This seems to be an old way of flagging. Could be risky...
     )
+    
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
-
+    
     if remove_edge:
         p.remove_edge_points()
-
+    
     return p
 
 def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None,
