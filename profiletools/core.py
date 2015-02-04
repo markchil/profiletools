@@ -1326,6 +1326,12 @@ class Profile(object):
             self.gp.add_data(X, y, err_y=err_y)
         for p in self.transformed:
             if len(p.y) > 0:
+                print("-----------------------------------------------")
+                print("p.x:")
+                print(p.X)
+                print("vstack:")
+                print(scipy.vstack(p.X))
+                print("-----------------------------------------------")
                 self.gp.add_data(
                     scipy.vstack(p.X),
                     p.y,

@@ -3310,26 +3310,20 @@ class FitWindow(tk.Tk):
                 self.control_frame.status_frame.add_line(
                     "Writing results to pickle file %s..." % os.path.basename(path)
                 )
-                X_name = (
-                    self.combined_p.X_labels[0] + ' [' + self.combined_p.X_units[0] + ']'
-                    if self.combined_p.X_units[0]
-                    else self.combined_p.X_labels[0]
-                )
-                y_name = (
-                    self.combined_p.y_label + ' [' + self.combined_p.y_units + ']'
-                    if self.combined_p.y_units
-                    else self.combined_p.y_label
-                )
                 res_dict = {
-                    X_name: self.X,
-                    y_name: self.res['mean_val'],
-                    'err_' + y_name: self.res['std_val']
+                    'X': self.X,
+                    'y': self.res['mean_val'],
+                    'err_y': self.res['std_val'],
+                    'X_label': self.combined_p.X_labels[0],
+                    'X_units': self.combined_p.X_units[0],
+                    'y_label': self.combined_p.y_label,
+                    'y_units': self.combined_p.y_units
                 }
                 if 'mean_a_L' in self.res:
-                    res_dict["d%s/d%s" % (y_name, X_name)] = self.res['mean_grad']
-                    res_dict["err_d%s/d%s" % (y_name, X_name)] = self.res['std_grad']
-                    res_dict["a_L%s" % (y_name,)] = self.res['mean_a_L']
-                    res_dict["err_a_L%s" % (y_name,)] = self.res['std_a_L']
+                    res_dict["dy/dX"] = self.res['mean_grad']
+                    res_dict["err_dy/dX"] = self.res['std_grad']
+                    res_dict["a_Ly"] = self.res['mean_a_L']
+                    res_dict["err_a_Ly"] = self.res['std_a_L']
                 
                 # Add metadata:
                 res_dict['history'] = history

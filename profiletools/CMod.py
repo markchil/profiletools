@@ -1244,7 +1244,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-           efit_tree=None, npts=20, flag_threshold=1e-3):
+          efit_tree=None, npts=100, flag_threshold=1e-3):
     """Returns a profile representing electron density from the two color interferometer system.
 
     Parameters
@@ -1268,6 +1268,12 @@ def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     flag_threshold : float, optional
         The threshold below which points are considered bad. Default is 1e-3.
     """
+    # Note that the defaults here are redundant with the function definition:
+    # they must be changed at the same time.
+    if npts is None:
+        npts = 100
+    if flag_threshold is None:
+        flag_threshold = 1e-3
     p = BivariatePlasmaProfile(
         X_dim=3,
         X_units=['s', 'm', 'm'],
@@ -1412,7 +1418,7 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
 
     return p
 
-def ne(shot, include=['CTS', 'ETS'], TCI_npts=100, TCI_flag_threshold=1e-3, **kwargs):
+def ne(shot, include=['CTS', 'ETS'], TCI_npts=None, TCI_flag_threshold=None, **kwargs):
     """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
 
     Parameters
