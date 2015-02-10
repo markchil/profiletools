@@ -2427,7 +2427,27 @@ class FitWindow(tk.Tk):
                 else self.combined_p.y_label
             )
             
-            self.control_frame.plot_param_frame.update_limits()
+            # self.control_frame.plot_param_frame.update_limits()
+            
+            # Only update the value axis:
+            try:
+                x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
+            except ValueError:
+                x_min = self.combined_p.X.min()
+            try:
+                x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
+            except ValueError:
+                x_max = self.combined_p.X.max()
+            self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
+            try:
+                y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
+            except ValueError:
+                y_min = 0
+            try:
+                y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
+            except ValueError:
+                y_max = None
+            self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
         
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         
