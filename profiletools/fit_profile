@@ -1874,8 +1874,26 @@ class PlotParamFrame(tk.Frame):
         self.y_ub_box = tk.Entry(self)
         self.y_ub_box.grid(row=2, column=3, sticky='EW')
         
+        self.dy_lim_label = tk.Label(self, text="dy/dx:")
+        self.dy_lim_label.grid(row=3, column=0, sticky='E')
+        self.dy_lb_box = tk.Entry(self)
+        self.dy_lb_box.grid(row=3, column=1, sticky='EW')
+        self.dy_to_label = tk.Label(self, text="to")
+        self.dy_to_label.grid(row=3, column=2, sticky='EW')
+        self.dy_ub_box = tk.Entry(self)
+        self.dy_ub_box.grid(row=3, column=3, sticky='EW')
+        
+        self.aLy_lim_label = tk.Label(self, text="a/Ly:")
+        self.aLy_lim_label.grid(row=4, column=0, sticky='E')
+        self.aLy_lb_box = tk.Entry(self)
+        self.aLy_lb_box.grid(row=4, column=1, sticky='EW')
+        self.aLy_to_label = tk.Label(self, text="to")
+        self.aLy_to_label.grid(row=4, column=2, sticky='EW')
+        self.aLy_ub_box = tk.Entry(self)
+        self.aLy_ub_box.grid(row=4, column=3, sticky='EW')
+        
         self.update_button = tk.Button(self, text='apply', command=self.update_limits)
-        self.update_button.grid(row=3, column=0, columnspan=4, sticky='W')
+        self.update_button.grid(row=5, column=0, columnspan=4, sticky='W')
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(3, weight=1)
@@ -1895,6 +1913,7 @@ class PlotParamFrame(tk.Frame):
             pass
         else:
             self.master.master.plot_frame.a_val.set_xlim(right=x_ub)
+        
         try:
             y_lb = float(self.y_lb_box.get())
         except ValueError:
@@ -1907,6 +1926,32 @@ class PlotParamFrame(tk.Frame):
             pass
         else:
             self.master.master.plot_frame.a_val.set_ylim(top=y_ub)
+        
+        try:
+            dy_lb = float(self.dy_lb_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_grad.set_ylim(bottom=dy_lb)
+        try:
+            dy_ub = float(self.dy_ub_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_grad.set_ylim(top=dy_ub)
+        
+        try:
+            aLy_lb = float(self.aLy_lb_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_a_L.set_ylim(bottom=aLy_lb)
+        try:
+            aLy_ub = float(self.aLy_ub_box.get())
+        except ValueError:
+            pass
+        else:
+            self.master.master.plot_frame.a_a_L.set_ylim(top=aLy_ub)
         
         self.master.master.plot_frame.canvas.draw()
 
@@ -2382,24 +2427,7 @@ class FitWindow(tk.Tk):
                 else self.combined_p.y_label
             )
             
-            try:
-                x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
-            except ValueError:
-                x_min = self.combined_p.X.min()
-            try:
-                x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
-            except ValueError:
-                x_max = self.combined_p.X.max()
-            self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
-            try:
-                y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
-            except ValueError:
-                y_min = 0
-            try:
-                y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
-            except ValueError:
-                y_max = None
-            self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
+            self.control_frame.plot_param_frame.update_limits()
         
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         
@@ -2977,24 +3005,8 @@ class FitWindow(tk.Tk):
             "$a/L_{%s}$" % (self.combined_p.y_label.strip('$'),)
         )
         
-        try:
-            x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
-        except ValueError:
-            x_min = min(X)
-        try:
-            x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
-        except ValueError:
-            x_max = max(X)
-        self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
-        try:
-            y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
-        except ValueError:
-            y_min = 0
-        try:
-            y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
-        except ValueError:
-            y_max = None
-        self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
+        self.control_frame.plot_param_frame.update_limits()
+        
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         self.plot_frame.canvas.draw()
         self.plot_frame.canvas._tkcanvas.focus_set()
