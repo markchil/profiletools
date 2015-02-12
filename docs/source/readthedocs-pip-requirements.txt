@@ -1,5 +1,5 @@
 numpy
 scipy
-numpydoc==0.4
+numpydoc
 matplotlib
 gptools
