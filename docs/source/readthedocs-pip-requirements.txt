@@ -1,7 +1,4 @@
-cython
 numpy
 scipy
-mpmath
 numpydoc
 matplotlib
-gptools
