@@ -4321,6 +4321,8 @@ def run_gui():
         
     if not args.no_interaction and not args.no_mainloop:
         root.mainloop()
+    
+    return (root.X, root.res, root.combined_p)
 
 if __name__ == "__main__":
     run_gui()
