@@ -763,7 +763,8 @@ parser.add_argument(
          "these will be set from the data."
 )
 
-args = parser.parse_args()
+if __name__ == "__main__":
+    args = parser.parse_args()
 
 ### ======================== START OF MAIN PROGRAM ======================== ###
 
@@ -4105,7 +4106,10 @@ class MCMCWindow(tk.Toplevel):
             self.master.sampler = None
         tk.Toplevel.destroy(self)
 
-def run_gui():
+def run_gui(argv=None):
+    global args
+    if argv is not None:
+        args = parser.parse_args(argv)
     root = FitWindow()
     
     # Populate the GUI with parameters from args:
