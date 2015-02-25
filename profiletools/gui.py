@@ -19,7 +19,7 @@
 from __future__ import division
 
 __version__ = '1.0'
-PROG_NAME = 'fit_profile'
+PROG_NAME = 'gpfit'
 
 import collections
 
