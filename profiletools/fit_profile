@@ -18,7 +18,7 @@
 
 from __future__ import division
 
-__version__ = '0.0'
+__version__ = '1.0'
 PROG_NAME = 'fit_profile'
 
 import collections
@@ -78,8 +78,8 @@ HYPERPARAMETERS = collections.OrderedDict([
             (u"\u2113e", "edge covariance length scale"),
             (u"\u2113a", "first transition width"),
             (u"\u2113b", "second transition width"),
-            ("xa", "first transition"),
-            ("xb", "second transition")
+            (u"xa", "first transition"),
+            (u"xb", "second transition")
         ])
     ),
     (
@@ -92,10 +92,10 @@ HYPERPARAMETERS = collections.OrderedDict([
     (
         'SEsym1d',
         collections.OrderedDict([
-            ("1", "VOID"),
-            ("2", "VOID"),
-            (u"\u03C3f 2", "signal variance"),
-            (u"\u2113 2", "covariance length scale")
+            (u"1", "VOID"),
+            (u"2", "VOID"),
+            (u"\u03C3f", "signal variance"),
+            (u"\u2113", "covariance length scale")
         ])
     ),
     (
@@ -111,7 +111,7 @@ HYPERPARAMETERS = collections.OrderedDict([
         'RQ',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u03B1", "order"),
+            (u"a", "order"),
             (u"\u2113", "covariance length scale")
         ])
     ),
@@ -144,21 +144,61 @@ HYPERPARAMETERS = collections.OrderedDict([
 # Define the (univariate) hyperpriors and their (hyperhyper)parameters:
 HYPERPRIORS = collections.OrderedDict(
     [
-        ('uniform', ["lb", "ub"]),
+        ('uniform', [u"lb", u"ub"]),
         ('gamma', [u"\u03b1", u"\u03b2"]),
         ('normal', [u"\u03bc", u"\u03c3"]),
         ('log-normal', [u"\u03bc", u"\u03c3"]),
     ]
 )
 
-# Define some (vaguely) sensible defaults for the hyperhyperparameters:
-# TODO: These can probably be made quite a bit more clever!
-HYPERHYPERPARAMETER_DEFAULTS = collections.OrderedDict(
+# Define some (vaguely) sensible defaults for the hyperpriors:
+# Key is the (unicode) short name for the hyperparameter (as used as a key in
+# the inner dictionaries of HYPERPARAMETERS, above).
+# Value is a tuple with ('name', [p1, p2, ...]) (i.e., a key-value pair ordered
+# like in HYPERPRIORS above, but with the specific initial values given for the
+# hyperhyperparameters).
+HYPERPRIOR_DEFAULTS = {
+    u"\u03C3f": ('uniform', [0.0, 20.0]),
+    u"\u21131": ('gamma', [11.0, 10.0]),
+    u"\u21132": ('gamma', [6.0, 10.0]),
+    u"\u2113w": ('gamma', [1.0, 10.0]),
+    u"x0": ('gamma', [101.0, 100.0]),
+    u"\u2113c": ('gamma', [11.0, 10.0]),
+    u"\u2113m": ('gamma', [11.0, 10.0]),
+    u"\u2113e": ('gamma', [6.0, 10.0]),
+    u"\u2113a": ('gamma', [1.0, 10.0]),
+    u"\u2113b": ('gamma', [1.0, 10.0]),
+    u"xa": ('uniform', [0.0, 1.0]),
+    u"xb": ('gamma', [101.0, 100.0]),
+    u"\u2113": ('gamma', [11.0, 10.0]),
+    u"1": ('uniform', [0.0, 20.0]),
+    u"2": ('gamma', [11.0, 10.0]),
+    u"\u03B1": ('log-normal', [0.0, 0.25]),
+    u"\u03B2": ('log-normal', [1.0, 1.0]),
+    u"a": ('uniform', [0.0, 100.0]),
+    u"\u03BD": ('uniform', [1.0, 50.0])
+}
+
+# Define ASCII-only names for the hyperparameters:
+HYPERPARAMETER_NAMES = collections.OrderedDict(
     [
-        ('uniform', [0.0, 10.0]),
-        ('gamma', [11.0, 10.0]),
-        ('normal', [0.0, 1.0]),
-        ('log-normal', [0.0, 1.0])
+        ('sigma_f', u"\u03C3f"),
+        ('l_1', u"\u21131"),
+        ('l_2', u"\u21132"),
+        ('l_w', u"\u2113w"),
+        ('x_0', u"x0"),
+        ('l_c', u"\u2113c"),
+        ('l_m', u"\u2113m"),
+        ('l_e', u"\u2113e"),
+        ('l_a', u"\u2113a"),
+        ('l_b', u"\u2113b"),
+        ('x_a', u"xa"),
+        ('x_b', u"xb"),
+        ('l', u"\u2113"),
+        ('alpha', u"\u03B1"),
+        ('beta', u"\u03B2"),
+        ('a', u"a"),
+        ('nu', u"\u03BD")
     ]
 )
 
@@ -252,297 +292,330 @@ of the file. The supported metadata are:
 """ % (PROG_NAME, PROG_NAME,),
     formatter_class=CustomFormatter
 )
-parser.add_argument('--signal',
-                    choices=SYSTEM_OPTIONS.keys(),
-                    help="Which signal to fit when pulling data from the tree.")
-parser.add_argument('--shot',
-                    type=int,
-                    help="Shot number to use. Required when pulling data from "
-                         "the tree. When pulling data from a file, this is "
-                         "needed to specify constraints at the magnetic axis and "
-                         "limiter.")
-parser.add_argument('--EFIT-tree',
-                    help="EFIT tree to use. Default is ANALYSIS. Otherwise, give "
-                         "a name like 'EFIT20'.")
-parser.add_argument('--t-min',
-                    type=float,
-                    help="Starting time of period to average over. If you are "
-                         "reading data from a file, you can set this flag to "
-                         "tell the program what time window to average over "
-                         "when finding the location of the limiter/magnetic axis "
-                         "when applying constraints.")
-parser.add_argument('--t-max',
-                    type=float,
-                    help="Ending time of period to average over. If you are "
-                         "reading data from a file, you can set this flag to "
-                         "tell the program what time window to average over when "
-                         "finding the location of the limiter/magnetic axis "
-                         "when applying constraints.")
-parser.add_argument('-t', '--t-points',
-                    type=float,
-                    metavar='T_POINT',
-                    nargs='+',
-                    help="Individual time values to use. The nearest time to "
-                         "each will be selected for each channel. You can use "
-                         "this, for instance, to specify the times you have "
-                         "determined are at a particular sawtooth/ELM phase. You "
-                         "must either specify --t-min and --t-max, or -t.")
-parser.add_argument('--npts',
-                    type=int,
-                    default=400,
-                    help="Number of evenly-spaced points to evaluate the fit at.")
-parser.add_argument('--x-min',
-                    type=float,
-                    default=0,
-                    help="Starting point for the evenly-spaced points to evaluate "
-                         "the fit at.")
-parser.add_argument('--x-max',
-                    type=float,
-                    default=1.2,
-                    help="Ending point for the evenly-spaced points to evaluate "
-                         "the fit at.")
-parser.add_argument('--x-pts',
-                    type=float,
-                    metavar='X_PT',
-                    nargs='+',
-                    help="Discrete points to evaluate the fit at. If present, "
-                         "this overrides the effect of npts, x-min and x-max.")
-parser.add_argument('--system',
-                    nargs='+',
-                    choices=valid_systems,
-                    help="Which system(s) to take data from. If not provided, "
-                         "all applicable systems will be used. The 'TS' option "
-                         "is a shortcut to include both the core (CTS) and edge "
-                         "(ETS) Thomson systems. Note that working with TCI data "
-                         "is VERY slow. Also note that the statistics of "
-                         "including the SOL reflectometer are questionable, so "
-                         "you uncertainties should be taken with a grain of salt "
-                         "when using those data.")
-parser.add_argument('--kernel',
-                    choices=HYPERPARAMETERS.keys(),
-                    # default='gibbstanh',
-                    help="Which covariance kernel to use. This dictates the "
-                         "properties of the fit. "
-                         "* gibbstanh is the Gibbs kernel with tanh warping of "
-                         "the length scale. This kernel allows the entire "
-                         "profile to be fit at once, and should be used if you "
-                         "have edge data. "
-                         "* gibbsdoubletanh is an experimental Gibbs kernel "
-                         "whose warping function is the sum of two hyperbolic "
-                         "tangents. This may be useful for whole profiles with "
-                         "complicated shapes. "
-                         "* SE is the squared exponential kernel, which is good "
-                         "for core data. "
-                         "* SEsym1d is an experimental SE kernel with symmetry "
-                         "constraint imposed by construction. This is primarily "
-                         "useful for core data. "
-                         "* SEbeta is an experimental SE kernel whose arguments "
-                         "are warped using the regularized incomplete beta "
-                         "function. This is good when you have edge data. "
-                         "* RQ is the rational quadratic kernel, good for "
-                         "core data. "
-                         "* matern is the Matern kernel, which is also "
-                         "potentially useful for core data. Note that the matern "
-                         "kernel is very SLOW to evaluate, particularly if you "
-                         "need gradients. "
-                         "* matern52 is a task-specific implementation of the "
-                         "Matern kernel with the order fixed at nu=5/2. This is "
-                         "MUCH faster than the basic matern. This is mostly "
-                         "suitable for core data. "
-                         "* matern52beta is the same as matern52, but with the "
-                         "same warping as SEbeta applied. This is potentially "
-                         "suitable for fitting entire profiles. "
-                         "You will typically want to set --no-edge-constraint "
-                         "and/or --core-only if you specify any kernel other "
-                         "gibbstanh and gibbsdoubletanh. See also --core-only. "
-                         "The default is gibbstanh, or SE if --core-only is set.")
-parser.add_argument('--coordinate',
-                    choices=COORDINATE_OPTIONS,
-                    default='',
-                    help="Which coordinate to fit against. Defaults to r/a "
-                         "when pulling data from the tree. Used to determine how "
-                         "to apply core/edge constraints when pulling data from "
-                         "a file.")
-parser.add_argument('--no-core-constraint',
-                    action='store_true',
-                    help="Set this flag to disable the slope=0 constraint at the "
-                         "magnetic axis.")
-parser.add_argument('--no-edge-constraint',
-                    action='store_true',
-                    help="Set this flag to disable the slope, value=0 constraint "
-                         "at/outside the GH limiter.")
-parser.add_argument('--core-constraint-location',
-                    type=float,
-                    metavar='LOC',
-                    nargs='+',
-                    help="Location to impose slope=0 constraint at. Typically "
-                         "this is the magnetic axis. If you specify a shot "
-                         "number and times then this will be found automatically, "
-                         "but you can override it with this flag. Note that you "
-                         "can specify multiple locations if you want to have "
-                         "multiple points where the slope goes to exactly zero.")
-parser.add_argument('--edge-constraint-locations',
-                    type=float,
-                    metavar='LOC',
-                    nargs='+',
-                    help="Location to impose slope~0, value~0 constraints at. "
-                         "Typically this is at the location of the GH limiter. "
-                         "If you specify a shot number and times then this will "
-                         "be found automatically, but you can override it with "
-                         "this flag. It helps to specify a couple of points "
-                         "outside the GH limiter, as well.")
-parser.add_argument('--core-only',
-                    action='store_true',
-                    help="Set this flag to only fit the data inside the LCFS. "
-                         "This will switch to using a squared exponential kernel, "
-                         "and will disable the edge value, slope constraints.")
-parser.add_argument('--robust',
-                    action='store_true',
-                    help="Set this flag to use robust estimators (median, IQR) "
-                         "when performing time-averages. Note that using robust "
-                         "weighted estimators will not work for small numbers of "
-                         "data points.")
-parser.add_argument('--uncertainty-method',
-                    choices=error_method_cl,
-                    default='sample',
-                    help="Method by which the uncertainty should be propagated "
-                         "when time-averaging. "
-                         "* sample will take the sample standard deviation, and "
-                         "is usually appropriate for cases where you have many "
-                         "points to average over and the data are not completely "
-                         "stationary in time. "
-                         "* RMS uses the root-mean-square standard deviation, "
-                         "and is appropriate for small sample sizes. Note that "
-                         "this is questionable when applied to diagnostics "
-                         "other than TS for which the individual error bars are "
-                         "estimated as some fixed percent of the value. "
-                         "* total uses the law of total variance which is the "
-                         "square root of the sum of the mean square uncertainty "
-                         "and sample variance. This is appropriate when the "
-                         "given points already represent actual sample "
-                         "means/variances. "
-                         "* of_mean uses the uncertainty in the mean using the "
-                         "individual error bars on the points, and is only "
-                         "appropriate if the data are steady in time. It is very "
-                         "questionable to use this with robust estimators."
-                         "* of_mean_sample uses the uncertainty in the mean "
-                         "using the sample standard deviation, and is only "
-                         "appropriate if the data are steady in time. It is very "
-                         "questionable to use this with robust estimators.")
-parser.add_argument('--unweighted',
-                    action='store_true',
-                    help="Set this flag to use unweighted estimators when "
-                         "averaging the data. Otherwise the weights used are "
-                         "1/sigma_i^2. Note that using robust weighted estimators "
-                         "will not work for small numbers of data points. Note "
-                         "that this is questionable when applied to diagnostics "
-                         "other than TS for which the individual error bars are "
-                         "estimated as some fixed percent of the value.")
-parser.add_argument('--all-points', '--no-average',
-                    action='store_true',
-                    help="Set this flag to keep all points from the time window "
-                         "selected instead of performing a time average. This "
-                         "will make the fit take longer and is statistically "
-                         "questionable, but may be useful in some cases.")
-parser.add_argument('--change-threshold',
-                    type=float,
-                    help="If provided, any points whose differences with respect "
-                         "to either of their neighbors are more than this many "
-                         "times their own error bar will be rejected. This is "
-                         "useful for getting rid of bad channels. A value of 9 "
-                         "is often useful. Note that this does not take into "
-                         "account the uncertainties on the neighbors -- it is "
-                         "primarily designed to catch bad channels that don't "
-                         "get caught by the method employed by "
-                         "--outlier-threshold. This can lead to good data "
-                         "getting thrown out if the threshold is too low.")
-parser.add_argument('--outlier-threshold',
-                    type=float,
-                    help="If provided, any points whose values are more than this "
-                         "many times their own error bar outside of the fit will "
-                         "be rejected. A value of 3 is often useful. Note that "
-                         "this can get thrown off by extremely bad channels that "
-                         "drag the whole fit off.")
-parser.add_argument('--remove-points',
-                    type=int,
-                    nargs='+',
-                    help="Indices of points to remove. These are the indices in "
-                         "the combined Profile object. These will usually be the "
-                         "same from shot-to-shot, but may change if entire "
-                         "channels are removed during data loading. Use "
-                         "--plot-idxs to see the indices to use.")
-parser.add_argument('--plot-idxs',
-                    action='store_true',
-                    help="Set this flag to overplot the indices of the points. "
-                         "These are the indices to use with --remove-points.")
-parser.add_argument('--random-starts',
-                    type=int,
-                    help="The number of random starts to use when trying to find "
-                         "the MAP estimate for the hyperparameters. If you are "
-                         "getting bad fits, try increasing this. If not "
-                         "specified, this is set to the number of processors "
-                         "available on your machine or 20, whichever is smaller.")
-parser.add_argument('--upper-factor',
-                    type=float,
-                    default=5,
-                    help="Factor by which the range of the data is multiplied "
-                         "to generate the upper bound on the hyperparameters. If "
-                         "you are getting bad fits, try adjusting this.")
-parser.add_argument('--lower-factor',
-                    type=float,
-                    default=5,
-                    help="Factor by which the range of the data is divided to "
-                         "generate the lower bound on the hyperparameters. If "
-                         "you are getting bad fits, try adjusting this.")
-parser.add_argument('--bounds',
-                    type=float,
-                    nargs='+',
-                    help="Bounds to use for each of the hyperparameters. "
-                         "Specified as pairs of lower, upper bounds. If present, "
-                         "there should be two such pairs for the squared "
-                         "exponential kernel and five such pairs for the Gibbs "
-                         "kernel with tanh length scale warping. If not specified, "
-                         "somewhat intelligent guesses are made based on the data "
-                         "itself. If you are getting bad fits, try tweaking these. "
-                         "Note that this overrides --upper-factor and --lower-factor "
-                         "if present.")
-parser.add_argument('--use-MCMC',
-                    action='store_true',
-                    help="Set this flag to use MCMC integration over the "
-                         "hyperparameters instead of MAP estimation. This is "
-                         "the most rigorous way of capturing all uncertainty, "
-                         "and should always be used if you are interested in "
-                         "gradients and/or the details of the edge. Note that "
-                         "this is very computationally expensive, but benefits "
-                         "strongly from having many cores to run on.")
-parser.add_argument('--walkers',
-                    type=int,
-                    default=200,
-                    help="The number of walkers to use to explore the parameter "
-                         "space. This number should be high, on the order of "
-                         "a few hundred. If you are getting poor mixing of the "
-                         "MCMC integration, try increasing this by a hundred at "
-                         "a time.")
-parser.add_argument('--MCMC-samp',
-                    type=int,
-                    default=200,
-                    help="The number of samples to take with each walker. 200 is "
-                         "a good number to get a look at the sample space and "
-                         "dial in the bounds.")
-parser.add_argument('--burn',
-                    type=int,
-                    default=100,
-                    help="The number of samples to discard at the start of each "
-                         "MCMC chain. This will usually need to be on the order "
-                         "of a few hundred. If your chains are taking too long "
-                         "to mix, try narrowing the bounds on the hyperparameters.")
-parser.add_argument('--keep',
-                    type=int,
-                    default=200,
-                    help="The number of MCMC samples to keep when fitting the "
-                         "profiles. This lets you get a full picture of the "
-                         "parameter space but only fit on the number of profiles "
-                         "needed.")
+parser.add_argument(
+    '--signal',
+    choices=SYSTEM_OPTIONS.keys(),
+    help="Which signal to fit when pulling data from the tree."
+)
+parser.add_argument(
+    '--shot',
+    type=int,
+    help="Shot number to use. Required when pulling data from the tree. When "
+         "pulling data from a file, this is needed to specify constraints at the "
+         "magnetic axis and limiter."
+)
+parser.add_argument(
+    '--EFIT-tree',
+    help="EFIT tree to use. Default is ANALYSIS. Otherwise, give a name like "
+         "'EFIT20'."
+)
+parser.add_argument(
+    '--t-min',
+    type=float,
+    help="Starting time of period to average over. If you are reading data from "
+         "a file, you can set this flag to tell the program what time window to "
+         "average over when finding the location of the limiter/magnetic axis "
+         "when applying constraints."
+)
+parser.add_argument(
+    '--t-max',
+    type=float,
+    help="Ending time of period to average over. If you are reading data from a "
+         "file, you can set this flag to tell the program what time window to "
+         "average over when finding the location of the limiter/magnetic axis "
+         "when applying constraints."
+)
+parser.add_argument(
+    '-t', '--t-points',
+    type=float,
+    metavar='T_POINT',
+    nargs='+',
+    help="Individual time values to use. The nearest time to each will be "
+         "selected for each channel. You can use this, for instance, to specify "
+         "the times you have determined are at a particular sawtooth/ELM phase. "
+         "You must either specify --t-min and --t-max, or -t."
+)
+parser.add_argument(
+    '--npts',
+    type=int,
+    default=400,
+    help="Number of evenly-spaced points to evaluate the fit at."
+)
+parser.add_argument(
+    '--x-min',
+    type=float,
+    default=0,
+    help="Starting point for the evenly-spaced points to evaluate the fit at."
+)
+parser.add_argument(
+    '--x-max',
+    type=float,
+    default=1.2,
+    help="Ending point for the evenly-spaced points to evaluate the fit at."
+)
+parser.add_argument(
+    '--x-pts',
+    type=float,
+    metavar='X_PT',
+    nargs='+',
+    help="Discrete points to evaluate the fit at. If present, this overrides the "
+         "effect of npts, x-min and x-max."
+)
+parser.add_argument(
+    '--system',
+    nargs='+',
+    choices=valid_systems,
+    help="Which system(s) to take data from. If not provided, all applicable "
+         "systems will be used. The 'TS' option is a shortcut to include both "
+         "the core (CTS) and edge (ETS) Thomson systems. Note that working with "
+         "TCI data is VERY slow. Also note that the statistics of including the "
+         "SOL reflectometer are questionable, so your uncertainties should be "
+         "taken with a grain of salt when using those data."
+)
+parser.add_argument(
+    '--kernel',
+    choices=HYPERPARAMETERS.keys(),
+    # default='gibbstanh',
+    help="Which covariance kernel to use. This dictates the properties of the "
+         "fit. "
+         "* gibbstanh is the Gibbs kernel with tanh warping of the length scale. "
+         "This kernel allows the entire profile to be fit at once, and should be "
+         "used if you have edge data. "
+         "* gibbsdoubletanh is an experimental Gibbs kernel whose warping "
+         "function is the sum of two hyperbolic tangents. This may be useful for "
+         "whole profiles with complicated shapes. "
+         "* SE is the squared exponential kernel, which is good for core data. "
+         "* SEsym1d is an experimental SE kernel with symmetry constraint "
+         "imposed by construction. This is primarily useful for core data. "
+         "* SEbeta is an experimental SE kernel whose arguments are warped using "
+         "the regularized incomplete beta function. This is good when you have "
+         "edge data. "
+         "* RQ is the rational quadratic kernel, good for core data. "
+         "* matern is the Matern kernel, which is also potentially useful for "
+         "core data. Note that the matern kernel is VERY SLOW to evaluate, "
+         "particularly if you need gradients. "
+         "* matern52 is a task-specific implementation of the Matern kernel with "
+         "the order fixed at nu=5/2. This is MUCH faster than the basic matern. "
+         "This is mostly suitable for core data. "
+         "* matern52beta is the same as matern52, but with the same warping as "
+         "SEbeta applied. This is potentially suitable for fitting entire "
+         "profiles. "
+         "You will typically want to set --no-edge-constraint and/or --core-only "
+         "if you specify any kernel other gibbstanh and gibbsdoubletanh. See "
+         "also --core-only. The default is gibbstanh, or SE if --core-only is "
+         "set."
+)
+parser.add_argument(
+    '--coordinate',
+    choices=COORDINATE_OPTIONS,
+    default='',
+    help="Which coordinate to fit against. Defaults to r/a when pulling data "
+         "from the tree. Used to determine how to apply core/edge constraints "
+         "when pulling data from a file."
+)
+parser.add_argument(
+    '--no-core-constraint',
+    action='store_true',
+    help="Set this flag to disable the slope=0 constraint at the magnetic axis."
+)
+parser.add_argument(
+    '--no-edge-constraint',
+    action='store_true',
+    help="Set this flag to disable the slope, value=0 constraint at/outside the "
+         "GH limiter."
+)
+parser.add_argument(
+    '--core-constraint-location',
+    type=float,
+    metavar='LOC',
+    nargs='+',
+    help="Location to impose slope=0 constraint at. Typically this is the "
+         "magnetic axis. If you specify a shot number and times then this will "
+         "be found automatically, but you can override it with this flag. Note "
+         "that you can specify multiple locations if you want to have multiple "
+         "points where the slope goes to exactly zero."
+)
+parser.add_argument(
+    '--edge-constraint-locations',
+    type=float,
+    metavar='LOC',
+    nargs='+',
+    help="Location to impose slope~0, value~0 constraints at. Typically this is "
+         "at the location of the GH limiter. If you specify a shot number and "
+         "times then this will be found automatically, but you can override it "
+         "with this flag. It helps to specify a couple of points outside the GH "
+         "limiter, as well."
+)
+parser.add_argument(
+    '--core-only',
+    action='store_true',
+    help="Set this flag to only fit the data inside the LCFS. This will switch "
+         "to using a squared exponential kernel, and will disable the edge value, "
+         "slope constraints."
+)
+parser.add_argument(
+    '--robust',
+    action='store_true',
+    help="Set this flag to use robust estimators (median, IQR) when performing "
+         "time-averages. Note that using robust weighted estimators will not "
+         "work for small numbers of data points."
+)
+parser.add_argument(
+    '--uncertainty-method',
+    choices=error_method_cl,
+    default='sample',
+    help="Method by which the uncertainty should be propagated when "
+         "time-averaging. "
+         "* sample will take the sample standard deviation, and is usually "
+         "appropriate for cases where you have many points to average over and "
+         "the data are not completely stationary in time. "
+         "* RMS uses the root-mean-square standard deviation, and is appropriate "
+         "for small sample sizes. Note that this is questionable when applied to "
+         "diagnostics other than TS for which the individual error bars are "
+         "estimated as some fixed percent of the value. "
+         "* total uses the law of total variance which is the square root of the "
+         "sum of the mean square uncertainty and sample variance. This is "
+         "appropriate when the given points already represent actual sample "
+         "means/variances. "
+         "* of_mean uses the uncertainty in the mean using the individual error "
+         "bars on the points, and is only appropriate if the data are steady in "
+         "time. It is very questionable to use this with robust estimators."
+         "* of_mean_sample uses the uncertainty in the mean using the sample "
+         "standard deviation, and is only appropriate if the data are steady in "
+         "time. It is very questionable to use this with robust estimators."
+)
+parser.add_argument(
+    '--unweighted',
+    action='store_true',
+    help="Set this flag to use unweighted estimators when averaging the data. "
+         "Otherwise the weights used are 1/sigma_i^2. Note that using robust "
+         "weighted estimators will not work for small numbers of data points. "
+         "Note that this is questionable when applied to diagnostics other than "
+         "TS for which the individual error bars are estimated as some fixed "
+         "percent of the value."
+)
+parser.add_argument(
+    '--all-points', '--no-average',
+    action='store_true',
+    help="Set this flag to keep all points from the time window selected instead "
+         "of performing a time average. This will make the fit take longer and "
+         "is statistically questionable, but may be useful in some cases."
+)
+parser.add_argument(
+    '--change-threshold',
+    type=float,
+    help="If provided, any points whose differences with respect to either of "
+         "their neighbors are more than this many times their own error bar will "
+         "be rejected. This is useful for getting rid of bad channels. A value "
+         "of 9 is often useful. Note that this does not take into account the "
+         "uncertainties on the neighbors -- it is primarily designed to catch "
+         "bad channels that don't get caught by the method employed by "
+         "--outlier-threshold. This can lead to good data getting thrown out if "
+         "the threshold is too low."
+)
+parser.add_argument(
+    '--outlier-threshold',
+    type=float,
+    help="If provided, any points whose values are more than this many times "
+         "their own error bar outside of the fit will be rejected. A value of 3 "
+         "is often useful. Note that this can get thrown off by extremely bad "
+         "channels that drag the whole fit off."
+)
+parser.add_argument(
+    '--remove-points',
+    type=int,
+    nargs='+',
+    help="Indices of points to remove. These are the indices in the combined "
+         "Profile object. These will usually be the same from shot-to-shot, but "
+         "may change if entire channels are removed during data loading. Use "
+         "--plot-idxs to see the indices to use."
+)
+parser.add_argument(
+    '--plot-idxs',
+    action='store_true',
+    help="Set this flag to overplot the indices of the points. These are the "
+         "indices to use with --remove-points."
+)
+parser.add_argument(
+    '--random-starts',
+    type=int,
+    help="The number of random starts to use when trying to find the MAP "
+         "estimate for the hyperparameters. If you are getting bad fits, try "
+         "increasing this. If not specified, this is set to the number of "
+         "processors available on your machine or 20, whichever is smaller."
+)
+parser.add_argument(
+    '--bounds',
+    type=float,
+    nargs='+',
+    help="Bounds to use for each of the hyperparameters. Specified as pairs of "
+         "lower, upper bounds. Causes uniform hyperpriors to be used for all "
+         "hyperparameters. If present, there should be two such pairs for the "
+         "squared exponential kernel and five such pairs for the Gibbs kernel "
+         "with tanh length scale warping. If not specified, somewhat intelligent "
+         "guesses are made. If you are getting bad fits, try tweaking these. "
+         "Note that this is overridden by --hyperprior if present."
+)
+parser.add_argument(
+    '--hyperprior',
+    nargs='+',
+    help="Specifies the (hyper)prior to use for some or all of the "
+         "hyperparameters. This flag should be followed by one or more "
+         "specifications of the form: '[NAME] [TYPE] [p1] [p2] ...' where [NAME] "
+         "is the hyperparameter name (one of {{{names}}}), [TYPE] is the type of "
+         "prior distribution to use for the hyperparameter (one of "
+         "{{{distributions}}}) and [p1], [p2] and so on are the values for the "
+         "parameters of the distribution. An example of this is "
+         "'--hyperprior sigma_f uniform 0 20' which sets the hyperprior on the "
+         "signal variance to be uniform between 0 and 20. If present, this "
+         "overrides --bounds. If nor present, reasonable guesses will be used.".format(
+             names=', '.join(map(str, HYPERPARAMETER_NAMES.keys())),
+             distributions=', '.join(map(str, HYPERPRIORS.keys()))
+         )
+)
+parser.add_argument(
+    '--use-MCMC',
+    action='store_true',
+    help="Set this flag to use MCMC integration over the hyperparameters instead "
+         "of MAP estimation. This is the most rigorous way of capturing all "
+         "uncertainty, and should always be used if you are interested in "
+         "gradients and/or the details of the edge. Note that this is very "
+         "computationally expensive, but benefits strongly from having many "
+         "cores to run on."
+)
+parser.add_argument(
+    '--walkers',
+    type=int,
+    default=200,
+    help="The number of walkers to use to explore the parameter space. This "
+         "number should be high, on the order of a few hundred. If you are "
+         "getting poor mixing of the MCMC integration, try increasing this by a "
+         "hundred at a time."
+)
+parser.add_argument(
+    '--MCMC-samp',
+    type=int,
+    default=200,
+    help="The number of samples to take with each walker. 200 is a good number "
+         "to get a look at the sample space and dial in the bounds."
+)
+parser.add_argument(
+    '--burn',
+    type=int,
+    default=100,
+    help="The number of samples to discard at the start of each MCMC chain. This "
+         "will usually need to be on the order of a few hundred. If your chains "
+         "are taking too long to mix, try narrowing the bounds on the "
+         "hyperparameters and/or increasing --sampler-a."
+)
+parser.add_argument(
+    '--keep',
+    type=int,
+    default=200,
+    help="The number of MCMC samples to keep when fitting the profiles. This "
+         "lets you get a full picture of the parameter space but only fit on the "
+         "number of profiles needed."
+)
 parser.add_argument(
     '--sampler-a',
     type=float,
@@ -551,124 +624,144 @@ parser.add_argument(
          "multiple modes with no mixing, try doubling this. This should always "
          "be greater than unity."
 )
-parser.add_argument('--full-monte-carlo',
-                    action='store_true',
-                    help="Set this flag to compute these mean samples using a "
-                         "full Monte Carlo simulation instead of error propagation.")
-parser.add_argument('--monte-carlo-samples',
-                    type=int,
-                    default=500,
-                    help="The number of Monte Carlo samples to use when "
-                         "--full-monte-carlo is set and MAP estimation is used.")
-parser.add_argument('--reject-negative',
-                    action='store_true',
-                    help="Set this flag to reject any Monte Carlo samples that go "
-                         "negative during the full Monte Carlo simulation. Only "
-                         "has an effect if --full-monte-carlo is set.")
-parser.add_argument('--reject-non-monotonic',
-                    action='store_true',
-                    help="Set this flag to reject any Monte Carlo samples that "
-                         "are not monotonic when performing the full Monte Carlo "
-                         "simulation. Only has an effect if --full-monte-carlo "
-                         "is set.")
-parser.add_argument('--no-a-over-L',
-                    action='store_true',
-                    help="Set this flag to turn off the computation of a/L, "
-                         "which can save some time if you don't need gradients/"
-                         "scale lengths.")
-parser.add_argument('--compute-vol-avg',
-                    action='store_true',
-                    help="Set this flag to compute the volume average of the "
-                         "profile.")
-parser.add_argument('--compute-peaking',
-                    action='store_true',
-                    help="Set this flag to compute the peaking figure of merit "
-                         "of the profile.")
-parser.add_argument('--compute-TCI',
-                    action='store_true',
-                    help="Set this flag to compute the integrals along the TCI "
-                         "chords. This will only work if the TCI data are loaded.")
-parser.add_argument('-i', '--input-filename',
-                    help="Filename/path to a CSV or NetCDF file containing the "
-                         "profile data to be fit. Note that if you wish to make "
-                         "use of the core/edge value, slope constraints you must "
-                         "provide t-min and t-max bracketing the times used so "
-                         "that the program can find the locations of the magnetic "
-                         "axis and GH limiter in the relevant coordinates. "
-                         "(Though it will always be able to find the magnetic "
-                         "axis if you use a normalized coordinate.) If the "
-                         "extension of the file is .csv it will be treated as a "
-                         "comma-separated values file, all other extensions will "
-                         "be treated as NetCDF files. If using a CSV file, the "
-                         "first row should be a comma-separated list of the field "
-                         "names, as defined with --abscissa-name and "
-                         "--ordinate-name. These columns can be in any order in "
-                         "the actual file.")
-parser.add_argument('-o', '--output-filename',
-                    help="Filename/path to write a NetCDF or CSV file to"
-                         "containing the results of the fit. If not specified, "
-                         "you will be prompted for a filename upon completing "
-                         "the fit.")
-parser.add_argument('-x', '--abscissa-name',
-                    nargs='+',
-                    help="Name(s) of the variable(s) in the input/output NetCDF/"
-                         "CSV files that contain the values of the abscissa "
-                         "(independent variable(s)). The uncertainty in the "
-                         "abscissa must then be in err_ABSCISSA_NAME, if "
-                         "present. Note that uncertainties in the abscissa are "
-                         "NOT used in the profile fit at present, but will be "
-                         "shown on the plot. If you do not provide this when "
-                         "using a CSV file, the names will automatically be "
-                         "inferred by looking at the order of the header of the "
-                         "CSV file. This argument is required when using a "
-                         "NetCDF file. You must always put your time variable "
-                         "first for this to work properly.")
-parser.add_argument('-y', '--ordinate-name',
-                    help="Name of the variable in the input/output NetCDF/CSV "
-                         "files that contains the values of the ordinate "
-                         "(dependent variable). The uncertainty in the ordinate "
-                         "must then be in err_ORDINATE_NAME. If you do not "
-                         "provide this when using a CSV file, the names will "
-                         "automatically be inferred by looking at the order of "
-                         "the header of the CSV file. This argument is required "
-                         "when using a NetCDF file.")
-parser.add_argument('--metadata-lines',
-                    type=int,
-                    help="Number of lines of metadata at the start of your CSV "
-                         "file to read. You can include the shot, times and "
-                         "coordinate in the CSV file itself in this manner. See "
-                         "the documentation on profiletools.CMod.read_plasma_csv "
-                         "for more details. If you leave this out, the program "
-                         "will check to see if the first line of your file is of "
-                         "the form 'metadata LINES', where LINES is the number of "
-                         "lines of metadata present.")
-parser.add_argument('--full-auto',
-                    action='store_true',
-                    help="Set this flag to disable all prompting for missing/"
-                         "optional arguments and run fully automatically. The "
-                         "program will exit with status 1 if any required "
-                         "parameters are missing. The program will still stop to "
-                         "allow the user to assess the quality of the fit.")
-parser.add_argument('--no-interaction',
-                    action='store_true',
-                    help="Set this flag to not let the user interact with the "
-                         "GUI. The fit will be automatically run and saved, "
-                         "along with a picture of the plot, to the output file "
-                         "specified.")
-parser.add_argument('--no-mainloop',
-                    action='store_true',
-                    help="Set this flag to disable starting of the Tkinter "
-                         "main loop. This is useful for debugging.")
-parser.add_argument('--x-lim',
-                    type=float,
-                    nargs=2,
-                    help="The upper and lower bounds for the horizontal plot "
-                         "axis. If not provided, these will be set from the data.")
-parser.add_argument('--y-lim',
-                    type=float,
-                    nargs=2,
-                    help="The upper and lower bounds for the vertical plot axis. "
-                         "If not provided, these will be set from the data.")
+parser.add_argument(
+    '--full-monte-carlo',
+    action='store_true',
+    help="Set this flag to compute these mean samples using a full Monte Carlo "
+         "simulation instead of error propagation."
+)
+parser.add_argument(
+    '--monte-carlo-samples',
+    type=int,
+    default=500,
+    help="The number of Monte Carlo samples to use when --full-monte-carlo is "
+         "set and MAP estimation is used."
+)
+parser.add_argument(
+    '--reject-negative',
+    action='store_true',
+    help="Set this flag to reject any Monte Carlo samples that go negative "
+         "during the full Monte Carlo simulation. Only has an effect if "
+         "--full-monte-carlo is set."
+)
+parser.add_argument(
+    '--reject-non-monotonic',
+    action='store_true',
+    help="Set this flag to reject any Monte Carlo samples that are not monotonic "
+         "when performing the full Monte Carlo simulation. Only has an effect if "
+         "--full-monte-carlo is set."
+)
+parser.add_argument(
+    '--no-a-over-L',
+    action='store_true',
+    help="Set this flag to turn off the computation of a/L, which can save some "
+         "time if you don't need gradients/scale lengths."
+)
+parser.add_argument(
+    '--compute-vol-avg',
+    action='store_true',
+    help="Set this flag to compute the volume average of the profile."
+)
+parser.add_argument(
+    '--compute-peaking',
+    action='store_true',
+    help="Set this flag to compute the peaking figure of merit of the profile."
+)
+parser.add_argument(
+    '--compute-TCI',
+    action='store_true',
+    help="Set this flag to compute the integrals along the TCI chords. This will "
+         "only work if the TCI data are loaded."
+)
+parser.add_argument(
+    '-i', '--input-filename',
+    help="Filename/path to a CSV or NetCDF file containing the profile data to "
+         "be fit. Note that if you wish to make use of the core/edge value, "
+         "slope constraints you must provide t-min and t-max bracketing the "
+         "times used so that the program can find the locations of the magnetic "
+         "axis and GH limiter in the relevant coordinates. (Though it will "
+         "always be able to find the magnetic axis if you use a normalized "
+         "coordinate.) If the extension of the file is .csv it will be treated "
+         "as a comma-separated values file, all other extensions will be treated "
+         "as NetCDF files. If using a CSV file, the first row should be a "
+         "comma-separated list of the field names, as defined with "
+         "--abscissa-name and --ordinate-name. These columns can be in any order "
+         "in the actual file."
+)
+parser.add_argument(
+    '-o', '--output-filename',
+    help="Filename/path to write a NetCDF or CSV file to containing the results "
+         "of the fit. If not specified, you will be prompted for a filename upon "
+         "completing the fit."
+)
+parser.add_argument(
+    '-x', '--abscissa-name',
+    nargs='+',
+    help="Name(s) of the variable(s) in the input/output NetCDF/CSV files that "
+         "contain the values of the abscissa (independent variable(s)). The "
+         "uncertainty in the abscissa must then be in err_ABSCISSA_NAME, if "
+         "present. Note that uncertainties in the abscissa are NOT used in the "
+         "profile fit at present, but will be shown on the plot. If you do not "
+         "provide this when using a CSV file, the names will automatically be "
+         "inferred by looking at the order of the header of the CSV file. This "
+         "argument is required when using a NetCDF file. You must always put "
+         "your time variable first for this to work properly."
+)
+parser.add_argument(
+    '-y', '--ordinate-name',
+    help="Name of the variable in the input/output NetCDF/CSV files that "
+         "contains the values of the ordinate (dependent variable). The "
+         "uncertainty in the ordinate must then be in err_ORDINATE_NAME. If you "
+         "do not provide this when using a CSV file, the names will "
+         "automatically be inferred by looking at the order of the header of the "
+         "CSV file. This argument is required when using a NetCDF file."
+)
+parser.add_argument(
+    '--metadata-lines',
+    type=int,
+    help="Number of lines of metadata at the start of your CSV file to read. You "
+         "can include the shot, times and coordinate in the CSV file itself in "
+         "this manner. See the documentation on "
+         "profiletools.CMod.read_plasma_csv for more details. If you leave this "
+         "out, the program will check to see if the first line of your file is "
+         "of the form 'metadata LINES', where LINES is the number of lines of "
+         "metadata present."
+)
+parser.add_argument(
+    '--full-auto',
+    action='store_true',
+    help="Set this flag to disable all prompting for missing/optional arguments "
+         "and run fully automatically. The program will exit with status 1 if "
+         "any required parameters are missing. The program will still stop to "
+         "allow the user to assess the quality of the fit."
+)
+parser.add_argument(
+    '--no-interaction',
+    action='store_true',
+    help="Set this flag to not let the user interact with the GUI. The fit will "
+         "be automatically run and saved, along with a picture of the plot, to "
+         "the output file specified."
+)
+parser.add_argument(
+    '--no-mainloop',
+    action='store_true',
+    help="Set this flag to disable starting of the Tkinter main loop. This is "
+         "useful for debugging."
+)
+parser.add_argument(
+    '--x-lim',
+    type=float,
+    nargs=2,
+    help="The upper and lower bounds for the horizontal plot axis. If not "
+         "provided, these will be set from the data."
+)
+parser.add_argument(
+    '--y-lim',
+    type=float,
+    nargs=2,
+    help="The upper and lower bounds for the vertical plot axis. If not provided, "
+         "these will be set from the data."
+)
 
 args = parser.parse_args()
 
@@ -730,6 +823,14 @@ FRAME_PARAMS = {'relief': tk.RAISED, 'borderwidth': 2}
 # non-numeric characters, where the decimal point and minus sign are considered
 # numeric.
 LIST_REGEX = r'([-0-9.]+)[^-0-9.]*'
+
+# Define the JointPrior objects corresponding to each hyperprior:
+HYPERPRIOR_MAP = {
+    'uniform': gptools.UniformJointPrior,
+    'gamma': gptools.GammaJointPrior,
+    'normal': gptools.NormalJointPrior,
+    'log-normal': gptools.LogNormalJointPrior
+}
 
 class TreeFileFrame(tk.Frame):
     """Frame to hold the buttons to choose between using the tree or a file,
@@ -1329,34 +1430,16 @@ class KernelBoundsFrame(tk.Frame):
         self.hyperprior_frames = []
         
         for k, hp in zip(range(0, len(self.hyperparameters)), self.hyperparameters):
-            self.hyperprior_frames.append(HyperpriorFrame(hp, self))
+            self.hyperprior_frames.append(
+                HyperpriorFrame(
+                    hp,
+                    "%s, %s:" % (self.hyperparameters[hp], hp),
+                    self
+                )
+            )
             self.hyperprior_frames[-1].grid(row=k, column=0, sticky='EW')
         
         self.grid_columnconfigure(0, weight=1)
-        
-        # self.labels = []
-        # self.lower_bounds = []
-        # self.to_labels = []
-        # self.upper_bounds = []
-        #
-        # for k, hp in zip(xrange(0, len(self.hyperparameters)), self.hyperparameters):
-        #     self.labels.append(
-        #         tk.Label(
-        #             self,
-        #             text="%s, %s:" % (self.hyperparameters[hp], hp,)
-        #         )
-        #     )
-        #     self.lower_bounds.append(tk.Entry(self, width=6))
-        #     self.to_labels.append(tk.Label(self, text="to"))
-        #     self.upper_bounds.append(tk.Entry(self, width=6))
-        #
-        #     self.labels[k].grid(row=k, column=0, sticky='E')
-        #     self.lower_bounds[k].grid(row=k, column=1, sticky='EW')
-        #     self.to_labels[k].grid(row=k, column=2)
-        #     self.upper_bounds[k].grid(row=k, column=3, sticky='EW')
-        #
-        # self.grid_columnconfigure(1, weight=1)
-        # self.grid_columnconfigure(3, weight=1)
 
 class HyperpriorFrame(tk.Frame):
     """Frame to handle the selection of the hyperprior for a given hyperparameter.
@@ -1366,14 +1449,16 @@ class HyperpriorFrame(tk.Frame):
     name : str
         The name of the hyperparameter this applies to.
     """
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, long_name, *args, **kwargs):
         tk.Frame.__init__(self, *args, **kwargs)
         
-        self.row_label = tk.Label(self, text=name, width=2)
+        self.name = name
+        
+        self.row_label = tk.Label(self, text=long_name)
         self.row_label.grid(row=0, column=0, sticky='E')
         
         self.hp_type_var = tk.StringVar(self)
-        self.hp_type_var.set(HYPERPRIORS.keys()[0])
+        self.hp_type_var.set(HYPERPRIOR_DEFAULTS[name][0])
         self.hp_type = self.hp_type_var.get()
         self.hp_type_menu = tk.OptionMenu(
             self,
@@ -1385,6 +1470,7 @@ class HyperpriorFrame(tk.Frame):
         
         self.hyperhyperparameter_frame = HyperhyperparameterFrame(
             HYPERPRIORS[self.hp_type],
+            HYPERPRIOR_DEFAULTS[name][1],
             self
         )
         self.hyperhyperparameter_frame.grid(row=0, column=2, sticky='EW')
@@ -1396,38 +1482,25 @@ class HyperpriorFrame(tk.Frame):
             self.hyperhyperparameter_frame.destroy()
             self.hyperhyperparameter_frame = HyperhyperparameterFrame(
                 HYPERPRIORS[hp_type],
+                HYPERPRIOR_DEFAULTS[self.name][1],
                 self
             )
             self.hyperhyperparameter_frame.grid(row=0, column=2, sticky='EW')
             self.hp_type = hp_type
     
     def get_hyperprior(self):
-        if self.hp_type == 'uniform':
-            return gptools.UniformJointPrior(
-                [
-                    (
-                        self.hyperhyperparameter_frame.boxes[0].get(),
-                        self.hyperhyperparameter_frame.boxes[1].get()
-                    )
-                ]
+        try:
+            return HYPERPRIOR_MAP[self.hp_type](
+                [float(self.hyperhyperparameter_frame.boxes[0].get())],
+                [float(self.hyperhyperparameter_frame.boxes[1].get())]
             )
-        elif self.hp_type == 'gamma':
-            return gptools.GammaJointPrior(
-                [self.hyperhyperparameter_frame.boxes[0].get()],
-                [self.hyperhyperparameter_frame.boxes[1].get()]
+        except ValueError:
+            self.master.master.master.status_frame.add_line(
+                "Invalid hyperprior for %s!" % (self.name,)
             )
-        elif self.hp_type == 'normal':
-            return gptools.NormalJointPrior(
-                [self.hyperhyperparameter_frame.boxes[0].get()],
-                [self.hyperhyperparameter_frame.boxes[1].get()]
-            )
-        elif self.hp_type == 'log-normal':
-            return gptools.LogNormalJointPrior(
-                [self.hyperhyperparameter_frame.boxes[0].get()],
-                [self.hyperhyperparameter_frame.boxes[1].get()]
-            )
-        else:
-            raise ValueError("Unsupported hyperprior type %s!" % (self.hp_type,))
+            return None
+        except KeyError:
+            raise ValueError("Unsupported hyperprior type!")
 
 class HyperhyperparameterFrame(tk.Frame):
     """Frame to handle setting of the hyperhyperparameters of a given hyperprior.
@@ -1437,17 +1510,18 @@ class HyperhyperparameterFrame(tk.Frame):
     names : list of str
         The names of the hyperhyperparameters, in order.
     """
-    def __init__(self, names, *args, **kwargs):
+    def __init__(self, names, defaults, *args, **kwargs):
         tk.Frame.__init__(self, *args, **kwargs)
         
         self.labels = []
         self.boxes = []
         
-        for k, name in zip(range(0, len(names)), names):
+        for k, name, d in zip(range(0, len(names)), names, defaults):
             self.labels.append(tk.Label(self, text=name))
             self.labels[-1].grid(row=0, column=2 * k, sticky='E')
             
             self.boxes.append(tk.Entry(self, width=3))
+            self.boxes[-1].insert(0, str(d))
             self.boxes[-1].grid(row=0, column=2 * k + 1, sticky='EW')
             
             self.grid_columnconfigure(2 * k + 1, weight=1)
@@ -2631,37 +2705,51 @@ class FitWindow(tk.Tk):
         If a field is blank, take the bound from the GP's hyperprior. If a field
         is populated, put that into the GP's hyperprior.
         """
-        for k, l, u in zip(range(0, len(self.combined_p.gp.free_param_bounds)),
-                           self.control_frame.kernel_frame.bounds_frame.lower_bounds,
-                           self.control_frame.kernel_frame.bounds_frame.upper_bounds):
-            old_bounds = self.combined_p.gp.free_param_bounds[k]
-            new_bounds = list(old_bounds)
+        hyperpriors = [
+            hf.get_hyperprior() for hf in self.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+        ]
+        # Use a conditional in case there is a kernel with no hyperparameters:
+        if hyperpriors:
+            hyperprior = hyperpriors.pop(0)
+            for hp in hyperpriors:
+                try:
+                    hyperprior *= hp
+                except TypeError:
+                    return False
+            self.combined_p.gp.k.hyperprior = hyperprior
+        return True
             
-            new_lb = l.get()
-            try:
-                new_bounds[0] = float(new_lb)
-            except ValueError:
-                if new_lb == '':
-                    l.insert(0, str(old_bounds[0]))
-                else:
-                    self.control_frame.status_frame.add_line(
-                        "Invalid lower bound %s for %s, will use default value "
-                        "instead." % (new_lb, k,)
-                    )
-                
-            new_ub = u.get()
-            try:
-                new_bounds[1] = float(new_ub)
-            except ValueError:
-                if new_ub == '':
-                    u.insert(0, str(old_bounds[1]))
-                else:
-                    self.control_frame.status_frame.add_line(
-                        "Invalid upper bound %s for %s, will use default value "
-                        "instead." % (new_ub, k,)
-                    )
-            
-            self.combined_p.gp.free_param_bounds[k] = new_bounds
+        # for k, l, u in zip(range(0, len(self.combined_p.gp.free_param_bounds)),
+        #                    self.control_frame.kernel_frame.bounds_frame.lower_bounds,
+        #                    self.control_frame.kernel_frame.bounds_frame.upper_bounds):
+        #     old_bounds = self.combined_p.gp.free_param_bounds[k]
+        #     new_bounds = list(old_bounds)
+        #
+        #     new_lb = l.get()
+        #     try:
+        #         new_bounds[0] = float(new_lb)
+        #     except ValueError:
+        #         if new_lb == '':
+        #             l.insert(0, str(old_bounds[0]))
+        #         else:
+        #             self.control_frame.status_frame.add_line(
+        #                 "Invalid lower bound %s for %s, will use default value "
+        #                 "instead." % (new_lb, k,)
+        #             )
+        #
+        #     new_ub = u.get()
+        #     try:
+        #         new_bounds[1] = float(new_ub)
+        #     except ValueError:
+        #         if new_ub == '':
+        #             u.insert(0, str(old_bounds[1]))
+        #         else:
+        #             self.control_frame.status_frame.add_line(
+        #                 "Invalid upper bound %s for %s, will use default value "
+        #                 "instead." % (new_ub, k,)
+        #             )
+        #
+        #     self.combined_p.gp.free_param_bounds[k] = new_bounds
     
     def fit_data(self):
         """Perform the actual fit and evaluation.
@@ -2714,7 +2802,10 @@ class FitWindow(tk.Tk):
                 return
         
         self.control_frame.status_frame.add_line("Creating Gaussian process...")
-        self.create_gp()
+        res = self.create_gp()
+        if not res:
+            self.control_frame.status_frame.add_line("Failed creating Gaussian process!")
+            return
         self.control_frame.status_frame.add_line("Gaussian process created.")
         
         # Process outliers:
@@ -3219,8 +3310,6 @@ class FitWindow(tk.Tk):
             k=self.control_frame.kernel_frame.kernel_type_frame.k_var.get(),
             constrain_slope_on_axis=False,
             constrain_at_limiter=False,
-            upper_factor=args.upper_factor,
-            lower_factor=args.lower_factor,
             mask=mask
         )
         # Process core constraint:
@@ -3285,7 +3374,7 @@ class FitWindow(tk.Tk):
                         n=1
                     )
         # Process bounds:
-        self.process_bounds()
+        return self.process_bounds()
     
     def find_MAP(self):
         """Find the MAP estimate for the hyperparameters.
@@ -3875,50 +3964,41 @@ looks correct.
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
         
-        self.process_bounds()
+        self.get_hyperprior_from_master()
     
-    def process_bounds(self):
-        """Process the hyperparameter bounds and propagate back to the parent Frame.
+    def get_hyperprior_from_master(self):
+        """Fetch the hyperprior details from the parent Frame.
         """
-        for k, l, u in zip(range(0, len(self.master.master.combined_p.gp.free_param_bounds)),
-                           self.bounds_frame.lower_bounds,
-                           self.bounds_frame.upper_bounds):
-            # We know that by the point this gets called, the hyperprior has the right bounds as set in the main window:
-            old_bounds = self.master.master.combined_p.gp.free_param_bounds[k]
-            new_bounds = list(old_bounds)
-            
-            new_lb = l.get()
-            try:
-                new_bounds[0] = float(new_lb)
-            except ValueError:
-                if new_lb == '':
-                    l.insert(0, str(old_bounds[0]))
-                else:
-                    self.help_box.add_line(
-                        "Invalid lower bound %s for %s, will use default value "
-                        "instead." % (new_lb, k,)
-                    )
-                
-            new_ub = u.get()
-            try:
-                new_bounds[1] = float(new_ub)
-            except ValueError:
-                if new_ub == '':
-                    u.insert(0, str(old_bounds[1]))
-                else:
-                    self.help_box.add_line(
-                        "Invalid upper bound %s for %s, will use default value "
-                        "instead." % (new_ub, k,)
-                    )
-            
-            self.master.master.combined_p.gp.free_param_bounds[k] = new_bounds
+        for hf_self, hf_master in zip(
+                self.bounds_frame.hyperprior_frames,
+                self.master.master.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+            ):
+            hf_self.hp_type_var.set(hf_master.hp_type)
+            hf_self.update_hp_type(hf_self.hp_type_var.get())
+            for hhpb_self, hhpb_master in zip(
+                    hf_self.hyperhyperparameter_frame.boxes,
+                    hf_master.hyperhyperparameter_frame.boxes
+                ):
+                hhpb_self.delete(0, tk.END)
+                hhpb_self.insert(0, hhpb_master.get())
+    
+    def send_hyperprior_to_master(self):
+        """Send the hyperprior details back to the master Frame and call :py:meth:`FitWindow.process_bounds`.
+        """
+        for hf_self, hf_master in zip(
+                self.bounds_frame.hyperprior_frames,
+                self.master.master.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+            ):
+            hf_master.hp_type_var.set(hf_self.hp_type)
+            hf_master.update_hp_type(hf_master.hp_type_var.get())
+            for hhpb_self, hhpb_master in zip(
+                    hf_self.hyperhyperparameter_frame.boxes,
+                    hf_master.hyperhyperparameter_frame.boxes
+                ):
+                hhpb_master.delete(0, tk.END)
+                hhpb_master.insert(0, hhpb_self.get())
         
-        # Propagate the bounds back to the main window:
-        for l, u in zip(self.master.master.control_frame.kernel_frame.bounds_frame.lower_bounds,
-                        self.master.master.control_frame.kernel_frame.bounds_frame.upper_bounds):
-            l.delete(0, tk.END)
-            u.delete(0, tk.END)
-        self.master.master.process_bounds()
+        return self.master.master.process_bounds()
     
     def update_MCMC_params(self, walkers=True, sample=True, burn=True, thin=True, a=True):
         """Update the MCMC parameters and propagate back to the parent Frame.
@@ -3958,24 +4038,24 @@ looks correct.
         """Accept the samples and evaluate.
         """
         self.help_box.add_line("Continuing...")
-        self.process_bounds()
+        self.send_hyperprior_to_master()
         self.update_MCMC_params()
-        self.master.destroy()
+        self.master.destroy(good=True)
     
     def abort(self):
         """Reject the samples and return to the parent window.
         """
         self.help_box.add_line("Aborting evaluation...")
-        self.process_bounds()
-        self.master.master.sampler.pool.close()
-        self.master.master.sampler = None
-        self.master.destroy()
+        self.send_hyperprior_to_master()
+        # self.master.master.sampler.pool.close()
+        # self.master.master.sampler = None
+        self.master.destroy(good=False)
     
     def resample(self):
         """Re-run the sampler with new hyperparameters.
         """
         self.help_box.add_line("Re-running MCMC sampler...")
-        self.process_bounds()
+        self.send_hyperprior_to_master()
         self.update_MCMC_params()
         try:
             self.master.master.sampler.pool.close()
@@ -4018,9 +4098,14 @@ class MCMCWindow(tk.Toplevel):
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
+    
+    def destroy(self, good=False):
+        if not good:
+            self.master.sampler.pool.close()
+            self.master.sampler = None
+        tk.Toplevel.destroy(self)
 
-
-if __name__ == "__main__":
+def run_gui():
     root = FitWindow()
     
     # Populate the GUI with parameters from args:
@@ -4124,12 +4209,33 @@ if __name__ == "__main__":
     if args.random_starts is not None:
         root.control_frame.fitting_frame.method_frame.starts_box.delete(0, tk.END)
         root.control_frame.fitting_frame.method_frame.starts_box.insert(0, str(args.random_starts))
-    if args.bounds:
-        for k in xrange(0, len(root.control_frame.kernel_frame.bounds_frame.lower_bounds)):
-            root.control_frame.kernel_frame.bounds_frame.lower_bounds[k].delete(0, tk.END)
-            root.control_frame.kernel_frame.bounds_frame.lower_bounds[k].insert(0, str(args.bounds[2*k]))
-            root.control_frame.kernel_frame.bounds_frame.upper_bounds[k].delete(0, tk.END)
-            root.control_frame.kernel_frame.bounds_frame.upper_bounds[k].insert(0, str(args.bounds[2*k+1]))
+    if args.hyperprior:
+        hp = list(args.hyperprior)
+        kernel = root.control_frame.kernel_frame.kernel_type_frame.k_var.get()
+        valid_names = HYPERPARAMETERS[kernel].keys()
+        while hp:
+            name = HYPERPARAMETER_NAMES[hp.pop(0)]
+            name_idx = valid_names.index(name)
+            dist_name = hp.pop(0)
+            param_count = len(HYPERPRIORS[dist_name])
+            hpf = root.control_frame.kernel_frame.bounds_frame.hyperprior_frames[name_idx]
+            hpf.hp_type_var.set(dist_name)
+            hpf.update_hp_type(dist_name)
+            
+            for k in xrange(0, param_count):
+                hpf.hyperhyperparameter_frame.boxes[k].delete(0, tk.END)
+                hpf.hyperhyperparameter_frame.boxes[k].insert(0, hp.pop(0))
+    elif args.bounds:
+        for k, hf in zip(
+                xrange(0, len(root.control_frame.kernel_frame.bounds_frame.hyperprior_frames)),
+                root.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+            ):
+            hf.hp_type_var.set('uniform')
+            hf.update_hp_type('uniform')
+            hf.hyperhyperparameter_frame.boxes[0].delete(0, tk.END)
+            hf.hyperhyperparameter_frame.boxes[0].insert(0, str(args.bounds[2 * k]))
+            hf.hyperhyperparameter_frame.boxes[1].delete(0, tk.END)
+            hf.hyperhyperparameter_frame.boxes[1].insert(0, str(args.bounds[2 * k + 1]))
     if args.input_filename:
         root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
         root.control_frame.data_source_frame.tree_file_frame.path_entry.delete(0, tk.END)
@@ -4215,3 +4321,6 @@ if __name__ == "__main__":
         
     if not args.no_interaction and not args.no_mainloop:
         root.mainloop()
+
+if __name__ == "__main__":
+    run_gui()
