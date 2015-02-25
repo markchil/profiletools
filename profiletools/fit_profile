@@ -151,6 +151,17 @@ HYPERPRIORS = collections.OrderedDict(
     ]
 )
 
+# Define some (vaguely) sensible defaults for the hyperhyperparameters:
+# TODO: These can probably be made quite a bit more clever!
+HYPERHYPERPARAMETER_DEFAULTS = collections.OrderedDict(
+    [
+        ('uniform', [0.0, 10.0]),
+        ('gamma', [11.0, 10.0]),
+        ('normal', [0.0, 1.0]),
+        ('log-normal', [0.0, 1.0])
+    ]
+)
+
 # Configure and parse command line arguments:
 import argparse
 
@@ -1315,29 +1326,131 @@ class KernelBoundsFrame(tk.Frame):
         
         self.hyperparameters = hyperparameters
         
-        self.labels = []
-        self.lower_bounds = []
-        self.to_labels = []
-        self.upper_bounds = []
+        self.hyperprior_frames = []
         
-        for k, hp in zip(xrange(0, len(self.hyperparameters)), self.hyperparameters):
-            self.labels.append(
-                tk.Label(
-                    self,
-                    text="%s, %s:" % (self.hyperparameters[hp], hp,)
-                )
+        for k, hp in zip(range(0, len(self.hyperparameters)), self.hyperparameters):
+            self.hyperprior_frames.append(HyperpriorFrame(hp, self))
+            self.hyperprior_frames[-1].grid(row=k, column=0, sticky='EW')
+        
+        self.grid_columnconfigure(0, weight=1)
+        
+        # self.labels = []
+        # self.lower_bounds = []
+        # self.to_labels = []
+        # self.upper_bounds = []
+        #
+        # for k, hp in zip(xrange(0, len(self.hyperparameters)), self.hyperparameters):
+        #     self.labels.append(
+        #         tk.Label(
+        #             self,
+        #             text="%s, %s:" % (self.hyperparameters[hp], hp,)
+        #         )
+        #     )
+        #     self.lower_bounds.append(tk.Entry(self, width=6))
+        #     self.to_labels.append(tk.Label(self, text="to"))
+        #     self.upper_bounds.append(tk.Entry(self, width=6))
+        #
+        #     self.labels[k].grid(row=k, column=0, sticky='E')
+        #     self.lower_bounds[k].grid(row=k, column=1, sticky='EW')
+        #     self.to_labels[k].grid(row=k, column=2)
+        #     self.upper_bounds[k].grid(row=k, column=3, sticky='EW')
+        #
+        # self.grid_columnconfigure(1, weight=1)
+        # self.grid_columnconfigure(3, weight=1)
+
+class HyperpriorFrame(tk.Frame):
+    """Frame to handle the selection of the hyperprior for a given hyperparameter.
+    
+    Parameters
+    ----------
+    name : str
+        The name of the hyperparameter this applies to.
+    """
+    def __init__(self, name, *args, **kwargs):
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.row_label = tk.Label(self, text=name, width=2)
+        self.row_label.grid(row=0, column=0, sticky='E')
+        
+        self.hp_type_var = tk.StringVar(self)
+        self.hp_type_var.set(HYPERPRIORS.keys()[0])
+        self.hp_type = self.hp_type_var.get()
+        self.hp_type_menu = tk.OptionMenu(
+            self,
+            self.hp_type_var,
+            *HYPERPRIORS.keys(),
+            command=self.update_hp_type
+        )
+        self.hp_type_menu.grid(row=0, column=1, sticky='W')
+        
+        self.hyperhyperparameter_frame = HyperhyperparameterFrame(
+            HYPERPRIORS[self.hp_type],
+            self
+        )
+        self.hyperhyperparameter_frame.grid(row=0, column=2, sticky='EW')
+        
+        self.grid_columnconfigure(2, weight=1)
+    
+    def update_hp_type(self, hp_type):
+        if hp_type != self.hp_type:
+            self.hyperhyperparameter_frame.destroy()
+            self.hyperhyperparameter_frame = HyperhyperparameterFrame(
+                HYPERPRIORS[hp_type],
+                self
             )
-            self.lower_bounds.append(tk.Entry(self, width=6))
-            self.to_labels.append(tk.Label(self, text="to"))
-            self.upper_bounds.append(tk.Entry(self, width=6))
-            
-            self.labels[k].grid(row=k, column=0, sticky='E')
-            self.lower_bounds[k].grid(row=k, column=1, sticky='EW')
-            self.to_labels[k].grid(row=k, column=2)
-            self.upper_bounds[k].grid(row=k, column=3, sticky='EW')
+            self.hyperhyperparameter_frame.grid(row=0, column=2, sticky='EW')
+            self.hp_type = hp_type
+    
+    def get_hyperprior(self):
+        if self.hp_type == 'uniform':
+            return gptools.UniformJointPrior(
+                [
+                    (
+                        self.hyperhyperparameter_frame.boxes[0].get(),
+                        self.hyperhyperparameter_frame.boxes[1].get()
+                    )
+                ]
+            )
+        elif self.hp_type == 'gamma':
+            return gptools.GammaJointPrior(
+                [self.hyperhyperparameter_frame.boxes[0].get()],
+                [self.hyperhyperparameter_frame.boxes[1].get()]
+            )
+        elif self.hp_type == 'normal':
+            return gptools.NormalJointPrior(
+                [self.hyperhyperparameter_frame.boxes[0].get()],
+                [self.hyperhyperparameter_frame.boxes[1].get()]
+            )
+        elif self.hp_type == 'log-normal':
+            return gptools.LogNormalJointPrior(
+                [self.hyperhyperparameter_frame.boxes[0].get()],
+                [self.hyperhyperparameter_frame.boxes[1].get()]
+            )
+        else:
+            raise ValueError("Unsupported hyperprior type %s!" % (self.hp_type,))
+
+class HyperhyperparameterFrame(tk.Frame):
+    """Frame to handle setting of the hyperhyperparameters of a given hyperprior.
+    
+    Parameters
+    ----------
+    names : list of str
+        The names of the hyperhyperparameters, in order.
+    """
+    def __init__(self, names, *args, **kwargs):
+        tk.Frame.__init__(self, *args, **kwargs)
         
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_columnconfigure(3, weight=1)
+        self.labels = []
+        self.boxes = []
+        
+        for k, name in zip(range(0, len(names)), names):
+            self.labels.append(tk.Label(self, text=name))
+            self.labels[-1].grid(row=0, column=2 * k, sticky='E')
+            
+            self.boxes.append(tk.Entry(self, width=3))
+            self.boxes[-1].grid(row=0, column=2 * k + 1, sticky='EW')
+            
+            self.grid_columnconfigure(2 * k + 1, weight=1)
 
 class ConstraintsFrame(tk.Frame):
     """Frame to handle selection of which constraints are applied where.
@@ -1424,7 +1537,10 @@ class KernelFrame(tk.Frame):
         # Create frame to hold hyperparameter bounds:
         self.bounds_label = tk.Label(self, text="hyperparameter bounds:")
         self.bounds_label.grid(row=2, sticky='W')
-        self.bounds_frame = KernelBoundsFrame(HYPERPARAMETERS[self.kernel_type_frame.k_var.get()], self)
+        self.bounds_frame = KernelBoundsFrame(
+            HYPERPARAMETERS[self.kernel_type_frame.k_var.get()],
+            self
+        )
         self.bounds_frame.grid(row=3, sticky='EW')
         
         # Create frame to hold constraint checkboxes:
