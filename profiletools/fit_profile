@@ -39,7 +39,7 @@ for sig, sys in SYSTEM_OPTIONS.iteritems():
 valid_systems.add('TS')
 
 # Define which systems are excluded by default:
-DEFAULT_EXCLUDE = ['TCI', 'reflect']
+DEFAULT_EXCLUDE = ['TCI', 'reflect', 'Mic']
 
 # Define the coordinates that can be specified:
 COORDINATE_OPTIONS = [
@@ -140,6 +140,16 @@ HYPERPARAMETERS = collections.OrderedDict([
         ])
     ),
 ])
+
+# Define the (univariate) hyperpriors and their (hyperhyper)parameters:
+HYPERPRIORS = collections.OrderedDict(
+    [
+        ('uniform', ["lb", "ub"]),
+        ('gamma', [u"\u03b1", u"\u03b2"]),
+        ('normal', [u"\u03bc", u"\u03c3"]),
+        ('log-normal', [u"\u03bc", u"\u03c3"]),
+    ]
+)
 
 # Configure and parse command line arguments:
 import argparse
@@ -522,6 +532,14 @@ parser.add_argument('--keep',
                          "profiles. This lets you get a full picture of the "
                          "parameter space but only fit on the number of profiles "
                          "needed.")
+parser.add_argument(
+    '--sampler-a',
+    type=float,
+    default=2.0,
+    help="The width of the sampler proposal distribution. If you observe "
+         "multiple modes with no mixing, try doubling this. This should always "
+         "be greater than unity."
+)
 parser.add_argument('--full-monte-carlo',
                     action='store_true',
                     help="Set this flag to compute these mean samples using a "
@@ -1498,10 +1516,17 @@ class MCMCFrame(tk.Frame):
         self.keep_box.insert(tk.END, '200')
         self.keep_box.grid(row=0, column=7, sticky='EW')
         
+        self.a_label = tk.Label(self, text="a:")
+        self.a_label.grid(row=0, column=8, sticky='E')
+        self.a_box = tk.Entry(self, width=4)
+        self.a_box.insert(tk.END, '2')
+        self.a_box.grid(row=0, column=9, sticky='EW')
+        
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(3, weight=1)
         self.grid_columnconfigure(5, weight=1)
         self.grid_columnconfigure(7, weight=1)
+        self.grid_columnconfigure(9, weight=1)
 
 class MCMCConstraintFrame(tk.Frame):
     """Frame to hold selection of properties of full Monte Carlo sampling.
@@ -3211,10 +3236,19 @@ class FitWindow(tk.Tk):
             )
             self.sampler = None
             return
+        try:
+            a = float(self.control_frame.fitting_frame.MCMC_frame.a_box.get())
+        except ValueError:
+            self.control_frame.status_frame.add_line(
+                "Invalid sampler proposal width! Evaluation failed."
+            )
+            self.sampler = None
+            return
         self.sampler = self.combined_p.gp.sample_hyperparameter_posterior(
             nsamp=samples,
             nwalkers=walkers,
-            sampler=self.sampler
+            sampler=self.sampler,
+            sampler_a=a
         )
     
     def save_fit(self, save_plot=False):
@@ -3568,7 +3602,7 @@ class MCMCResultsFrame(tk.Frame):
             # Loosely based on triangle.py
             for i in xrange(0, k):
                 self.axes[i, i].clear()
-                self.axes[i, i].hist(flat_trace[:, i], bins=50)
+                self.axes[i, i].hist(flat_trace[:, i], bins=50, color='black')
                 if i == k - 1:
                     self.axes[i, i].set_xlabel(labels[i])
                 if i < k - 1:
@@ -3579,7 +3613,12 @@ class MCMCResultsFrame(tk.Frame):
                 #     self.axes[j, i].set_frame_on(False)
                 for j in xrange(i + 1, k):
                     self.axes[j, i].clear()
-                    ct, x, y, im = self.axes[j, i].hist2d(flat_trace[:, i], flat_trace[:, j], bins=50)
+                    ct, x, y, im = self.axes[j, i].hist2d(
+                        flat_trace[:, i],
+                        flat_trace[:, j],
+                        bins=50,
+                        cmap='gray_r'
+                    )
                     # xmid = 0.5 * (x[1:] + x[:-1])
                     # ymid = 0.5 * (y[1:] + y[:-1])
                     # self.axes[j, i].contour(xmid, ymid, ct.T, colors='k')
@@ -3592,7 +3631,7 @@ class MCMCResultsFrame(tk.Frame):
                     if j == k - 1:
                         self.axes[j, i].set_xlabel(labels[i])
                 self.axes[-1, i].clear()
-                self.axes[-1, i].plot(sampler.chain[:, :, i].T)
+                self.axes[-1, i].plot(sampler.chain[:, :, i].T, alpha=0.1)
                 self.axes[-1, i].axvline(burn, color='r', linewidth=3)
                 self.axes[-1, i].set_ylabel(labels[i])
                 self.axes[-1, i].set_xlabel('step')
@@ -3695,6 +3734,11 @@ looks correct.
             0,
             self.master.master.control_frame.fitting_frame.MCMC_frame.keep_box.get()
         )
+        self.entry_frame.a_box.delete(0, tk.END)
+        self.entry_frame.a_box.insert(
+            0,
+            self.master.master.control_frame.fitting_frame.MCMC_frame.a_box.get()
+        )
         
         # Input hyperparameter bounds:
         self.bounds_meta_frame = tk.Frame(self, **FRAME_PARAMS)
@@ -3760,7 +3804,7 @@ looks correct.
             u.delete(0, tk.END)
         self.master.master.process_bounds()
     
-    def update_MCMC_params(self, walkers=True, sample=True, burn=True, thin=True):
+    def update_MCMC_params(self, walkers=True, sample=True, burn=True, thin=True, a=True):
         """Update the MCMC parameters and propagate back to the parent Frame.
         """
         if walkers:
@@ -3786,6 +3830,12 @@ looks correct.
             self.master.master.control_frame.fitting_frame.MCMC_frame.keep_box.insert(
                 0,
                 self.entry_frame.keep_box.get()
+            )
+        if a:
+            self.master.master.control_frame.fitting_frame.MCMC_frame.a_box.delete(0, tk.END)
+            self.master.master.control_frame.fitting_frame.MCMC_frame.a_box.insert(
+                0,
+                self.entry_frame.a_box.get()
             )
     
     def continue_(self):
@@ -3996,6 +4046,9 @@ if __name__ == "__main__":
     if args.keep is not None:
         root.control_frame.fitting_frame.MCMC_frame.keep_box.delete(0, tk.END)
         root.control_frame.fitting_frame.MCMC_frame.keep_box.insert(0, str(args.keep))
+    if args.sampler_a is not None:
+        root.control_frame.fitting_frame.MCMC_frame.a_box.delete(0, tk.END)
+        root.control_frame.fitting_frame.MCMC_frame.a_box.insert(0, str(args.sampler_a))
     if args.full_monte_carlo:
         root.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_button.select()
         root.control_frame.fitting_frame.MCMC_constraint_frame.update_full_MC()
