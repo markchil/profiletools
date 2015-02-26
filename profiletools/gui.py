@@ -63,19 +63,19 @@ HYPERPARAMETERS = collections.OrderedDict([
         'gibbstanh',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u21131", "core covariance length scale"),
-            (u"\u21132", "edge covariance length scale"),
-            (u"\u2113w", "core/edge transition width"),
-            (u"x0", "core/edge transition location")
+            (u"\u21131", "core length scale"),
+            (u"\u21132", "edge length scale"),
+            (u"\u2113w", "transition width"),
+            (u"x0", "transition location")
         ])
     ),
     (
         'gibbsdoubletanh',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u2113c", "core covariance length scale"),
-            (u"\u2113m", "mid covariance length scale"),
-            (u"\u2113e", "edge covariance length scale"),
+            (u"\u2113c", "core length scale"),
+            (u"\u2113m", "mid length scale"),
+            (u"\u2113e", "edge length scale"),
             (u"\u2113a", "first transition width"),
             (u"\u2113b", "second transition width"),
             (u"xa", "first transition"),
@@ -86,7 +86,7 @@ HYPERPARAMETERS = collections.OrderedDict([
         'SE',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale"),
+            (u"\u2113", "length scale"),
         ])
     ),
     (
@@ -95,14 +95,14 @@ HYPERPARAMETERS = collections.OrderedDict([
             (u"1", "VOID"),
             (u"2", "VOID"),
             (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale")
+            (u"\u2113", "length scale")
         ])
     ),
     (
         'SEbeta',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale"),
+            (u"\u2113", "length scale"),
             (u"\u03B1", "warping alpha"),
             (u"\u03B2", "warping beta")
         ])
@@ -112,7 +112,7 @@ HYPERPARAMETERS = collections.OrderedDict([
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
             (u"a", "order"),
-            (u"\u2113", "covariance length scale")
+            (u"\u2113", "length scale")
         ])
     ),
     (
@@ -120,21 +120,21 @@ HYPERPARAMETERS = collections.OrderedDict([
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
             (u"\u03BD", "order"),
-            (u"\u2113", "covariance length scale")
+            (u"\u2113", "length scale")
         ])
     ),
     (
         'matern52',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale")
+            (u"\u2113", "length scale")
         ])
     ),
     (
         'matern52beta',
         collections.OrderedDict([
             (u"\u03C3f", "signal variance"),
-            (u"\u2113", "covariance length scale"),
+            (u"\u2113", "length scale"),
             (u"\u03B1", "warping alpha"),
             (u"\u03B2", "warping beta")
         ])
