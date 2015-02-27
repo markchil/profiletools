@@ -65,6 +65,15 @@ class BivariatePlasmaProfile(Profile):
     the desired abscissa (psinorm, etc.).
     """
     
+    def remake_efit_tree(self):
+        """Remake the EFIT tree.
+        
+        This is needed since EFIT tree instances aren't pickleable yet, so to
+        store a :py:class:`BivariatePlasmaProfile` in a pickle file, you must
+        delete the EFIT tree.
+        """
+        self.efit_tree = eqtools.CModEFITTree(self.shot)
+    
     def convert_abscissa(self, new_abscissa, drop_nan=True, ddof=1):
         """Convert the internal representation of the abscissa to new coordinates.
         
