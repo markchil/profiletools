@@ -1347,7 +1347,7 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
     
     R = electrons.getNode(r'tci.results:rad').data()
     
-    # Need to load noe chord here to get the transforms:
+    # Need to load one chord here to get the transforms:
     N_NL = electrons.getNode(r'tci.results:nl_%02d' % (1,))
     ne = N_NL.data()
     t_ne = N_NL.dim_of().data()
@@ -1389,8 +1389,6 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
             # not all channels are active, catch that when putting in the channel transforms and coords
             X = scipy.ones((len(t_ne), len(quad_points), 2))
             X = scipy.einsum('i,ijk->ijk', t_ne, X)
-            # WHAT WAS THIS DOING?
-            # X[i, :, 0] = t_ne[i]
             X[:, :, 1] = quad_points
                        
             p.transformed = scipy.append(
