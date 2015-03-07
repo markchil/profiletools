@@ -16,5 +16,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# This is done as a shell script such that the program help can be rendered
+# without having to load lots of superfluous Python modules.
+
 DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 $DIR/../profiletools/gui.py "$@"

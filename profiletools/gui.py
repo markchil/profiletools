@@ -368,9 +368,40 @@ parser.add_argument(
     help="Which system(s) to take data from. If not provided, all applicable "
          "systems will be used. The 'TS' option is a shortcut to include both "
          "the core (CTS) and edge (ETS) Thomson systems. Note that working with "
-         "TCI data is VERY slow. Also note that the statistics of including the "
-         "SOL reflectometer are questionable, so your uncertainties should be "
-         "taken with a grain of salt when using those data."
+         "TCI data is rather slow. Also note that the statistics of including "
+         "the SOL reflectometer are questionable, so your uncertainties should "
+         "be taken with a grain of salt when using those data."
+)
+parser.add_argument(
+    '--TCI-quad-points',
+    type=int,
+    default=100,
+    help="Number of quadrature points to use when approximating the TCI line "
+         "integrals. The higher this number is, the more accurate the "
+         "integration will be, but the slower all operations on the Gaussian "
+         "process will be. The default of 100 is a preliminary, conservative "
+         "estimate of the minimum necessary to perform an accurate fit."
+)
+parser.add_argument(
+    '--TCI-thin',
+    type=int,
+    default=1,
+    help="Amount by which the TCI data are thinned. The TCI data taken at a much "
+         "higher time resolution than most applications need. This will allow "
+         "you to skip some samples when performing the very "
+         "computationally-expensive computation of the quadrature weights. Note "
+         "that this takes effect during the loading of the data, so to reverse "
+         "this you will have to reload all data."
+)
+parser.add_argument(
+    '--TCI-ds',
+    type=float,
+    default=1e-3,
+    help="Step size (in m) to use when constructing the TCI quadrature weights. "
+         "The smaller this is the more accurate the integration will be, but at "
+         "the expense of making the loading of the TCI data take much longer. "
+         "The default value of 1e-3 is what is recommended by TRIPPy and is "
+         "somewhat conservative."
 )
 parser.add_argument(
     '--kernel',
@@ -1005,13 +1036,21 @@ class OptionBox(tk.Frame):
         self.button = tk.Checkbutton(
             self,
             text=self.system,
-            variable=self.state_var
+            variable=self.state_var,
+            command=self.invoke_TCI if self.system == 'TCI' else None
         )
         self.button.grid(row=0, column=0)
         
         # Set default value:
         if self.system not in DEFAULT_EXCLUDE:
             self.button.select()
+        if self.system == 'TCI':
+            self.invoke_TCI()
+    
+    def invoke_TCI(self):
+        """Set the state of the TCI settings accordingly.
+        """
+        self.master.master.set_TCI_state(self.state_var.get())
 
 class SystemFrame(tk.Frame):
     """Frame to handle selection of systems to include.
@@ -1037,8 +1076,40 @@ class SystemFrame(tk.Frame):
             for k in xrange(0, len(self.buttons)):
                 self.buttons[k].grid(row=0, column=k)
 
+class TCIFrame(tk.Frame):
+    """Frame to handle selection of the settings for the TCI data.
+    """
+    def __init__(self, *args, **kwargs):
+        # Need to use old, hackish way since tkinter uses old-style classes:
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.TCI_points_label = tk.Label(self, text="TCI quadrature points:")
+        self.TCI_points_label.grid(row=0, column=0, sticky='E')
+        
+        self.TCI_points_box = tk.Entry(self, width=3)
+        self.TCI_points_box.grid(row=0, column=1, sticky='EW')
+        self.TCI_points_box.insert(0, '100')
+        
+        self.TCI_thin_label = tk.Label(self, text='thin:')
+        self.TCI_thin_label.grid(row=0, column=2, sticky='E')
+        
+        self.TCI_thin_box = tk.Entry(self, width=3)
+        self.TCI_thin_box.grid(row=0, column=3, sticky='EW')
+        self.TCI_thin_box.insert(0, '1')
+        
+        self.TCI_ds_label = tk.Label(self, text='ds:')
+        self.TCI_ds_label.grid(row=0, column=4, sticky='E')
+        
+        self.TCI_ds_box = tk.Entry(self, width=3)
+        self.TCI_ds_box.grid(row=0, column=5, sticky='EW')
+        self.TCI_ds_box.insert(0, '1e-3')
+        
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+        self.grid_columnconfigure(5, weight=1)
+
 class EFITFrame(tk.Frame):
-    """Frame to handle selection of the EFIT tree to use:
+    """Frame to handle selection of the EFIT tree to use.
     """
     def __init__(self, *args, **kwargs):
         # Need to use old, hackish way since tkinter uses old-style classes:
@@ -1080,19 +1151,42 @@ class DataSourceFrame(tk.Frame):
         self.signal_coordinate_frame = SignalCoordinateFrame(self)
         self.signal_coordinate_frame.grid(row=4, sticky='EW')
         
+        # Create frame to hold TCI settings. This needs to be done BEFORE the
+        # systems frame so we can set the state of the TCI stuff properly:
+        self.TCI_frame = TCIFrame(self)
+        self.TCI_frame.grid(row=6, sticky='EW')
+        
         # Create frame to hold signal selection check buttons:
         self.system_frame = SystemFrame(self)
         self.system_frame.grid(row=5, sticky='W')
         
         # Create frame to hold EFIT tree selection:
         self.EFIT_frame = EFITFrame(self)
-        self.EFIT_frame.grid(row=6, sticky='EW')
+        self.EFIT_frame.grid(row=7, sticky='EW')
         
         # Allow columns to grow:
         self.grid_columnconfigure(0, weight=1)
         
         # Set default conditions:
         self.tree_file_frame.tree_button.invoke()
+    
+    def set_TCI_state(self, state):
+        """Set the TCI boxes to the indicated state.
+        """
+        if state:
+            self.TCI_frame.TCI_points_label.config(state=tk.NORMAL)
+            self.TCI_frame.TCI_points_box.config(state=tk.NORMAL)
+            self.TCI_frame.TCI_thin_label.config(state=tk.NORMAL)
+            self.TCI_frame.TCI_thin_box.config(state=tk.NORMAL)
+            self.TCI_frame.TCI_ds_label.config(state=tk.NORMAL)
+            self.TCI_frame.TCI_ds_box.config(state=tk.NORMAL)
+        else:
+            self.TCI_frame.TCI_points_label.config(state=tk.DISABLED)
+            self.TCI_frame.TCI_points_box.config(state=tk.DISABLED)
+            self.TCI_frame.TCI_thin_label.config(state=tk.DISABLED)
+            self.TCI_frame.TCI_thin_box.config(state=tk.DISABLED)
+            self.TCI_frame.TCI_ds_label.config(state=tk.DISABLED)
+            self.TCI_frame.TCI_ds_box.config(state=tk.DISABLED)
     
     def update_source(self):
         """Update changes between tree and file mode.
@@ -1129,6 +1223,7 @@ class DataSourceFrame(tk.Frame):
     def update_signal(self, signal):
         """Updates the available systems when the `signal` changes.
         """
+        self.set_TCI_state(False)
         self.system_frame.update_systems(signal)
 
 class TimeWindowFrame(tk.Frame):
@@ -2348,10 +2443,44 @@ class FitWindow(tk.Tk):
                 )
                 try:
                     if signal == 'ne':
+                        kwargs = {}
+                        if system == 'TCI':
+                            try:
+                                kwargs['TCI_quad_points'] = int(
+                                    self.control_frame.data_source_frame.TCI_frame.TCI_points_box.get()
+                                )
+                            except ValueError:
+                                self.control_frame.status_frame.add_line(
+                                    "Invalid value for number of TCI quadrature "
+                                    "points! Loading of data from tree failed."
+                                )
+                                return
+                            try:
+                                kwargs['TCI_thin'] = int(
+                                    self.control_frame.data_source_frame.TCI_frame.TCI_thin_box.get()
+                                )
+                            except ValueError:
+                                self.control_frame.status_frame.add_line(
+                                    "Invalid value for TCI thinning! Loading of "
+                                    "data from tree failed."
+                                )
+                                return
+                            try:
+                                kwargs['TCI_ds'] = float(
+                                    self.control_frame.data_source_frame.TCI_frame.TCI_ds_box.get()
+                                )
+                            except ValueError:
+                                self.control_frame.status_frame.add_line(
+                                    "Invalid value for TCI step size! Loading of "
+                                    "data from tree failed."
+                                )
+                                return
+                        
                         self.master_p[system] = profiletools.ne(
                             shot,
                             include=[system],
-                            efit_tree=self.efit_tree
+                            efit_tree=self.efit_tree,
+                            **kwargs
                         )
                     elif signal == 'Te':
                         # Don't remove the ECE edge here, since it still has ALL
@@ -3374,6 +3503,9 @@ class FitWindow(tk.Tk):
                         err_y=0.1,
                         n=1
                     )
+        # This needs to be called again
+        if len(self.combined_p.transformed) > 0:
+            self.combined_p.gp.condense_duplicates()
         # Process bounds:
         return self.process_bounds()
     
@@ -4175,6 +4307,17 @@ def run_gui(argv=None):
                 b.button.select()
             else:
                 b.button.deselect()
+            if b.system == 'TCI':
+                b.invoke_TCI()
+    if args.TCI_quad_points:
+        root.control_frame.data_source_frame.TCI_frame.TCI_points_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.TCI_frame.TCI_points_box.insert(0, str(args.TCI_quad_points))
+    if args.TCI_thin:
+        root.control_frame.data_source_frame.TCI_frame.TCI_thin_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.TCI_frame.TCI_thin_box.insert(0, str(args.TCI_thin))
+    if args.TCI_ds:
+        root.control_frame.data_source_frame.TCI_frame.TCI_ds_box.delete(0, tk.END)
+        root.control_frame.data_source_frame.TCI_frame.TCI_ds_box.insert(0, str(args.TCI_ds))
     if args.kernel:
         root.control_frame.kernel_frame.kernel_type_frame.k_var.set(args.kernel)
         root.control_frame.kernel_frame.update_kernel(args.kernel)

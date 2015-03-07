@@ -21,6 +21,7 @@
 from __future__ import division
 
 from .core import Profile, Channel, read_csv, read_NetCDF
+from . import transformations
 
 import warnings
 try:
@@ -36,6 +37,10 @@ import scipy.interpolate
 import scipy.stats
 import gptools
 import matplotlib.pyplot as plt
+try:
+    import TRIPPy
+except ImportError:
+    warnings.warn("Module TRIPPy could not be loaded!", RuntimeWarning)
 
 _X_label_mapping = {'psinorm': r'$\psi_n$',
                     'phinorm': r'$\phi_n$',
@@ -59,7 +64,7 @@ _X_unit_mapping = {'psinorm': '',
 
 class BivariatePlasmaProfile(Profile):
     """Class to represent bivariate (y=f(t, psi)) plasma data.
-
+    
     The first column of `X` is always time. If the abscissa is 'RZ', then the
     second column is `R` and the third is `Z`. Otherwise the second column is
     the desired abscissa (psinorm, etc.).
@@ -79,7 +84,7 @@ class BivariatePlasmaProfile(Profile):
         
         The target abcissae are what are supported by `rho2rho` from the
         `eqtools` package. Namely,
-
+        
             ======= ========================
             psinorm Normalized poloidal flux
             phinorm Normalized toroidal flux
@@ -87,10 +92,10 @@ class BivariatePlasmaProfile(Profile):
             Rmid    Midplane major radius
             r/a     Normalized minor radius
             ======= ========================
-                
+        
         Additionally, each valid option may be prepended with 'sqrt' to return
         the square root of the desired normalized unit.
-
+        
         Parameters
         ----------
         new_abscissa : str
@@ -1102,12 +1107,12 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                y_units='$10^{20}$ m$^{-3}$',
                                X_labels=['$t$', '$R$', '$Z$'],
                                y_label='$n_e$, CTS')
-
+    
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
-
+    
     N_ne_TS = electrons.getNode(r'\electrons::top.yag_new.results.profiles:ne_rz')
-
+    
     t_ne_TS = N_ne_TS.dim_of().data()
     ne_TS = N_ne_TS.data() / 1e20
     dev_ne_TS = electrons.getNode(r'yag_new.results.profiles:ne_err').data() / 1e20
@@ -1138,6 +1143,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     p.abscissa = 'RZ'
     
     p.add_data(X, ne, err_y=err_ne, channels={1: channels, 2: channels})
+    
     # Remove flagged points:
     p.remove_points(
         scipy.isnan(p.err_y) |
@@ -1152,16 +1158,16 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     if t_max is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
-
+    
     if remove_edge:
         p.remove_edge_points()
-
+    
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False, remove_zeros=True):
     """Returns a profile representing electron density from the edge Thomson scattering system.
-
+    
     Parameters
     ----------
     shot : int
@@ -1246,16 +1252,165 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     if t_max is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
-
+    
     if remove_edge:
         p.remove_edge_points()
-
+    
     return p
 
-def neTCI(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, npts=100, flag_threshold=1e-3):
+def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
+          efit_tree=None, quad_points=20, Z_point=-3.0, theta=scipy.pi / 4,
+          thin=1, flag_threshold=1e-3, ds=1e-3):
     """Returns a profile representing electron density from the two color interferometer system.
 
+    Parameters
+    ----------
+    shot : int
+        The shot number to load.
+    abscissa : str, optional
+        The abscissa to use for the data. The default is 'r/a'.
+    t_min : float, optional
+        The smallest time to include. Default is None (no lower bound).
+    t_max : float, optional
+        The largest time to include. Default is None (no upper bound).
+    electrons : :py:class:`MDSplus.Tree`, optional
+        An :py:class:`MDSplus.Tree` instance open to the electrons tree of the
+        correct shot. The shot of the given tree is not checked! Default is None
+        (open tree).
+    efit_tree : :py:class`eqtools.CModEFITTree`, optional
+        An :py:class:`eqtools.CModEFITTree` instance open to the correct shot.
+        The shot of the given tree is not checked! Default is None (open tree).
+    quad_points : int or array of float, optional
+        The quadrature points to use. If an int, then `quad_points` linearly-
+        spaced points between 0 and 1.2 will be used. Otherwise, `quad_points`
+        must be a strictly monotonically increasing array of the quadrature
+        points to use.
+    Z_point : float
+        Z coordinate of the starting point of the rays (should be well outside
+        the tokamak). Units are meters.
+    theta : float
+        Angle of the chords. Units are radians.
+    thin : int
+        Amount by which the data are thinned before computing weights and
+        averages. Default is 1 (no thinning).
+    flag_threshold : float, optional
+        The threshold below which points are considered bad. Default is 1e-3.
+    ds : float, optional
+        The step size TRIPPy uses to form the beam. Default is 1e-3
+    """
+    if abscissa in ('RZ', 'phinorm', 'volnorm', 'sqrtphinorm', 'sqrtvolnorm'):
+        raise ValueError("Abscissa '%s' not supported for neTCI!" % (abscissa,))
+    
+    # This is redundant with the definition in the function fingerprint, and
+    # must be changed at the same time.
+    if quad_points is None:
+        quad_points = 20
+    if flag_threshold is None:
+        flag_threshold = 1e-3
+    if thin is None:
+        flag_threshold = 1
+    if ds is None:
+        ds = 1e-3
+    
+    try:
+        iter(quad_points)
+    except TypeError:
+        if abscissa == 'Rmid':
+            warnings.warn(
+                "Automatically-generated quadrature points for abscissa 'Rmid' "
+                "will not work right!"
+            )
+            # TODO: We need a way of setting these bounds for Rmid!
+        quad_points = scipy.linspace(0, 1.2, quad_points)
+    else:
+        quad_points = scipy.asarray(quad_points, dtype=float)
+    
+    p = BivariatePlasmaProfile(
+        X_dim=2,
+        X_units=['s', _X_unit_mapping[abscissa]],
+        y_units='$10^{20}$ m$^{-3}$',
+        X_labels=['$t$', _X_label_mapping[abscissa]],
+        y_label='$n_e$, TCI',
+        weightable=False
+    )
+    
+    if efit_tree is None:
+        p.efit_tree = eqtools.CModEFITTree(shot)
+    else:
+        p.efit_tree = efit_tree
+    
+    p.abscissa = abscissa
+    p.shot = shot
+    
+    if electrons is None:
+        electrons = MDSplus.Tree('electrons', shot)
+    
+    R = electrons.getNode(r'tci.results:rad').data()
+    
+    # Need to load noe chord here to get the transforms:
+    N_NL = electrons.getNode(r'tci.results:nl_%02d' % (1,))
+    ne = N_NL.data()
+    t_ne = N_NL.dim_of().data()
+    if t_min is None:
+        t_min = t_ne.min()
+    if t_max is None:
+            t_max = t_ne.max()
+    
+    mask = (t_ne >= t_min) & (t_ne <= t_max)
+    t_ne = t_ne[mask]
+    t_ne = t_ne[::thin]
+    
+    T = transformations.get_transforms(
+        abscissa,
+        R,
+        p.efit_tree,
+        t_ne,
+        quad_points,
+        Z_point,
+        theta,
+        ds=ds
+    )
+    
+    for i, r in enumerate(R):
+        N_NL = electrons.getNode(r'tci.results:nl_%02d' % (i + 1,))
+        ne = N_NL.data()
+        ne = ne[mask]
+        ne = ne[::thin]
+        t_ne = N_NL.dim_of().data()
+        t_ne = t_ne[mask]
+        t_ne = t_ne[::thin]
+        
+        good = ne >= flag_threshold
+        
+        t_ne = t_ne[good]
+        
+        if len(t_ne) > 0:
+            ne = ne[good]
+            # not all channels are active, catch that when putting in the channel transforms and coords
+            X = scipy.ones((len(t_ne), len(quad_points), 2))
+            X = scipy.einsum('i,ijk->ijk', t_ne, X)
+            # WHAT WAS THIS DOING?
+            # X[i, :, 0] = t_ne[i]
+            X[:, :, 1] = quad_points
+                       
+            p.transformed = scipy.append(
+                p.transformed,
+                Channel(
+                    X,
+                    ne / 1e20,
+                    err_y=0.1 * ne / 1e20,
+                    T=T[good, i, :],
+                    y_label='nl_%02d' % (i + 1,),
+                    y_units='$10^{20}$ m$^{-2}$'
+                )
+            )
+    
+    return p
+
+def neTCI_old(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
+          efit_tree=None, npts=100, flag_threshold=1e-3):
+    """Returns a profile representing electron density from the two color interferometer system.
+    
     Parameters
     ----------
     shot : int
@@ -1427,7 +1582,8 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
 
     return p
 
-def ne(shot, include=['CTS', 'ETS'], TCI_npts=None, TCI_flag_threshold=None, **kwargs):
+def ne(shot, include=['CTS', 'ETS'], TCI_quad_points=None, TCI_flag_threshold=None,
+       TCI_thin=None, TCI_ds=None, **kwargs):
     """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
 
     Parameters
@@ -1463,8 +1619,10 @@ def ne(shot, include=['CTS', 'ETS'], TCI_npts=None, TCI_flag_threshold=None, **k
             p_list.append(
                 neTCI(
                     shot,
-                    npts=TCI_npts,
+                    quad_points=TCI_quad_points,
                     flag_threshold=TCI_flag_threshold,
+                    thin=TCI_thin,
+                    ds=TCI_ds,
                     **kwargs
                 )
             )
