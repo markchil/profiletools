@@ -1347,38 +1347,40 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
     
     R = electrons.getNode(r'tci.results:rad').data()
     
-    # Need to load one chord here to get the transforms:
-    N_NL = electrons.getNode(r'tci.results:nl_%02d' % (1,))
-    ne = N_NL.data()
-    t_ne = N_NL.dim_of().data()
-    if t_min is None:
-        t_min = t_ne.min()
-    if t_max is None:
-            t_max = t_ne.max()
-    
-    mask = (t_ne >= t_min) & (t_ne <= t_max)
-    t_ne = t_ne[mask]
-    t_ne = t_ne[::thin]
-    
-    T = transformations.get_transforms(
-        abscissa,
-        R,
-        p.efit_tree,
-        t_ne,
-        quad_points,
-        Z_point,
-        theta,
-        ds=ds
-    )
-    
+    # Set these to None here to solve the fencepost problem:
+    T = None
+    mask = None
     for i, r in enumerate(R):
         N_NL = electrons.getNode(r'tci.results:nl_%02d' % (i + 1,))
         ne = N_NL.data()
+        t_ne = N_NL.dim_of().data()
+        
+        # Put in the len(t_ne) > 0 catch in case the first chord(s) happen to be
+        # bad/empty:
+        if mask is None and len(t_ne) > 0:
+            if t_min is None:
+                t_min = t_ne.min()
+            if t_max is None:
+                t_max = t_ne.max()
+            
+            mask = (t_ne >= t_min) & (t_ne <= t_max)
+        
         ne = ne[mask]
         ne = ne[::thin]
-        t_ne = N_NL.dim_of().data()
         t_ne = t_ne[mask]
         t_ne = t_ne[::thin]
+        
+        if T is None and len(t_ne) > 0:
+            T = transformations.get_transforms(
+                abscissa,
+                R,
+                p.efit_tree,
+                t_ne,
+                quad_points,
+                Z_point,
+                theta,
+                ds=ds
+            )
         
         good = ne >= flag_threshold
         
