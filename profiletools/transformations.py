@@ -1,7 +1,10 @@
 import scipy
 import warnings
 import matplotlib.pyplot as plt
-import eqtools
+try:
+    import eqtools
+except ImportError:
+    warnings.warn("Module eqtools could not be loaded!", RuntimeWarning)
 try:
     import TRIPPy
 except ImportError:
