@@ -800,7 +800,7 @@ class BivariatePlasmaProfile(Profile):
                       'mean_a_L': mean_a_L,
                       'std_a_L': std_a_L,
                       'cov': cov,
-                      'out': out,
+                      # 'out': out,
                       'special_mean': special_mean,
                       'special_cov': special_cov
                      }

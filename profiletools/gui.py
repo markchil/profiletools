@@ -726,6 +726,22 @@ parser.add_argument(
          "completing the fit."
 )
 parser.add_argument(
+    '--no-save-state',
+    action='store_true',
+    help="By default, pickle and NetCDF files will contain a representation of "
+         "the internal state of the program which can be reloaded at a later "
+         "time. You can set this flag to turn this feature off to make smaller "
+         "files. Note that there is no way to control this through the GUI."
+)
+parser.add_argument(
+    '--cov-in-save-state',
+    action='store_true',
+    help="By default, the state information saved (either into a fit result or "
+         "as a standalone file) will not contain the very large covariance "
+         "matrix. If you wish to have access to this information, pass this flag. "
+         "Note that there is no way to control this through the GUI."
+)
+parser.add_argument(
     '-x', '--abscissa-name',
     nargs='+',
     help="Name(s) of the variable(s) in the input/output NetCDF/CSV files that "
@@ -792,6 +808,27 @@ parser.add_argument(
     nargs=2,
     help="The upper and lower bounds for the vertical plot axis. If not provided, "
          "these will be set from the data."
+)
+parser.add_argument(
+    '--dy-lim',
+    type=float,
+    nargs=2,
+    help="The upper and lower bounds for the gradient plot. If not provided, "
+         "these will be set from the data."
+)
+parser.add_argument(
+    '--aLy-lim',
+    type=float,
+    nargs=2,
+    help="The upper and lower bounds for the inverse gradient scale length plot. "
+         "If not provided, these will be set from the data."
+)
+parser.add_argument(
+    '--load',
+    help="Name of a file to load the settings from. This will cause most of the "
+         " command line flags to be ignored. This can either be a .gpfit file "
+         "with only settings or a Pickle or NetCDF file that was produced with "
+         "the 'save fit' button in gpfit."
 )
 
 if __name__ == "__main__":
@@ -1367,7 +1404,11 @@ class OutlierFrame(tk.Frame):
         tk.Frame.__init__(self, *args, **kwargs)
         
         # Create main label for frame:
-        self.frame_label = tk.Label(self, text="Outlier Rejection", font=tkFont.Font(weight=tkFont.BOLD))
+        self.frame_label = tk.Label(
+            self,
+            text="Outlier Rejection",
+            font=tkFont.Font(weight=tkFont.BOLD)
+        )
         self.frame_label.grid(row=0, sticky='W')
         
         # Create checkbuttons to select types:
@@ -1780,31 +1821,31 @@ class MCMCFrame(tk.Frame):
         
         self.walker_label = tk.Label(self, text="walkers:")
         self.walker_label.grid(row=0, column=0, sticky='E')
-        self.walker_box = tk.Entry(self, width=4)
+        self.walker_box = tk.Entry(self, width=3)
         self.walker_box.insert(tk.END, '200')
         self.walker_box.grid(row=0, column=1, sticky='EW')
         
         self.sample_label = tk.Label(self, text="samples:")
         self.sample_label.grid(row=0, column=2, sticky='E')
-        self.sample_box = tk.Entry(self, width=4)
+        self.sample_box = tk.Entry(self, width=3)
         self.sample_box.insert(tk.END, '200')
         self.sample_box.grid(row=0, column=3, sticky='EW')
         
         self.burn_label = tk.Label(self, text="burn:")
         self.burn_label.grid(row=0, column=4, sticky='E')
-        self.burn_box = tk.Entry(self, width=4)
+        self.burn_box = tk.Entry(self, width=3)
         self.burn_box.insert(tk.END, '100')
         self.burn_box.grid(row=0, column=5, sticky='EW')
         
         self.keep_label = tk.Label(self, text="keep:")
         self.keep_label.grid(row=0, column=6, sticky='E')
-        self.keep_box = tk.Entry(self, width=4)
+        self.keep_box = tk.Entry(self, width=3)
         self.keep_box.insert(tk.END, '200')
         self.keep_box.grid(row=0, column=7, sticky='EW')
         
         self.a_label = tk.Label(self, text="a:")
         self.a_label.grid(row=0, column=8, sticky='E')
-        self.a_box = tk.Entry(self, width=4)
+        self.a_box = tk.Entry(self, width=3)
         self.a_box.insert(tk.END, '2')
         self.a_box.grid(row=0, column=9, sticky='EW')
         
@@ -2113,15 +2154,19 @@ class ControlBox(tk.Frame):
         
         # Create buttons:
         self.load_button = tk.Button(self, text="load data", command=self.master.master.load_data)
-        self.load_button.grid(row=1, column=0)
+        self.load_button.grid(row=0, column=0)
         self.avg_button = tk.Button(self, text="plot data", command=self.master.master.average_data)
-        self.avg_button.grid(row=1, column=1)
+        self.avg_button.grid(row=0, column=1)
         self.fit_button = tk.Button(self, text="fit data", command=self.master.master.fit_data)
-        self.fit_button.grid(row=1, column=2)
+        self.fit_button.grid(row=0, column=2)
         self.save_button = tk.Button(self, text="save fit", command=self.master.master.save_fit)
-        self.save_button.grid(row=1, column=3)
+        self.save_button.grid(row=0, column=3)
+        self.save_state_button = tk.Button(self, text="save state", command=self.master.master.save_state)
+        self.save_state_button.grid(row=0, column=4)
+        self.load_state_button = tk.Button(self, text="load", command=self.master.master.load_state)
+        self.load_state_button.grid(row=0, column=5)
         self.exit_button = tk.Button(self, text="exit", command=self.master.master.exit)
-        self.exit_button.grid(row=1, column=4)
+        self.exit_button.grid(row=0, column=6)
 
 class PlotFrame(tk.Frame):
     """Frame to hold the plots.
@@ -2848,38 +2893,6 @@ class FitWindow(tk.Tk):
                     return False
             self.combined_p.gp.k.hyperprior = hyperprior
         return True
-            
-        # for k, l, u in zip(range(0, len(self.combined_p.gp.free_param_bounds)),
-        #                    self.control_frame.kernel_frame.bounds_frame.lower_bounds,
-        #                    self.control_frame.kernel_frame.bounds_frame.upper_bounds):
-        #     old_bounds = self.combined_p.gp.free_param_bounds[k]
-        #     new_bounds = list(old_bounds)
-        #
-        #     new_lb = l.get()
-        #     try:
-        #         new_bounds[0] = float(new_lb)
-        #     except ValueError:
-        #         if new_lb == '':
-        #             l.insert(0, str(old_bounds[0]))
-        #         else:
-        #             self.control_frame.status_frame.add_line(
-        #                 "Invalid lower bound %s for %s, will use default value "
-        #                 "instead." % (new_lb, k,)
-        #             )
-        #
-        #     new_ub = u.get()
-        #     try:
-        #         new_bounds[1] = float(new_ub)
-        #     except ValueError:
-        #         if new_ub == '':
-        #             u.insert(0, str(old_bounds[1]))
-        #         else:
-        #             self.control_frame.status_frame.add_line(
-        #                 "Invalid upper bound %s for %s, will use default value "
-        #                 "instead." % (new_ub, k,)
-        #             )
-        #
-        #     self.combined_p.gp.free_param_bounds[k] = new_bounds
     
     def fit_data(self):
         """Perform the actual fit and evaluation.
@@ -3305,6 +3318,11 @@ class FitWindow(tk.Tk):
         self.res = res
         self.X = X
         
+        self.plot_fit()
+        
+        self.control_frame.status_frame.add_line("Fitting complete.")
+    
+    def plot_fit(self):
         # Delete old lines, envelopes:
         for line in self.l:
             try:
@@ -3319,34 +3337,34 @@ class FitWindow(tk.Tk):
         
         # Plot the fits:
         self.l, self.e = gptools.univariate_envelope_plot(
-            X,
-            res['mean_val'],
-            res['std_val'],
+            self.X,
+            self.res['mean_val'],
+            self.res['std_val'],
             ax=self.plot_frame.a_val,
             color='b'
         )
         
         if self.control_frame.eval_frame.a_L_state.get():
             color = plt.getp(self.l[0], 'color')
-            core_mask = X <= 1
+            core_mask = self.X <= 1
             l, e = gptools.univariate_envelope_plot(
-                X,
-                res['mean_grad'],
-                res['std_grad'],
+                self.X,
+                self.res['mean_grad'],
+                self.res['std_grad'],
                 ax=self.plot_frame.a_grad,
                 color=color
             )
             self.plot_frame.a_grad.set_ylim(
-                bottom=(res['mean_grad'][core_mask] - 3 * res['std_grad'][core_mask]).min(),
-                top=(res['mean_grad'][core_mask] + 3 * res['std_grad'][core_mask]).max()
+                bottom=(self.res['mean_grad'][core_mask] - 3 * self.res['std_grad'][core_mask]).min(),
+                top=(self.res['mean_grad'][core_mask] + 3 * self.res['std_grad'][core_mask]).max()
             )
             self.l.extend(l)
             self.e.extend(e)
             
             l, e = gptools.univariate_envelope_plot(
-                X,
-                res['mean_a_L'],
-                res['std_a_L'],
+                self.X,
+                self.res['mean_a_L'],
+                self.res['std_a_L'],
                 ax=self.plot_frame.a_a_L,
                 color=color
             )
@@ -3354,8 +3372,8 @@ class FitWindow(tk.Tk):
             # Avoid bug in MPL v. 1.4.2:
             if matplotlib.__version__ != '1.4.2':
                 self.plot_frame.a_a_L.set_ylim(
-                    bottom=(res['mean_a_L'][core_mask] - 3 * res['std_a_L'][core_mask]).min(),
-                    top=(res['mean_a_L'][core_mask] + 3 * res['std_a_L'][core_mask]).max()
+                    bottom=(self.res['mean_a_L'][core_mask] - 3 * self.res['std_a_L'][core_mask]).min(),
+                    top=(self.res['mean_a_L'][core_mask] + 3 * self.res['std_a_L'][core_mask]).max()
                 )
             self.l.extend(l)
             self.e.extend(e)
@@ -3392,7 +3410,6 @@ class FitWindow(tk.Tk):
         self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
         self.plot_frame.canvas.draw()
         self.plot_frame.canvas._tkcanvas.focus_set()
-        self.control_frame.status_frame.add_line("Fitting complete.")
     
     def create_gp(self):
         """Create the Gaussian process from the combined profile.
@@ -3759,8 +3776,11 @@ class FitWindow(tk.Tk):
                     res_dict['peaking'] = self.mean_peaking
                     res_dict['err_peaking'] = self.std_peaking
                 
+                if self.save_state:
+                    res_dict['state'] = self.package_state()
+                
                 with open(os.path.expanduser(path), 'wb') as f:
-                    pickle.dump(res_dict, f)
+                    pickle.dump(res_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
             else:
                 # Write output to NetCDF file:
                 self.control_frame.status_frame.add_line(
@@ -3801,6 +3821,9 @@ class FitWindow(tk.Tk):
                         f.peaking = self.mean_peaking
                         f.err_peaking = self.std_peaking
                     
+                    if self.save_state:
+                        f.state = pickle.dumps(self.package_state(), protocol=pickle.HIGHEST_PROTOCOL)
+                    
                     f.x_name = X_name
                     f.createDimension(X_name, len(self.X))
                     v_X = f.createVariable(X_name, float, (X_name,))
@@ -3830,6 +3853,589 @@ class FitWindow(tk.Tk):
             self.control_frame.status_frame.add_line(
                 "Done writing results."
             )
+    
+    def package_state(self):
+        """Create a dictionary representing the internal state of the program.
+        """
+        state = {}
+        
+        # From the tree/file selector frame:
+        state['data source'] = self.control_frame.data_source_frame.tree_file_frame.source_state.get()
+        state['file path'] = self.control_frame.data_source_frame.tree_file_frame.path_entry.get()
+        
+        # From the variable/column name frame:
+        state['time name'] = self.control_frame.data_source_frame.variable_name_frame.time_box.get()
+        state['space name'] = self.control_frame.data_source_frame.variable_name_frame.space_box.get()
+        state['data name'] = self.control_frame.data_source_frame.variable_name_frame.data_box.get()
+        state['meta name'] = self.control_frame.data_source_frame.variable_name_frame.meta_box.get()
+        
+        # From the shot number frame:
+        state['shot'] = self.control_frame.data_source_frame.shot_frame.shot_box.get()
+        
+        # From the signal/coordinate selector frame:
+        state['signal'] = self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.get()
+        state['coordinate'] = self.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.get()
+        
+        # From the TCI parameter frame:
+        state['TCI quad points'] = self.control_frame.data_source_frame.TCI_frame.TCI_points_box.get()
+        state['TCI thin'] = self.control_frame.data_source_frame.TCI_frame.TCI_thin_box.get()
+        state['TCI ds'] = self.control_frame.data_source_frame.TCI_frame.TCI_ds_box.get()
+        
+        # From the system selector frame:
+        state['system states'] = [
+            b.state_var.get() for b in self.control_frame.data_source_frame.system_frame.buttons
+        ]
+        
+        # From the EFIT parameter frame:
+        state['EFIT tree name'] = self.control_frame.data_source_frame.EFIT_frame.EFIT_field.get()
+        
+        # From the time window selection frame:
+        state['time method'] = self.control_frame.averaging_frame.time_window_frame.method_state.get()
+        state['t min'] = self.control_frame.averaging_frame.time_window_frame.t_min_box.get()
+        state['t max'] = self.control_frame.averaging_frame.time_window_frame.t_max_box.get()
+        state['times'] = self.control_frame.averaging_frame.time_window_frame.times_box.get()
+        
+        # From the averaging method frame:
+        state['averaging method'] = self.control_frame.averaging_frame.method_frame.method_var.get()
+        state['uncertainty method'] = self.control_frame.averaging_frame.method_frame.error_method_var.get()
+        state['weighting state'] = self.control_frame.averaging_frame.method_frame.weighted_state.get()
+        
+        # From the kernel type frame:
+        state['kernel type'] = self.control_frame.kernel_frame.kernel_type_frame.k_var.get()
+        state['core only state'] = self.control_frame.kernel_frame.kernel_type_frame.core_only_state.get()
+        
+        # From the hyperprior frames:
+        state['hyperprior types'] = [
+            hf.hp_type_var.get() for hf in self.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+        ]
+        state['hyperhyperparameter states'] = [
+            [
+                b.get() for b in hf.hyperhyperparameter_frame.boxes
+            ] for hf in self.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+        ]
+        
+        # From the constraint frame:
+        state['core constraint state'] = self.control_frame.kernel_frame.constraints_frame.core_state.get()
+        state['edge constraint state'] = self.control_frame.kernel_frame.constraints_frame.edge_state.get()
+        state['core locations'] = self.control_frame.kernel_frame.constraints_frame.core_loc.get()
+        state['edge locations'] = self.control_frame.kernel_frame.constraints_frame.edge_loc.get()
+        
+        # From the fitting method frame:
+        state['fitting method state'] = self.control_frame.fitting_frame.method_frame.method_state.get()
+        state['random starts'] = self.control_frame.fitting_frame.method_frame.starts_box.get()
+        
+        # From the MCMC parameter frame:
+        state['MCMC walkers'] = self.control_frame.fitting_frame.MCMC_frame.walker_box.get()
+        state['MCMC samples'] = self.control_frame.fitting_frame.MCMC_frame.sample_box.get()
+        state['MCMC burn'] = self.control_frame.fitting_frame.MCMC_frame.burn_box.get()
+        state['MCMC keep'] = self.control_frame.fitting_frame.MCMC_frame.keep_box.get()
+        state['MCMC a'] = self.control_frame.fitting_frame.MCMC_frame.a_box.get()
+        
+        # From the full MC constraint frame:
+        state['full MC state'] = self.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_state.get()
+        state['full MC samples'] = self.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.get()
+        state['positivity constraint state'] = self.control_frame.fitting_frame.MCMC_constraint_frame.pos_state.get()
+        state['monotonicity constraint state'] = self.control_frame.fitting_frame.MCMC_constraint_frame.mono_state.get()
+        
+        # From the evaluation frame:
+        state['evaluation method state'] = self.control_frame.eval_frame.method_state.get()
+        state['num evaluation points'] = self.control_frame.eval_frame.npts_box.get()
+        state['evaluation x min'] = self.control_frame.eval_frame.x_min_box.get()
+        state['evaluation x max'] = self.control_frame.eval_frame.x_max_box.get()
+        state['evaluation specific x points'] = self.control_frame.eval_frame.x_points_box.get()
+        state['compute a/L state'] = self.control_frame.eval_frame.a_L_state.get()
+        state['compute volume average state'] = self.control_frame.eval_frame.vol_avg_state.get()
+        state['compute peaking state'] = self.control_frame.eval_frame.peaking_state.get()
+        state['compute TCI state'] = self.control_frame.eval_frame.TCI_state.get()
+        
+        # From the outlier rejection frame:
+        state['extreme change rejection state'] = self.control_frame.outlier_frame.extreme_state.get()
+        state['outlier rejection state'] = self.control_frame.outlier_frame.outlier_state.get()
+        state['extreme change threshold'] = self.control_frame.outlier_frame.extreme_thresh_box.get()
+        state['outlier rejection threshold'] = self.control_frame.outlier_frame.outlier_thresh_box.get()
+        state['specific flagged points state'] = self.control_frame.outlier_frame.specific_box.get()
+        state['show idx state'] = self.control_frame.outlier_frame.show_idx_state.get()
+        
+        # From the plot parameters frame:
+        state['plot x lb'] = self.control_frame.plot_param_frame.x_lb_box.get()
+        state['plot x ub'] = self.control_frame.plot_param_frame.x_ub_box.get()
+        state['plot y lb'] = self.control_frame.plot_param_frame.y_lb_box.get()
+        state['plot y ub'] = self.control_frame.plot_param_frame.y_ub_box.get()
+        state['plot dy lb'] = self.control_frame.plot_param_frame.dy_lb_box.get()
+        state['plot dy ub'] = self.control_frame.plot_param_frame.dy_ub_box.get()
+        state['plot aLy lb'] = self.control_frame.plot_param_frame.aLy_lb_box.get()
+        state['plot aLy ub'] = self.control_frame.plot_param_frame.aLy_ub_box.get()
+        
+        # Data stored directly in self:
+        state['master p'] = self.master_p
+        state['p'] = self.p
+        state['combined_p'] = self.combined_p
+        state['X'] = self.X
+        if not self.save_cov:
+            self.res.pop('cov')
+        state['res'] = self.res
+        try:
+            state['efit_tree'] = self.efit_tree
+        except AttributeError:
+            state['efit_tree'] = None
+        try:
+            state['sampler'] = self.sampler
+        except AttributeError:
+            state['sampler'] = None
+        try:
+            state['mean_peaking'] = self.mean_peaking
+        except AttributeError:
+            state['mean_peaking'] = None
+        try:
+            state['std_peaking'] = self.std_peaking
+        except AttributeError:
+            state['std_peaking'] = None
+        try:
+            state['mean_vol_avg'] = self.mean_vol_avg
+        except AttributeError:
+            state['mean_vol_avg'] = None
+        try:
+            state['std_vol_avg'] = self.std_vol_avg
+        except AttributeError:
+            state['std_vol_avg'] = None
+        try:
+            state['extreme_flagged'] = self.extreme_flagged
+        except AttributeError:
+            state['extreme_flagged'] = None
+        try:
+            state['outlier_flagged'] = self.outlier_flagged
+        except AttributeError:
+            state['outlier_flagged'] = None
+        
+        return state
+    
+    def parcel_state(self, path):
+        state = self.package_state()
+        for k, v in state.iteritems():
+            k = k.replace('/', '_')
+            with open(os.path.abspath(os.path.join(path, k + '.pkl')), 'wb') as f:
+                pickle.dump(v, f)
+    
+    def save_state(self):
+        path = tkFileDialog.asksaveasfilename(defaultextension='.gpfit')
+        if path:
+            with open(os.path.expanduser(path), 'wb') as outfile:
+                pickle.dump(self.package_state(), outfile, protocol=pickle.HIGHEST_PROTOCOL)
+            self.control_frame.status_frame.add_line(
+                "Done writing state."
+            )
+    
+    def load_state(self, path=None):
+        """Load the state information from the selected file.
+        """
+        if path is None:
+            path = tkFileDialog.askopenfilename()
+        if path:
+            root, ext = os.path.splitext(path)
+            
+            if ext == '.csv':
+                self.control_frame.status_frame.add_line(
+                    "Cannot load state information from CSV file!"
+                )
+                return
+            elif ext == '.gpfit':
+                with open(os.path.expanduser(path), 'rb') as infile:
+                    state = pickle.load(infile)
+            elif ext == '.pkl':
+                with open(os.path.expanduser(path), 'rb') as infile:
+                    try:
+                        state = pickle.load(infile)['state']
+                    except KeyError:
+                        self.control_frame.status_frame.add_line(
+                            "No state information in pickle file %s!" % (path,)
+                        )
+                        return
+            else:
+                try:
+                    with scipy.io.netcdf.netcdf_file(os.path.expanduser(path), mode='r') as f:
+                        try:
+                            state = pickle.loads(f.state)
+                        except AttributeError:
+                            self.control_frame.status_frame.add_line(
+                                "No state information in NetCDF file %s!" % (path,)
+                            )
+                            return
+                except TypeError:
+                    self.control_frame.status_frame.add_line(
+                        "Unknown file type for file %s! (Tried to treat as NetCDF.)" % (path,)
+                    )
+                    return
+            
+            self.apply_state(state)
+            self.control_frame.status_frame.add_line(
+                "Done loading state."
+            )
+    
+    def apply_state(self, state):
+        """Apply the given state dictionary.
+        """
+        self.control_frame.data_source_frame.tree_file_frame.source_state.set(state['data source'])
+        self.control_frame.data_source_frame.update_source()
+        impose_entry(
+            self.control_frame.data_source_frame.tree_file_frame.path_entry,
+            state['file path']
+        )
+        
+        impose_entry(
+            self.control_frame.data_source_frame.variable_name_frame.time_box,
+            state['time name']
+        )
+        impose_entry(
+            self.control_frame.data_source_frame.variable_name_frame.space_box,
+            state['space name']
+        )
+        impose_entry(
+            self.control_frame.data_source_frame.variable_name_frame.data_box,
+            state['data name']
+        )
+        impose_entry(
+            self.control_frame.data_source_frame.variable_name_frame.meta_box,
+            state['meta name']
+        )
+        
+        impose_entry(
+            self.control_frame.data_source_frame.shot_frame.shot_box,
+            state['shot']
+        )
+        
+        self.control_frame.data_source_frame.signal_coordinate_frame.signal_var.set(state['signal'])
+        self.control_frame.data_source_frame.update_signal(state['signal'])
+        self.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.set(state['coordinate'])
+        
+        impose_entry(
+            self.control_frame.data_source_frame.TCI_frame.TCI_points_box,
+            state['TCI quad points']
+        )
+        impose_entry(
+            self.control_frame.data_source_frame.TCI_frame.TCI_thin_box,
+            state['TCI thin']
+        )
+        impose_entry(
+            self.control_frame.data_source_frame.TCI_frame.TCI_ds_box,
+            state['TCI ds']
+        )
+        
+        for b, s in zip(
+                self.control_frame.data_source_frame.system_frame.buttons,
+                state['system states']
+            ):
+            b.state_var.set(s)
+            if b.system == 'TCI':
+                b.invoke_TCI()
+        
+        impose_entry(
+            self.control_frame.data_source_frame.EFIT_frame.EFIT_field,
+            state['EFIT tree name']
+        )
+        
+        self.control_frame.averaging_frame.time_window_frame.method_state.set(state['time method'])
+        self.control_frame.averaging_frame.time_window_frame.update_method()
+        impose_entry(
+            self.control_frame.averaging_frame.time_window_frame.t_min_box,
+            state['t min']
+        )
+        impose_entry(
+            self.control_frame.averaging_frame.time_window_frame.t_max_box,
+            state['t max']
+        )
+        impose_entry(
+            self.control_frame.averaging_frame.time_window_frame.times_box,
+            state['times']
+        )
+        
+        self.control_frame.averaging_frame.method_frame.method_var.set(state['averaging method'])
+        self.control_frame.averaging_frame.method_frame.update_method(state['averaging method'])
+        self.control_frame.averaging_frame.method_frame.error_method_var.set(state['uncertainty method'])
+        self.control_frame.averaging_frame.method_frame.weighted_state.set(state['weighting state'])
+        
+        self.control_frame.kernel_frame.kernel_type_frame.k_var.set(state['kernel type'])
+        self.control_frame.kernel_frame.update_kernel(state['kernel type'])
+        
+        self.control_frame.kernel_frame.kernel_type_frame.core_only_state.set(state['core only state'])
+        
+        for hf, t in zip(
+                self.control_frame.kernel_frame.bounds_frame.hyperprior_frames,
+                state['hyperprior types']
+            ):
+            hf.hp_type_var.set(t)
+        for hf, hhps in zip(
+                self.control_frame.kernel_frame.bounds_frame.hyperprior_frames,
+                state['hyperhyperparameter states']
+            ):
+            for b, v in zip(hf.hyperhyperparameter_frame.boxes, hhps):
+                impose_entry(b, v)
+        
+        self.control_frame.kernel_frame.constraints_frame.core_state.set(state['core constraint state'])
+        self.control_frame.kernel_frame.constraints_frame.update_core()
+        self.control_frame.kernel_frame.constraints_frame.edge_state.set(state['edge constraint state'])
+        self.control_frame.kernel_frame.constraints_frame.update_edge()
+        impose_entry(
+            self.control_frame.kernel_frame.constraints_frame.core_loc,
+            state['core locations']
+        )
+        impose_entry(
+            self.control_frame.kernel_frame.constraints_frame.edge_loc,
+            state['edge locations']
+        )
+        
+        self.control_frame.fitting_frame.method_frame.method_state.set(state['fitting method state'])
+        self.control_frame.fitting_frame.update_method()
+        impose_entry(
+            self.control_frame.fitting_frame.method_frame.starts_box,
+            state['random starts']
+        )
+        
+        impose_entry(
+            self.control_frame.fitting_frame.MCMC_frame.walker_box,
+            state['MCMC walkers']
+        )
+        impose_entry(
+            self.control_frame.fitting_frame.MCMC_frame.sample_box,
+            state['MCMC samples']
+        )
+        impose_entry(
+            self.control_frame.fitting_frame.MCMC_frame.burn_box,
+            state['MCMC burn']
+        )
+        impose_entry(
+            self.control_frame.fitting_frame.MCMC_frame.keep_box,
+            state['MCMC keep']
+        )
+        impose_entry(
+            self.control_frame.fitting_frame.MCMC_frame.a_box,
+            state['MCMC a']
+        )
+        
+        self.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_state.set(state['full MC state'])
+        self.control_frame.fitting_frame.MCMC_constraint_frame.update_full_MC()
+        impose_entry(
+            self.control_frame.fitting_frame.MCMC_constraint_frame.samples_box,
+            state['full MC samples']
+        )
+        self.control_frame.fitting_frame.MCMC_constraint_frame.pos_state.set(state['positivity constraint state'])
+        self.control_frame.fitting_frame.MCMC_constraint_frame.mono_state.set(state['monotonicity constraint state'])
+        
+        self.control_frame.eval_frame.method_state.set(state['evaluation method state'])
+        self.control_frame.eval_frame.update_method()
+        impose_entry(
+            self.control_frame.eval_frame.npts_box,
+            state['num evaluation points']
+        )
+        impose_entry(
+            self.control_frame.eval_frame.x_min_box,
+            state['evaluation x min']
+        )
+        impose_entry(
+            self.control_frame.eval_frame.x_max_box,
+            state['evaluation x max']
+        )
+        impose_entry(
+            self.control_frame.eval_frame.x_points_box,
+            state['evaluation specific x points']
+        )
+        self.control_frame.eval_frame.a_L_state.set(state['compute a/L state'])
+        self.control_frame.eval_frame.update_a_L()
+        self.control_frame.eval_frame.vol_avg_state.set(state['compute volume average state'])
+        self.control_frame.eval_frame.peaking_state.set(state['compute peaking state'])
+        self.control_frame.eval_frame.TCI_state.set(state['compute TCI state'])
+        
+        self.control_frame.outlier_frame.extreme_state.set(state['extreme change rejection state'])
+        self.control_frame.outlier_frame.update_extreme()
+        self.control_frame.outlier_frame.outlier_state.set(state['outlier rejection state'])
+        self.control_frame.outlier_frame.update_outlier()
+        impose_entry(
+            self.control_frame.outlier_frame.extreme_thresh_box,
+            state['extreme change threshold']
+        )
+        impose_entry(
+            self.control_frame.outlier_frame.outlier_thresh_box,
+            state['outlier rejection threshold']
+        )
+        impose_entry(
+            self.control_frame.outlier_frame.specific_box,
+            state['specific flagged points state']
+        )
+        self.control_frame.outlier_frame.show_idx_state.set(state['show idx state'])
+        
+        impose_entry(
+            self.control_frame.plot_param_frame.x_lb_box,
+            state['plot x lb']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.x_ub_box,
+            state['plot x ub']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.y_lb_box,
+            state['plot y lb']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.y_ub_box,
+            state['plot y ub']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.dy_lb_box,
+            state['plot dy lb']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.dy_ub_box,
+            state['plot dy ub']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.aLy_lb_box,
+            state['plot aLy lb']
+        )
+        impose_entry(
+            self.control_frame.plot_param_frame.aLy_ub_box,
+            state['plot aLy ub']
+        )
+        
+        self.master_p = state['master p']
+        self.p = state['p']
+        self.combined_p = state['combined_p']
+        self.X = state['X']
+        self.res = state['res']
+        self.efit_tree = state['efit_tree']
+        self.sampler = state['sampler']
+        self.mean_peaking = state['mean_peaking']
+        self.std_peaking = state['std_peaking']
+        self.mean_vol_avg = state['mean_vol_avg']
+        self.std_vol_avg = state['std_vol_avg']
+        self.extreme_flagged = state['extreme_flagged']
+        self.outlier_flagged = state['outlier_flagged']
+        
+        # Now we can update all of the plots:
+        self.plot_frame.a_val.clear()
+        self.plot_frame.a_grad.clear()
+        self.plot_frame.a_a_L.clear()
+        
+        markercycle = itertools.cycle('o^sDH*')
+        
+        # First, we plot the data points:
+        if self.p is not None:
+            for k, p in self.p.iteritems():
+                if p != []:
+                    p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
+            
+            # And the flagged outliers:
+            y_bad_c = self.combined_p.y[self.extreme_flagged]
+            X_bad_c = self.combined_p.X[self.extreme_flagged, :].ravel()
+            if len(y_bad_c) > 0:
+                self.plot_frame.a_val.plot(
+                    X_bad_c, y_bad_c, 'mx', label='extreme change', ms=14
+                )
+            
+            self.plot_frame.a_val.set_ylabel(
+                "%s [%s]" % (self.combined_p.y_label, self.combined_p.y_units,)
+                if self.combined_p.y_units
+                else self.combined_p.y_label
+            )
+            
+            # Only update the value axis:
+            try:
+                x_min = float(self.control_frame.plot_param_frame.x_lb_box.get())
+            except ValueError:
+                x_min = self.combined_p.X.min()
+            try:
+                x_max = float(self.control_frame.plot_param_frame.x_ub_box.get())
+            except ValueError:
+                x_max = self.combined_p.X.max()
+            self.plot_frame.a_val.set_xlim(left=x_min, right=x_max)
+            try:
+                y_min = float(self.control_frame.plot_param_frame.y_lb_box.get())
+            except ValueError:
+                y_min = 0
+            try:
+                y_max = float(self.control_frame.plot_param_frame.y_ub_box.get())
+            except ValueError:
+                y_max = None
+            self.plot_frame.a_val.set_ylim(bottom=y_min, top=y_max)
+            
+            self.plot_frame.a_val.legend(loc='best', fontsize=12, ncol=2)
+            
+            # Produce a descriptive title for the plot:
+            title = ''
+            try:
+                title += "shot %d" % (self.combined_p.shot)
+            except AttributeError:
+                pass
+            try:
+                title += " t_min %f" % (self.combined_p.t_min)
+            except AttributeError:
+                pass
+            try:
+                title += " t_max %f" % (self.combined_p.t_max)
+            except AttributeError:
+                pass
+            if hasattr(self.combined_p, 'times'):
+                times = list(self.combined_p.times)
+                title += " times %f" % (times.pop())
+                for t in times:
+                    title += ",%f" % (t,)
+            
+            self.plot_frame.suptitle.set_text(title)
+            
+            self.control_frame.outlier_frame.update_show_idx()
+            # update_show_idx always calls draw, so we don't need to here.
+            # self.plot_frame.canvas.draw()
+            self.plot_frame.canvas._tkcanvas.focus_set()
+            
+            # Then, we plot the outliers:
+            if self.outlier_flagged is not None:
+                X_bad_o = self.combined_p.X[self.outlier_flagged, :].ravel()
+                err_X_bad_o = self.combined_p.err_X[self.outlier_flagged, :].ravel()
+                y_bad_o = self.combined_p.y[self.outlier_flagged]
+                err_y_bad_o = self.combined_p.err_y[self.outlier_flagged]
+                if len(y_bad_o) > 0:
+                    self.plot_frame.a_val.plot(
+                        X_bad_o,
+                        y_bad_o,
+                        'rx',
+                        label='outlier', ms=14
+                    )
+            # Show points that were flagged by the user:
+            s_flagged_idxs = re.findall(
+                LIST_REGEX,
+                self.control_frame.outlier_frame.specific_box.get()
+            )
+            flagged_idxs = set()
+            for s in s_flagged_idxs:
+                try:
+                    i = float(s)
+                    if i >= len(self.combined_p.y):
+                        self.control_frame.status_frame.add_line(
+                            "Value %d out of range, will be ignored." % (i,)
+                        )
+                    else:
+                        flagged_idxs.add(i)
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid index to remove '%s', will be ignored." % (s,)
+                    )
+            flagged_idxs = list(flagged_idxs)
+            if self.flagged_plt is not None:
+                for p in self.flagged_plt:
+                    try:
+                        p.remove()
+                    except ValueError:
+                        pass
+            if len(flagged_idxs) > 0:
+                self.flagged_plt = self.plot_frame.a_val.plot(
+                    self.combined_p.X[flagged_idxs, :].ravel(),
+                    self.combined_p.y[flagged_idxs],
+                    'x',
+                    color='orange',
+                    label='flagged',
+                    ms=14
+                )
+            
+            if self.res is not None:
+                self.plot_fit()
     
     def exit(self):
         """Quit the program, cleaning up as needed.
@@ -4240,225 +4846,250 @@ class MCMCWindow(tk.Toplevel):
             self.master.sampler = None
         tk.Toplevel.destroy(self)
 
+def impose_entry(w, v):
+    """Impose value `v` on :py:class:`tk.Entry` `w`, leaving `w` in its previous state.
+    """
+    s = w.cget('state')
+    w.config(state=tk.NORMAL)
+    w.delete(0, tk.END)
+    w.insert(0, v)
+    w.config(state=s)
+
 def run_gui(argv=None):
     global args
     if argv is not None:
         args = parser.parse_args(argv)
     root = FitWindow()
     
-    # Populate the GUI with parameters from args:
-    if not args.kernel:
-        if args.core_only:
-            args.kernel = 'SE'
-        else:
-            args.kernel = 'gibbstanh'
-    elif args.kernel == 'SEsym1d':
-        args.no_core_constraint = True
-    
-    # Turn off edge constraint for --core-only:
-    if args.core_only:
-        args.no_edge_constraint = True
-
-    # Bump random starts up to 4 for low processor count machines:
-    if not args.random_starts:
-        num_proc = multiprocessing.cpu_count()
-        if num_proc < 4:
-            args.random_starts = 4
-        else:
-            args.random_starts = min(num_proc, 20)
-    
-    if args.signal:
-        root.control_frame.data_source_frame.signal_coordinate_frame.signal_var.set(args.signal)
-        root.control_frame.data_source_frame.update_signal(args.signal)
-    if args.shot is not None:
-        root.control_frame.data_source_frame.shot_frame.shot_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.shot_frame.shot_box.insert(0, str(args.shot))
-    if args.t_min is not None:
-        root.control_frame.averaging_frame.time_window_frame.t_min_box.delete(0, tk.END)
-        root.control_frame.averaging_frame.time_window_frame.t_min_box.insert(0, str(args.t_min))
-    if args.t_max is not None:
-        root.control_frame.averaging_frame.time_window_frame.t_max_box.delete(0, tk.END)
-        root.control_frame.averaging_frame.time_window_frame.t_max_box.insert(0, str(args.t_max))
-    if args.t_points:
-        root.control_frame.averaging_frame.time_window_frame.point_button.invoke()
-        root.control_frame.averaging_frame.time_window_frame.times_box.delete(0, tk.END)
-        root.control_frame.averaging_frame.time_window_frame.times_box.insert(0, str(args.t_points)[1:-1])
-    if args.npts is not None:
-        root.control_frame.eval_frame.npts_box.delete(0, tk.END)
-        root.control_frame.eval_frame.npts_box.insert(0, str(args.npts))
-    if args.x_min is not None:
-        root.control_frame.eval_frame.x_min_box.delete(0, tk.END)
-        root.control_frame.eval_frame.x_min_box.insert(0, str(args.x_min))
-    if args.x_max is not None:
-        root.control_frame.eval_frame.x_max_box.delete(0, tk.END)
-        root.control_frame.eval_frame.x_max_box.insert(0, str(args.x_max))
-    if args.x_pts:
-        root.control_frame.eval_frame.points_button.invoke()
-        root.control_frame.eval_frame.x_points_box.delete(0, tk.END)
-        root.control_frame.eval_frame.x_points_box.insert(0, str(args.x_pts)[1:-1])
-    if args.system:
-        systems = set(args.system)
-        if 'TS' in systems:
-            systems.remove('TS')
-            systems.add('ETS')
-            systems.add('CTS')
-        for b in root.control_frame.data_source_frame.system_frame.buttons:
-            if b.system in systems:
-                b.button.select()
+    if args.load:
+        root.load_state(path=args.load)
+    else:
+        # Populate the GUI with parameters from args:
+        if not args.kernel:
+            if args.core_only:
+                args.kernel = 'SE'
             else:
-                b.button.deselect()
-            if b.system == 'TCI':
-                b.invoke_TCI()
-    if args.TCI_quad_points:
-        root.control_frame.data_source_frame.TCI_frame.TCI_points_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.TCI_frame.TCI_points_box.insert(0, str(args.TCI_quad_points))
-    if args.TCI_thin:
-        root.control_frame.data_source_frame.TCI_frame.TCI_thin_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.TCI_frame.TCI_thin_box.insert(0, str(args.TCI_thin))
-    if args.TCI_ds:
-        root.control_frame.data_source_frame.TCI_frame.TCI_ds_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.TCI_frame.TCI_ds_box.insert(0, str(args.TCI_ds))
-    if args.kernel:
-        root.control_frame.kernel_frame.kernel_type_frame.k_var.set(args.kernel)
-        root.control_frame.kernel_frame.update_kernel(args.kernel)
-    if args.coordinate:
-        root.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.set(args.coordinate)
-    if args.core_constraint_location is not None:
-        root.control_frame.kernel_frame.constraints_frame.core_loc.delete(0, tk.END)
-        root.control_frame.kernel_frame.constraints_frame.core_loc.insert(0, str(args.core_constraint_location)[1:-1])
-    if args.edge_constraint_locations:
-        root.control_frame.kernel_frame.constraints_frame.edge_loc.delete(0, tk.END)
-        root.control_frame.kernel_frame.constraints_frame.edge_loc.insert(0, str(args.edge_constraint_locations)[1:-1])
-    if args.no_core_constraint:
-        root.control_frame.kernel_frame.constraints_frame.core_button.deselect()
-        root.control_frame.kernel_frame.constraints_frame.update_core()
-    if args.no_edge_constraint:
-        root.control_frame.kernel_frame.constraints_frame.edge_button.deselect()
-        root.control_frame.kernel_frame.constraints_frame.update_edge()
-    if args.core_only:
-        root.control_frame.kernel_frame.kernel_type_frame.core_only_button.select()
-    if args.unweighted:
-        root.control_frame.averaging_frame.method_frame.weighted_button.deselect()
-    if args.robust:
-        root.control_frame.averaging_frame.method_frame.method_var.set('robust')
-    if args.all_points:
-        root.control_frame.averaging_frame.method_frame.method_var.set('all points')
-    root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method.replace('_', ' '))
-    root.control_frame.averaging_frame.method_frame.update_method(
-        root.control_frame.averaging_frame.method_frame.method_var.get()
-    )
-    if args.change_threshold is not None:
-        root.control_frame.outlier_frame.extreme_button.invoke()
-        root.control_frame.outlier_frame.extreme_thresh_box.delete(0, tk.END)
-        root.control_frame.outlier_frame.extreme_thresh_box.insert(0, str(args.change_threshold))
-    if args.outlier_threshold is not None:
-        root.control_frame.outlier_frame.outlier_button.invoke()
-        root.control_frame.outlier_frame.outlier_thresh_box.delete(0, tk.END)
-        root.control_frame.outlier_frame.outlier_thresh_box.insert(0, str(args.outlier_threshold))
-    if args.random_starts is not None:
-        root.control_frame.fitting_frame.method_frame.starts_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.method_frame.starts_box.insert(0, str(args.random_starts))
-    if args.hyperprior:
-        hp = list(args.hyperprior)
-        kernel = root.control_frame.kernel_frame.kernel_type_frame.k_var.get()
-        valid_names = HYPERPARAMETERS[kernel].keys()
-        while hp:
-            name = HYPERPARAMETER_NAMES[hp.pop(0)]
-            name_idx = valid_names.index(name)
-            dist_name = hp.pop(0)
-            param_count = len(HYPERPRIORS[dist_name])
-            hpf = root.control_frame.kernel_frame.bounds_frame.hyperprior_frames[name_idx]
-            hpf.hp_type_var.set(dist_name)
-            hpf.update_hp_type(dist_name)
+                args.kernel = 'gibbstanh'
+        elif args.kernel == 'SEsym1d':
+            args.no_core_constraint = True
+        
+        # Turn off edge constraint for --core-only:
+        if args.core_only:
+            args.no_edge_constraint = True
+        
+        # Bump random starts up to 4 for low processor count machines:
+        if not args.random_starts:
+            num_proc = multiprocessing.cpu_count()
+            if num_proc < 4:
+                args.random_starts = 4
+            else:
+                args.random_starts = min(num_proc, 20)
+        
+        if args.signal:
+            root.control_frame.data_source_frame.signal_coordinate_frame.signal_var.set(args.signal)
+            root.control_frame.data_source_frame.update_signal(args.signal)
+        if args.shot is not None:
+            root.control_frame.data_source_frame.shot_frame.shot_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.shot_frame.shot_box.insert(0, str(args.shot))
+        if args.t_min is not None:
+            root.control_frame.averaging_frame.time_window_frame.t_min_box.delete(0, tk.END)
+            root.control_frame.averaging_frame.time_window_frame.t_min_box.insert(0, str(args.t_min))
+        if args.t_max is not None:
+            root.control_frame.averaging_frame.time_window_frame.t_max_box.delete(0, tk.END)
+            root.control_frame.averaging_frame.time_window_frame.t_max_box.insert(0, str(args.t_max))
+        if args.t_points:
+            root.control_frame.averaging_frame.time_window_frame.point_button.invoke()
+            root.control_frame.averaging_frame.time_window_frame.times_box.delete(0, tk.END)
+            root.control_frame.averaging_frame.time_window_frame.times_box.insert(0, str(args.t_points)[1:-1])
+        if args.npts is not None:
+            root.control_frame.eval_frame.npts_box.delete(0, tk.END)
+            root.control_frame.eval_frame.npts_box.insert(0, str(args.npts))
+        if args.x_min is not None:
+            root.control_frame.eval_frame.x_min_box.delete(0, tk.END)
+            root.control_frame.eval_frame.x_min_box.insert(0, str(args.x_min))
+        if args.x_max is not None:
+            root.control_frame.eval_frame.x_max_box.delete(0, tk.END)
+            root.control_frame.eval_frame.x_max_box.insert(0, str(args.x_max))
+        if args.x_pts:
+            root.control_frame.eval_frame.points_button.invoke()
+            root.control_frame.eval_frame.x_points_box.delete(0, tk.END)
+            root.control_frame.eval_frame.x_points_box.insert(0, str(args.x_pts)[1:-1])
+        if args.system:
+            systems = set(args.system)
+            if 'TS' in systems:
+                systems.remove('TS')
+                systems.add('ETS')
+                systems.add('CTS')
+            for b in root.control_frame.data_source_frame.system_frame.buttons:
+                if b.system in systems:
+                    b.button.select()
+                else:
+                    b.button.deselect()
+                if b.system == 'TCI':
+                    b.invoke_TCI()
+        if args.TCI_quad_points:
+            root.control_frame.data_source_frame.TCI_frame.TCI_points_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.TCI_frame.TCI_points_box.insert(0, str(args.TCI_quad_points))
+        if args.TCI_thin:
+            root.control_frame.data_source_frame.TCI_frame.TCI_thin_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.TCI_frame.TCI_thin_box.insert(0, str(args.TCI_thin))
+        if args.TCI_ds:
+            root.control_frame.data_source_frame.TCI_frame.TCI_ds_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.TCI_frame.TCI_ds_box.insert(0, str(args.TCI_ds))
+        if args.kernel:
+            root.control_frame.kernel_frame.kernel_type_frame.k_var.set(args.kernel)
+            root.control_frame.kernel_frame.update_kernel(args.kernel)
+        if args.coordinate:
+            root.control_frame.data_source_frame.signal_coordinate_frame.coordinate_var.set(args.coordinate)
+        if args.core_constraint_location is not None:
+            root.control_frame.kernel_frame.constraints_frame.core_loc.delete(0, tk.END)
+            root.control_frame.kernel_frame.constraints_frame.core_loc.insert(0, str(args.core_constraint_location)[1:-1])
+        if args.edge_constraint_locations:
+            root.control_frame.kernel_frame.constraints_frame.edge_loc.delete(0, tk.END)
+            root.control_frame.kernel_frame.constraints_frame.edge_loc.insert(0, str(args.edge_constraint_locations)[1:-1])
+        if args.no_core_constraint:
+            root.control_frame.kernel_frame.constraints_frame.core_button.deselect()
+            root.control_frame.kernel_frame.constraints_frame.update_core()
+        if args.no_edge_constraint:
+            root.control_frame.kernel_frame.constraints_frame.edge_button.deselect()
+            root.control_frame.kernel_frame.constraints_frame.update_edge()
+        if args.core_only:
+            root.control_frame.kernel_frame.kernel_type_frame.core_only_button.select()
+        if args.unweighted:
+            root.control_frame.averaging_frame.method_frame.weighted_button.deselect()
+        if args.robust:
+            root.control_frame.averaging_frame.method_frame.method_var.set('robust')
+        if args.all_points:
+            root.control_frame.averaging_frame.method_frame.method_var.set('all points')
+        root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method.replace('_', ' '))
+        root.control_frame.averaging_frame.method_frame.update_method(
+            root.control_frame.averaging_frame.method_frame.method_var.get()
+        )
+        if args.change_threshold is not None:
+            root.control_frame.outlier_frame.extreme_button.invoke()
+            root.control_frame.outlier_frame.extreme_thresh_box.delete(0, tk.END)
+            root.control_frame.outlier_frame.extreme_thresh_box.insert(0, str(args.change_threshold))
+        if args.outlier_threshold is not None:
+            root.control_frame.outlier_frame.outlier_button.invoke()
+            root.control_frame.outlier_frame.outlier_thresh_box.delete(0, tk.END)
+            root.control_frame.outlier_frame.outlier_thresh_box.insert(0, str(args.outlier_threshold))
+        if args.random_starts is not None:
+            root.control_frame.fitting_frame.method_frame.starts_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.method_frame.starts_box.insert(0, str(args.random_starts))
+        if args.hyperprior:
+            hp = list(args.hyperprior)
+            kernel = root.control_frame.kernel_frame.kernel_type_frame.k_var.get()
+            valid_names = HYPERPARAMETERS[kernel].keys()
+            while hp:
+                name = HYPERPARAMETER_NAMES[hp.pop(0)]
+                name_idx = valid_names.index(name)
+                dist_name = hp.pop(0)
+                param_count = len(HYPERPRIORS[dist_name])
+                hpf = root.control_frame.kernel_frame.bounds_frame.hyperprior_frames[name_idx]
+                hpf.hp_type_var.set(dist_name)
+                hpf.update_hp_type(dist_name)
             
-            for k in xrange(0, param_count):
-                hpf.hyperhyperparameter_frame.boxes[k].delete(0, tk.END)
-                hpf.hyperhyperparameter_frame.boxes[k].insert(0, hp.pop(0))
-    elif args.bounds:
-        for k, hf in zip(
-                xrange(0, len(root.control_frame.kernel_frame.bounds_frame.hyperprior_frames)),
-                root.control_frame.kernel_frame.bounds_frame.hyperprior_frames
-            ):
-            hf.hp_type_var.set('uniform')
-            hf.update_hp_type('uniform')
-            hf.hyperhyperparameter_frame.boxes[0].delete(0, tk.END)
-            hf.hyperhyperparameter_frame.boxes[0].insert(0, str(args.bounds[2 * k]))
-            hf.hyperhyperparameter_frame.boxes[1].delete(0, tk.END)
-            hf.hyperhyperparameter_frame.boxes[1].insert(0, str(args.bounds[2 * k + 1]))
-    if args.input_filename:
-        root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
-        root.control_frame.data_source_frame.tree_file_frame.path_entry.delete(0, tk.END)
-        root.control_frame.data_source_frame.tree_file_frame.path_entry.insert(0, args.input_filename)
-    if args.abscissa_name:
-        root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
-        if len(args.abscissa_name) == 2:
-            root.control_frame.data_source_frame.variable_name_frame.time_box.delete(0, tk.END)
-            root.control_frame.data_source_frame.variable_name_frame.time_box.insert(0, str(args.abscissa_name[0]))
-        root.control_frame.data_source_frame.variable_name_frame.space_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.variable_name_frame.space_box.insert(0, str(args.abscissa_name[-1]))
-    if args.ordinate_name:
-        root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
-        root.control_frame.data_source_frame.variable_name_frame.data_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.variable_name_frame.data_box.insert(0, str(args.ordinate_name))
-    if args.metadata_lines is not None:
-        root.control_frame.data_source_frame.variable_name_frame.meta_box.delete(0, tk.END)
-        root.control_frame.data_source_frame.variable_name_frame.meta_box.insert(0, str(args.metadata_lines))
-    if args.use_MCMC:
-        root.control_frame.fitting_frame.method_frame.MCMC_button.invoke()
-    if args.walkers is not None:
-        root.control_frame.fitting_frame.MCMC_frame.walker_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_frame.walker_box.insert(0, str(args.walkers))
-    if args.MCMC_samp is not None:
-        root.control_frame.fitting_frame.MCMC_frame.sample_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_frame.sample_box.insert(0, str(args.MCMC_samp))
-    if args.burn is not None:
-        root.control_frame.fitting_frame.MCMC_frame.burn_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_frame.burn_box.insert(0, str(args.burn))
-    if args.keep is not None:
-        root.control_frame.fitting_frame.MCMC_frame.keep_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_frame.keep_box.insert(0, str(args.keep))
-    if args.sampler_a is not None:
-        root.control_frame.fitting_frame.MCMC_frame.a_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_frame.a_box.insert(0, str(args.sampler_a))
-    if args.full_monte_carlo:
-        root.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_button.select()
-        root.control_frame.fitting_frame.MCMC_constraint_frame.update_full_MC()
-    if args.monte_carlo_samples:
-        state = root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box['state']
-        root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.config(state=tk.NORMAL)
-        root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.delete(0, tk.END)
-        root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.insert(0, str(args.monte_carlo_samples))
-        root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.config(state=state)
-    if args.reject_negative:
-        root.control_frame.fitting_frame.MCMC_constraint_frame.pos_button.select()
-    if args.reject_non_monotonic:
-        root.control_frame.fitting_frame.MCMC_constraint_frame.mono_button.select()
-    if args.no_a_over_L:
-        root.control_frame.eval_frame.a_L_button.deselect()
-    root.control_frame.eval_frame.update_a_L()
-    if args.compute_vol_avg:
-        root.control_frame.eval_frame.vol_avg_button.select()
-    if args.compute_peaking:
-        root.control_frame.eval_frame.peaking_button.select()
-    if args.compute_TCI:
-        root.control_frame.eval_frame.TCI_button.select()
-    if args.x_lim:
-        root.control_frame.plot_param_frame.x_lb_box.delete(0, tk.END)
-        root.control_frame.plot_param_frame.x_lb_box.insert(0, str(args.x_lim[0]))
-        root.control_frame.plot_param_frame.x_ub_box.delete(0, tk.END)
-        root.control_frame.plot_param_frame.x_ub_box.insert(0, str(args.x_lim[1]))
-    if args.y_lim:
-        root.control_frame.plot_param_frame.y_lb_box.delete(0, tk.END)
-        root.control_frame.plot_param_frame.y_lb_box.insert(0, str(args.y_lim[0]))
-        root.control_frame.plot_param_frame.y_ub_box.delete(0, tk.END)
-        root.control_frame.plot_param_frame.y_ub_box.insert(0, str(args.y_lim[1]))
-    if args.EFIT_tree:
-        root.control_frame.data_source_frame.EFIT_frame.EFIT_field.delete(0, tk.END)
-        root.control_frame.data_source_frame.EFIT_frame.EFIT_field.insert(0, args.EFIT_tree)
-    if args.plot_idxs:
-        root.control_frame.outlier_frame.show_idx_button.select()
-    if args.remove_points:
-        root.control_frame.outlier_frame.specific_box.insert(0, str(args.remove_points)[1:-1])
+                for k in xrange(0, param_count):
+                    hpf.hyperhyperparameter_frame.boxes[k].delete(0, tk.END)
+                    hpf.hyperhyperparameter_frame.boxes[k].insert(0, hp.pop(0))
+        elif args.bounds:
+            for k, hf in zip(
+                    xrange(0, len(root.control_frame.kernel_frame.bounds_frame.hyperprior_frames)),
+                    root.control_frame.kernel_frame.bounds_frame.hyperprior_frames
+                ):
+                hf.hp_type_var.set('uniform')
+                hf.update_hp_type('uniform')
+                hf.hyperhyperparameter_frame.boxes[0].delete(0, tk.END)
+                hf.hyperhyperparameter_frame.boxes[0].insert(0, str(args.bounds[2 * k]))
+                hf.hyperhyperparameter_frame.boxes[1].delete(0, tk.END)
+                hf.hyperhyperparameter_frame.boxes[1].insert(0, str(args.bounds[2 * k + 1]))
+        if args.input_filename:
+            root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
+            root.control_frame.data_source_frame.tree_file_frame.path_entry.delete(0, tk.END)
+            root.control_frame.data_source_frame.tree_file_frame.path_entry.insert(0, args.input_filename)
+        if args.abscissa_name:
+            root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
+            if len(args.abscissa_name) == 2:
+                root.control_frame.data_source_frame.variable_name_frame.time_box.delete(0, tk.END)
+                root.control_frame.data_source_frame.variable_name_frame.time_box.insert(0, str(args.abscissa_name[0]))
+            root.control_frame.data_source_frame.variable_name_frame.space_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.variable_name_frame.space_box.insert(0, str(args.abscissa_name[-1]))
+        if args.ordinate_name:
+            root.control_frame.data_source_frame.tree_file_frame.file_button.invoke()
+            root.control_frame.data_source_frame.variable_name_frame.data_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.variable_name_frame.data_box.insert(0, str(args.ordinate_name))
+        if args.metadata_lines is not None:
+            root.control_frame.data_source_frame.variable_name_frame.meta_box.delete(0, tk.END)
+            root.control_frame.data_source_frame.variable_name_frame.meta_box.insert(0, str(args.metadata_lines))
+        if args.use_MCMC:
+            root.control_frame.fitting_frame.method_frame.MCMC_button.invoke()
+        if args.walkers is not None:
+            root.control_frame.fitting_frame.MCMC_frame.walker_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.MCMC_frame.walker_box.insert(0, str(args.walkers))
+        if args.MCMC_samp is not None:
+            root.control_frame.fitting_frame.MCMC_frame.sample_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.MCMC_frame.sample_box.insert(0, str(args.MCMC_samp))
+        if args.burn is not None:
+            root.control_frame.fitting_frame.MCMC_frame.burn_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.MCMC_frame.burn_box.insert(0, str(args.burn))
+        if args.keep is not None:
+            root.control_frame.fitting_frame.MCMC_frame.keep_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.MCMC_frame.keep_box.insert(0, str(args.keep))
+        if args.sampler_a is not None:
+            root.control_frame.fitting_frame.MCMC_frame.a_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.MCMC_frame.a_box.insert(0, str(args.sampler_a))
+        if args.full_monte_carlo:
+            root.control_frame.fitting_frame.MCMC_constraint_frame.full_MC_button.select()
+            root.control_frame.fitting_frame.MCMC_constraint_frame.update_full_MC()
+        if args.monte_carlo_samples:
+            state = root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box['state']
+            root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.config(state=tk.NORMAL)
+            root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.delete(0, tk.END)
+            root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.insert(0, str(args.monte_carlo_samples))
+            root.control_frame.fitting_frame.MCMC_constraint_frame.samples_box.config(state=state)
+        if args.reject_negative:
+            root.control_frame.fitting_frame.MCMC_constraint_frame.pos_button.select()
+        if args.reject_non_monotonic:
+            root.control_frame.fitting_frame.MCMC_constraint_frame.mono_button.select()
+        if args.no_a_over_L:
+            root.control_frame.eval_frame.a_L_button.deselect()
+        root.control_frame.eval_frame.update_a_L()
+        if args.compute_vol_avg:
+            root.control_frame.eval_frame.vol_avg_button.select()
+        if args.compute_peaking:
+            root.control_frame.eval_frame.peaking_button.select()
+        if args.compute_TCI:
+            root.control_frame.eval_frame.TCI_button.select()
+        if args.x_lim:
+            root.control_frame.plot_param_frame.x_lb_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.x_lb_box.insert(0, str(args.x_lim[0]))
+            root.control_frame.plot_param_frame.x_ub_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.x_ub_box.insert(0, str(args.x_lim[1]))
+        if args.y_lim:
+            root.control_frame.plot_param_frame.y_lb_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.y_lb_box.insert(0, str(args.y_lim[0]))
+            root.control_frame.plot_param_frame.y_ub_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.y_ub_box.insert(0, str(args.y_lim[1]))
+        if args.dy_lim:
+            root.control_frame.plot_param_frame.dy_lb_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.dy_lb_box.insert(0, str(args.dy_lim[0]))
+            root.control_frame.plot_param_frame.dy_ub_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.dy_ub_box.insert(0, str(args.dy_lim[1]))
+        if args.aLy_lim:
+            root.control_frame.plot_param_frame.aLy_lb_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.aLy_lb_box.insert(0, str(args.aLy_lim[0]))
+            root.control_frame.plot_param_frame.aLy_ub_box.delete(0, tk.END)
+            root.control_frame.plot_param_frame.aLy_ub_box.insert(0, str(args.aLy_lim[1]))
+        if args.EFIT_tree:
+            root.control_frame.data_source_frame.EFIT_frame.EFIT_field.delete(0, tk.END)
+            root.control_frame.data_source_frame.EFIT_frame.EFIT_field.insert(0, args.EFIT_tree)
+        if args.plot_idxs:
+            root.control_frame.outlier_frame.show_idx_button.select()
+        if args.remove_points:
+            root.control_frame.outlier_frame.specific_box.insert(0, str(args.remove_points)[1:-1])
+    
+    root.save_state = not args.no_save_state
+    root.save_cov = args.cov_in_save_state
     
     if args.full_auto or args.no_interaction:
         root.load_data()
@@ -4470,8 +5101,10 @@ def run_gui(argv=None):
         
     if not args.no_interaction and not args.no_mainloop:
         root.mainloop()
-    
-    return (root.X, root.res, root.combined_p)
+        
+        return (root.X, root.res, root.combined_p)
+    else:
+        return root
 
 if __name__ == "__main__":
-    run_gui()
+    root = run_gui()
