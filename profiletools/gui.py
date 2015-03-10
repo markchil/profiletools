@@ -1748,7 +1748,7 @@ class KernelFrame(tk.Frame):
         self.k = self.kernel_type_frame.k_var.get()
         
         # Create frame to hold hyperparameter bounds:
-        self.bounds_label = tk.Label(self, text="hyperparameter bounds:")
+        self.bounds_label = tk.Label(self, text="hyperparameter priors:")
         self.bounds_label.grid(row=2, sticky='W')
         self.bounds_frame = KernelBoundsFrame(
             HYPERPARAMETERS[self.kernel_type_frame.k_var.get()],
