@@ -601,7 +601,7 @@ parser.add_argument(
          "parameters of the distribution. An example of this is "
          "'--hyperprior sigma_f uniform 0 20' which sets the hyperprior on the "
          "signal variance to be uniform between 0 and 20. If present, this "
-         "overrides --bounds. If nor present, reasonable guesses will be used.".format(
+         "overrides --bounds. If not present, reasonable guesses will be used.".format(
              names=', '.join(map(str, HYPERPARAMETER_NAMES.keys())),
              distributions=', '.join(map(str, HYPERPRIORS.keys()))
          )
