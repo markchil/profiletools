@@ -744,6 +744,14 @@ parser.add_argument(
          "Note that there is no way to control this through the GUI."
 )
 parser.add_argument(
+    '--sampler-in-save-state',
+    action='store_true',
+    help="By default, the state information saved (either into a fit result or "
+         "as a standalone file) will not contain the very large MCMC sampler "
+         "instance. If you wish to have access to this information, pass this "
+         "flag. Note that there is no way to control this through the GUI."
+)
+parser.add_argument(
     '-x', '--abscissa-name',
     nargs='+',
     help="Name(s) of the variable(s) in the input/output NetCDF/CSV files that "
@@ -3989,10 +3997,13 @@ class FitWindow(tk.Tk):
         except AttributeError:
             state['efit_tree'] = None
         try:
-            # Need to close out the pool:
-            self.sampler.pool.close()
-            self.sampler.pool = None
-            state['sampler'] = self.sampler
+            if self.save_sampler:
+                # Need to close out the pool:
+                self.sampler.pool.close()
+                self.sampler.pool = None
+                state['sampler'] = self.sampler
+            else:
+                state['sampler'] = None
         except AttributeError:
             state['sampler'] = None
         try:
@@ -5229,6 +5240,7 @@ def run_gui(argv=None):
     
     root.save_state = not args.no_save_state
     root.save_cov = args.cov_in_save_state
+    root.save_sampler = args.sampler_in_save_state
     
     if args.full_auto or args.no_interaction:
         root.load_data()
