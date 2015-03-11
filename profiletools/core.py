@@ -1850,7 +1850,7 @@ def meanw(x, weights=None, axis=None):
 def varw(x, weights=None, axis=None, ddof=1, mean=None):
     r"""Weighted variance of data.
     
-    Defined (for `ddof`=1) as
+    Defined (for `ddof` = 1) as
     
     .. math::
         
