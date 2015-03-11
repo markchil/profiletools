@@ -20,7 +20,7 @@ The optional keyword `include` specifies which signal are included -- in this
 case core and edge Thomson scattering. If you want the data expressed in a
 specific coordinate system, use the `abscissa` keyword::
     
-    p = ne(shot, include=['CTS', 'ETS'], abscissa='r/a')
+    p = ne(shot, abscissa='r/a')
 
 Or, call :py:meth:`~profiletools.CMod.BivariatePlasmaProfile.convert_abscissa`::
     
