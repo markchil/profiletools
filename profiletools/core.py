@@ -1902,7 +1902,7 @@ def varw(x, weights=None, axis=None, ddof=1, mean=None):
 def stdw(*args, **kwargs):
     r"""Weighted standard deviation of data.
     
-    Defined (for `ddof`=1) as
+    Defined (for `ddof` = 1) as
     
     .. math::
         
