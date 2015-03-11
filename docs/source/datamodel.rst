@@ -74,7 +74,7 @@ arbitrary `X_dim` is as simple as calling the
 :py:class:`~profiletools.core.Profile` instance. The GP can then be trained by
 calling :py:meth:`~profiletools.core.Profile.find_gp_MAP_estimate`. Once this is
 complete, the smoothed curve can be obtained using
-:py:meth:`~profiletools.core.Profile.smooth`. If additional adjustment to the
+:py:meth:`~profiletools.core.Profile.smooth`. If additional adjustments to the
 :py:class:`~gptools.gaussian_process.GaussianProcess` instance are needed, it is
 kept in the `gp` attribute of the :py:class:`~profiletools.core.Profile`
 instance.

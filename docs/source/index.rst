@@ -40,6 +40,8 @@ Contents
    :maxdepth: 4
    
    datamodel
+   tokamakdata
+   cmoddata
    profiletools
 
 Indices and tables
