@@ -1,6 +1,9 @@
 The :py:mod:`profiletools` data model
 =====================================
 
+The :py:class:`~profiletools.core.Profile` class
+------------------------------------------------
+
 The core class of :py:mod:`profiletools` is the :py:class:`~profiletools.core.Profile`.
 This class is designed primarily to hold point measurements of some quantity,
 which may depend on an arbitrary number of variables and can be sampled at
@@ -14,6 +17,9 @@ sparse matrix is stored and is how :py:mod:`profiletools` can be so flexible
 about how many independent variables there are and where they are sampled. There
 can be uncertainties on both the independent variables (stored in the attribute
 `err_X`) and on the dependent variable (stored in the attribute `err_y`).
+
+Channels
+--------
 
 :py:mod:`profiletools` understands that particular data should be treated as a
 unit during averaging and so forth. Such a unit could correspond to all of the
@@ -29,6 +35,9 @@ sensor to be treated as an independent channel, and time averaging will not have
 the desired effect. Instead, the second column of `channels` can be set such
 that all measurements from a given sensor have the same value and are hence
 treated together when averaging data.
+
+Linearly transformed quantities
+-------------------------------
 
 :py:class:`~profiletools.core.Profile` objects can also incorporate quantities
 which are linear transformations of the underlying point measurements stored in
@@ -46,7 +55,10 @@ The :py:class:`~profiletools.core.Channel` instances associated with a given
 :py:class:`~profiletools.core.Profile` instance are stored in the attribute
 `transformed`.
 
-Many different techniques for averaging are supported, refer to
-:py:func:`~profiletools.core.average_points` for more details. By carrying out
-all averaging within a given channel using this function, it is straightforward
-to add additional capabilities as needed.
+Averaging data
+--------------
+
+Many different techniques for averaging the data and computing the associated
+uncertainties are supported, refer to :py:func:`~profiletools.core.average_points`
+for more details. By carrying out all averaging within a given channel using
+this function, it is straightforward to add additional capabilities as needed.
