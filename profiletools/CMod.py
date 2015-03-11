@@ -545,8 +545,8 @@ class BivariatePlasmaProfile(Profile):
                   axis_constraint_kwargs={}, limiter_constraint_kwargs={}, **kwargs):
         """Create a Gaussian process to handle the data.
         
-        Calls :py:meth:`Profile.create_gp`, then imposes constraints as
-        requested.
+        Calls :py:meth:`~profiletools.core.Profile.create_gp`, then imposes
+        constraints as requested.
         
         Defaults to using a squared exponential kernel in two dimensions or a
         Gibbs kernel with tanh warping in one dimension.
