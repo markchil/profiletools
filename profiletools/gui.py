@@ -3988,8 +3988,8 @@ class FitWindow(tk.Tk):
         state['X'] = self.X
         try:
             if not self.save_cov:
-                self.res.pop('cov')
-        except AttributeError, KeyError:
+                self.res.pop('cov', None)
+        except:
             pass
         state['res'] = self.res
         try:
