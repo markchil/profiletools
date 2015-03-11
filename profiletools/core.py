@@ -32,6 +32,7 @@ import os.path
 import csv
 import warnings
 import re
+import copy
 
 def average_points(X, y, err_X, err_y, T=None, ddof=1, robust=False,
                    y_method='sample', X_method='sample', weighted=False):
@@ -600,11 +601,13 @@ class Profile(object):
         
         # Process channel flags:
         if channels is None:
-            channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
+            # channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
+            channels = scipy.copy(X)
         else:
             if isinstance(channels, dict):
                 d_channels = channels
-                channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
+                # channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
+                channels = scipy.copy(X)
                 for idx in d_channels:
                     channels[:, idx] = d_channels[idx]
             else:
