@@ -40,11 +40,11 @@ If you want to remove points after having created the
 
 If you want to only keep points at specific times (such as points at a specific
 sawtooth phase), you can use the
-:py:meth:`~profiletools.CMod.BivariatePlasmaProfile:keep_times` method. For each
+:py:meth:`~profiletools.CMod.BivariatePlasmaProfile.keep_times` method. For each
 time point designated, this will find the point in the profile which is closest.
 If there are many missing datapoints, blindly applying this technique can result
 in data far from the desired point being included. Hence, the `tol` keyword will
-cause :py:meth:`~profiletools.CMod.BivariatePlasmaProfile:keep_times` to only
+cause :py:meth:`~profiletools.CMod.BivariatePlasmaProfile.keep_times` to only
 keep points that are within `tol` of the target. So, to keep the points within
 1ms of 1.0s, 1.1s and 1.3s, you would type::
     
