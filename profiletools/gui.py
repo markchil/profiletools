@@ -848,6 +848,7 @@ if ('juggernaut' not in hostname and
     'cosmonaut' not in hostname):
     sys.path.append("/home/markchil/codes/gptools")
     sys.path.append("/home/markchil/codes/profiletools")
+    sys.path.append("/home/markchil/codes/TRIPPy")
     sys.path.append("/home/markchil/codes/efit/development/EqTools")
 
 import matplotlib
