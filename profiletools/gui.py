@@ -3989,6 +3989,9 @@ class FitWindow(tk.Tk):
         except AttributeError:
             state['efit_tree'] = None
         try:
+            # Need to close out the pool:
+            self.sampler.pool.close()
+            self.sampler.pool = None
             state['sampler'] = self.sampler
         except AttributeError:
             state['sampler'] = None
