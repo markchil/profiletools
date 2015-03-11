@@ -42,6 +42,7 @@ Contents
    datamodel
    tokamakdata
    cmoddata
+   patterns
    profiletools
 
 Indices and tables

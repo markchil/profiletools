@@ -33,4 +33,9 @@ adding constraints to the Gaussian process created with
 applies a zero slope constraint at the magnetic axis and
 :py:meth:`~profiletools.CMod.BivariatePlasmaProfile.constrain_at_limiter`
 applies approximate zero slope and value constraints at the location of the
-limiter.
+limiter. Note, however, that both of these constraints are applied automatically
+when calling :py:meth:`~profiletools.CMod.BivariatePlasmaProfile.create_gp`. You
+can disable them using the `constrain_slope_one_axis` and `constrain_at_limiter`
+keywords to :py:meth:`~profiletools.CMod.BivariatePlasmaProfile.create_gp`, and
+you can influence their behavior with the `axis_constraint_kwargs` and
+`limiter_constraint_kwargs` keywords.
