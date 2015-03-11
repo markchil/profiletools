@@ -59,7 +59,10 @@ The :py:class:`~profiletools.core.Channel` instances associated with a given
 :py:class:`~profiletools.core.Profile` instance are stored in the attribute
 `transformed`.
 
-Many different techniques for averaging are supported
+Many different techniques for averaging are supported, refer to
+:py:func:`~profiletools.core.average_points` for more details. By carrying out
+all averaging within a given channel using this function, it is straightforward
+to add additional capabilities as needed.
 
 Notes
 -----
