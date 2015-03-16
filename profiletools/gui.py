@@ -146,6 +146,7 @@ HYPERPRIORS = collections.OrderedDict(
     [
         ('uniform', [u"lb", u"ub"]),
         ('gamma', [u"\u03b1", u"\u03b2"]),
+        ('alt-gamma', [u"m", u"\u03c3"]),
         ('normal', [u"\u03bc", u"\u03c3"]),
         ('log-normal', [u"\u03bc", u"\u03c3"]),
     ]
@@ -159,20 +160,20 @@ HYPERPRIORS = collections.OrderedDict(
 # hyperhyperparameters).
 HYPERPRIOR_DEFAULTS = {
     u"\u03C3f": ('uniform', [0.0, 20.0]),
-    u"\u21131": ('gamma', [11.0, 10.0]),
-    u"\u21132": ('gamma', [6.0, 10.0]),
-    u"\u2113w": ('gamma', [1.0, 10.0]),
-    u"x0": ('gamma', [101.0, 100.0]),
-    u"\u2113c": ('gamma', [11.0, 10.0]),
-    u"\u2113m": ('gamma', [11.0, 10.0]),
-    u"\u2113e": ('gamma', [6.0, 10.0]),
-    u"\u2113a": ('gamma', [1.0, 10.0]),
-    u"\u2113b": ('gamma', [1.0, 10.0]),
+    u"\u21131": ('alt-gamma', [1.0, 0.3]),
+    u"\u21132": ('alt-gamma', [0.5, 0.25]),
+    u"\u2113w": ('alt-gamma', [0.0, 0.1]),
+    u"x0": ('alt-gamma', [1.0, 0.1]),
+    u"\u2113c": ('alt-gamma', [1.0, 0.3]),
+    u"\u2113m": ('alt-gamma', [1.0, 0.3]),
+    u"\u2113e": ('alt-gamma', [0.5, 0.25]),
+    u"\u2113a": ('alt-gamma', [0.0, 0.1]),
+    u"\u2113b": ('alt-gamma', [0.0, 0.1]),
     u"xa": ('uniform', [0.0, 1.0]),
-    u"xb": ('gamma', [101.0, 100.0]),
-    u"\u2113": ('gamma', [11.0, 10.0]),
+    u"xb": ('alt-gamma', [1.0, 0.1]),
+    u"\u2113": ('alt-gamma', [1.0, 0.3]),
     u"1": ('uniform', [0.0, 20.0]),
-    u"2": ('gamma', [11.0, 10.0]),
+    u"2": ('alt-gamma', [1.0, 0.3]),
     u"\u03B1": ('log-normal', [0.0, 0.25]),
     u"\u03B2": ('log-normal', [1.0, 1.0]),
     u"a": ('uniform', [0.0, 100.0]),
@@ -909,7 +910,8 @@ HYPERPRIOR_MAP = {
     'uniform': gptools.UniformJointPrior,
     'gamma': gptools.GammaJointPrior,
     'normal': gptools.NormalJointPrior,
-    'log-normal': gptools.LogNormalJointPrior
+    'log-normal': gptools.LogNormalJointPrior,
+    'alt-gamma': gptools.GammaJointPriorAlt
 }
 
 class TreeFileFrame(tk.Frame):

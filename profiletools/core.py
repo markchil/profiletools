@@ -601,13 +601,13 @@ class Profile(object):
         
         # Process channel flags:
         if channels is None:
-            # channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
-            channels = scipy.copy(X)
+            channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
+            # channels = scipy.copy(X)
         else:
             if isinstance(channels, dict):
                 d_channels = channels
-                # channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
-                channels = scipy.copy(X)
+                channels = scipy.tile(scipy.arange(0, len(y)), (X.shape[1], 1)).T
+                # channels = scipy.copy(X)
                 for idx in d_channels:
                     channels[:, idx] = d_channels[idx]
             else:
