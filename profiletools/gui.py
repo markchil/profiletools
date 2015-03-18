@@ -18,7 +18,7 @@
 
 from __future__ import division
 
-__version__ = '1.0'
+__version__ = '1.1'
 PROG_NAME = 'gpfit'
 
 import collections
@@ -52,6 +52,12 @@ METHOD_OPTIONS = ['conventional', 'robust', 'all points']
 
 # Define uncertainty methods available. First entry is default.
 ERROR_METHOD_OPTIONS = ['sample', 'RMS', 'total', 'of mean', 'of mean sample']
+
+# Define uncertainty fudging methods available. First entry is default.
+FUDGE_METHOD_OPTIONS = ['override', 'minimum', 'add']
+
+# Define unceratinty fudging types available. First entry is default.
+FUDGE_TYPE_OPTIONS = ['absolute', 'relative']
 
 # Make form suitable for command line entry:
 error_method_cl = [s.replace(' ', '_') for s in ERROR_METHOD_OPTIONS]
@@ -337,6 +343,12 @@ parser.add_argument(
          "You must either specify --t-min and --t-max, or -t."
 )
 parser.add_argument(
+    '--t-tol',
+    type=float,
+    help="Tolerance for how close a point must be to a value in '--t-points' to "
+         "be included. Default is to allow points to be arbitrarily far away."
+)
+parser.add_argument(
     '--npts',
     type=int,
     # default=400,
@@ -524,9 +536,8 @@ parser.add_argument(
     help="Set this flag to use unweighted estimators when averaging the data. "
          "Otherwise the weights used are 1/sigma_i^2. Note that using robust "
          "weighted estimators will not work for small numbers of data points. "
-         "Note that this is questionable when applied to diagnostics other than "
-         "TS for which the individual error bars are estimated as some fixed "
-         "percent of the value."
+         "Note that weighting is only ever applied to diagnostics like CTS and "
+         "ETS for which there are computed error bars in the tree."
 )
 parser.add_argument(
     '--all-points', '--no-average',
@@ -534,6 +545,31 @@ parser.add_argument(
     help="Set this flag to keep all points from the time window selected instead "
          "of performing a time average. This will make the fit take longer and "
          "is statistically questionable, but may be useful in some cases."
+)
+parser.add_argument(
+    '--uncertainty-adjust-value',
+    type=float,
+    help="The value by which the uncertainty is adjusted (if at all). Use "
+         "--uncertainty-adjust-method to pick how this value is employed and "
+         "--uncertainty-adjust-type to indicate whether this is an absolute or "
+         "relative uncertainty."
+)
+parser.add_argument(
+    '--uncertainty-adjust-method',
+    choices=FUDGE_METHOD_OPTIONS,
+    help="The method by which the uncertainty is adjusted. "
+         "* override will override all of the uncertainties with the given value. "
+         "* minimum will only override uncertainties which are smaller than the "
+         " given value. "
+         "* add will add the given uncertainty (in quadrature) to the uncertainty "
+         "computed in the usual manner. "
+         "Default is %s." % (FUDGE_METHOD_OPTIONS[0],)
+)
+parser.add_argument(
+    '--uncertainty-adjust-type',
+    choices=FUDGE_TYPE_OPTIONS,
+    help="The type of uncertainty (relative or absolute) that is specified with "
+         "--uncertainty-adjust-value. Default is %s." % (FUDGE_TYPE_OPTIONS[0],)
 )
 parser.add_argument(
     '--change-threshold',
@@ -1313,7 +1349,7 @@ class TimeWindowFrame(tk.Frame):
         self.t_max_units.grid(row=0, column=4)
         
         # Create labels and fields to hold time points:
-        self.times_box = tk.Entry(self)
+        self.times_box = TimePointsFrame(self)
         self.times_box.grid(row=1, column=1, columnspan=4, sticky='EW')
         
         # Allow elements to resize:
@@ -1324,17 +1360,39 @@ class TimeWindowFrame(tk.Frame):
         """Update whether the window or points boxes are enabled.
         """
         if self.method_state.get() == self.WINDOW_MODE:
-            self.times_box.config(state=tk.DISABLED)
+            self.times_box.set_state(tk.DISABLED)
             self.t_min_box.config(state=tk.NORMAL)
             self.t_min_units.config(state=tk.NORMAL)
             self.t_max_box.config(state=tk.NORMAL)
             self.t_max_units.config(state=tk.NORMAL)
         else:
-            self.times_box.config(state=tk.NORMAL)
+            self.times_box.set_state(tk.NORMAL)
             self.t_min_box.config(state=tk.DISABLED)
             self.t_min_units.config(state=tk.DISABLED)
             self.t_max_box.config(state=tk.DISABLED)
             self.t_max_units.config(state=tk.DISABLED)
+
+class TimePointsFrame(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.times_box = tk.Entry(self)
+        self.times_box.grid(row=0, column=0, sticky='EW')
+        self.times_tol_label = tk.Label(self, text='s tol:')
+        self.times_tol_label.grid(row=0, column=1)
+        self.times_tol_box = tk.Entry(self, width=3)
+        self.times_tol_box.grid(row=0, column=2, sticky='EW')
+        self.times_tol_units_label = tk.Label(self, text='s')
+        self.times_tol_units_label.grid(row=0, column=3)
+        
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(2, weight=1)
+    
+    def set_state(self, state):
+        self.times_box.config(state=state)
+        self.times_tol_label.config(state=state)
+        self.times_tol_box.config(state=state)
+        self.times_tol_units_label.config(state=state)
 
 class MethodFrame(tk.Frame):
     """Frame to select averaging/uncertainty methods.
@@ -1384,6 +1442,51 @@ class MethodFrame(tk.Frame):
             self.error_method_label.config(state=tk.NORMAL)
             self.weighted_button.config(state=tk.NORMAL)
 
+class UncertaintyAdjustFrame(tk.Frame):
+    """Frame to hold controls to adjust uncertainties.
+    """
+    def __init__(self, *args, **kwargs):
+        tk.Frame.__init__(self, *args, **kwargs)
+        
+        self.fudge_state = tk.IntVar(self)
+        self.fudge_button = tk.Checkbutton(
+            self,
+            text="adjust uncertainty",
+            command=self.set_state,
+            variable=self.fudge_state
+        )
+        self.fudge_button.grid(row=0, column=0)
+        
+        self.fudge_method_var = tk.StringVar(self)
+        self.fudge_method_var.set(FUDGE_METHOD_OPTIONS[0])
+        self.fudge_method_menu = tk.OptionMenu(self, self.fudge_method_var, *FUDGE_METHOD_OPTIONS)
+        self.fudge_method_menu.grid(row=0, column=1)
+        
+        self.fudge_value_label = tk.Label(self, text='value:')
+        self.fudge_value_label.grid(row=0, column=2)
+        
+        self.fudge_value_box = tk.Entry(self, width=3)
+        self.fudge_value_box.grid(row=0, column=3)
+        
+        self.fudge_type_var = tk.StringVar(self)
+        self.fudge_type_var.set(FUDGE_TYPE_OPTIONS[0])
+        self.fudge_type_menu = tk.OptionMenu(self, self.fudge_type_var, *FUDGE_TYPE_OPTIONS)
+        self.fudge_type_menu.grid(row=0, column=4)
+        
+        self.set_state()
+    
+    def set_state(self):
+        if self.fudge_state.get():
+            self.fudge_method_menu.config(state=tk.NORMAL)
+            self.fudge_value_label.config(state=tk.NORMAL)
+            self.fudge_value_box.config(state=tk.NORMAL)
+            self.fudge_type_menu.config(state=tk.NORMAL)
+        else:
+            self.fudge_method_menu.config(state=tk.DISABLED)
+            self.fudge_value_label.config(state=tk.DISABLED)
+            self.fudge_value_box.config(state=tk.DISABLED)
+            self.fudge_type_menu.config(state=tk.DISABLED)
+
 class AveragingFrame(tk.Frame):
     """Frame to hold the components specifying how averaging is performed.
     """
@@ -1402,6 +1505,10 @@ class AveragingFrame(tk.Frame):
         # Create frame to hold averaging selection:
         self.method_frame = MethodFrame(self)
         self.method_frame.grid(row=2, sticky='W')
+        
+        # Create frame to hold fudge selection:
+        self.fudge_frame = UncertaintyAdjustFrame(self)
+        self.fudge_frame.grid(row=3, sticky='EW')
         
         # Allow elements to resize:
         self.grid_columnconfigure(0, weight=1)
@@ -1519,7 +1626,7 @@ class OutlierFrame(tk.Frame):
             self.idx_plotted = None
         if self.show_idx_state.get():
             # Only do anything if the data have been loaded.
-            if self.master.master.master.combined_p is not None:
+            if self.master.master.master.combined_p is not None and self.master.master.master.combined_p.X is not None:
                 self.idx_plotted = [
                     self.master.master.master.plot_frame.a_val.text(x, y, str(i))
                     for i, x, y in zip(
@@ -2170,20 +2277,27 @@ class ControlBox(tk.Frame):
         tk.Frame.__init__(self, *args, **kwargs)
         
         # Create buttons:
-        self.load_button = tk.Button(self, text="load data", command=self.master.master.load_data)
+        self.top_frame = tk.Frame(self)
+        self.load_button = tk.Button(self.top_frame, text="load data", command=self.master.master.load_data)
         self.load_button.grid(row=0, column=0)
-        self.avg_button = tk.Button(self, text="plot data", command=self.master.master.average_data)
+        self.avg_button = tk.Button(self.top_frame, text="plot data", command=self.master.master.average_data)
         self.avg_button.grid(row=0, column=1)
-        self.fit_button = tk.Button(self, text="fit data", command=self.master.master.fit_data)
+        self.fit_button = tk.Button(self.top_frame, text="fit data", command=self.master.master.fit_data)
         self.fit_button.grid(row=0, column=2)
-        self.save_button = tk.Button(self, text="save fit", command=self.master.master.save_fit)
+        self.save_button = tk.Button(self.top_frame, text="save fit", command=self.master.master.save_fit)
         self.save_button.grid(row=0, column=3)
-        self.save_state_button = tk.Button(self, text="save state", command=self.master.master.save_state)
-        self.save_state_button.grid(row=0, column=4)
-        self.load_state_button = tk.Button(self, text="load", command=self.master.master.load_state)
-        self.load_state_button.grid(row=0, column=5)
-        self.exit_button = tk.Button(self, text="exit", command=self.master.master.exit)
-        self.exit_button.grid(row=0, column=6)
+        self.top_frame.grid(row=0, column=0, sticky='EW')
+        
+        self.bottom_frame = tk.Frame(self)
+        self.save_state_button = tk.Button(self.bottom_frame, text="save state", command=self.master.master.save_state)
+        self.save_state_button.grid(row=0, column=0)
+        self.load_state_button = tk.Button(self.bottom_frame, text="load state", command=self.master.master.load_state)
+        self.load_state_button.grid(row=0, column=1)
+        self.exit_button = tk.Button(self.bottom_frame, text="exit", command=self.master.master.exit)
+        self.exit_button.grid(row=0, column=2)
+        self.bottom_frame.grid(row=1, column=0, sticky='EW')
+        
+        self.grid_columnconfigure(0, weight=1)
 
 class PlotFrame(tk.Frame):
     """Frame to hold the plots.
@@ -2649,8 +2763,8 @@ class FitWindow(tk.Tk):
                 )
             if hasattr(self.master_p[base], 'times'):
                 self.control_frame.averaging_frame.time_window_frame.point_button.invoke()
-                self.control_frame.averaging_frame.time_window_frame.times_box.delete(0, tk.END)
-                self.control_frame.averaging_frame.time_window_frame.times_box.insert(
+                self.control_frame.averaging_frame.time_window_frame.times_box.times_box.delete(0, tk.END)
+                self.control_frame.averaging_frame.time_window_frame.times_box.times_box.insert(
                     0, str(self.master_p[base].times)[1:-1]
                 )
             # Set the coordinate selector
@@ -2704,7 +2818,7 @@ class FitWindow(tk.Tk):
         else:
             s_times = re.findall(
                 LIST_REGEX,
-                self.control_frame.averaging_frame.time_window_frame.times_box.get()
+                self.control_frame.averaging_frame.time_window_frame.times_box.times_box.get()
             )
             for t in s_times:
                 try:
@@ -2716,6 +2830,14 @@ class FitWindow(tk.Tk):
             if not times:
                 self.control_frame.status_frame.add_line(
                     "No valid points in time points. No bounding applied."
+                )
+            try:
+                tol = float(self.control_frame.averaging_frame.time_window_frame.times_box.times_tol_box.get())
+            except ValueError:
+                tol = None
+                self.control_frame.status_frame.add_line(
+                    "No tolerance for time points specified, points used may "
+                    "be arbitrarily far from points requested."
                 )
         
         # Keep a deepcopy so we don't mutate the master data that have been
@@ -2755,7 +2877,7 @@ class FitWindow(tk.Tk):
                                 pt.T = pt.T[good_idxs]
                     else:
                         if times:
-                            p.keep_times(times)
+                            p.keep_times(times, tol=tol)
                 # Convert abscissa if needed:
                 try:
                     p.convert_abscissa(abscissa)
@@ -2777,6 +2899,31 @@ class FitWindow(tk.Tk):
                 # complete:
                 if 'GPC' in k or 'ECE' in k or core_only:
                     p.remove_edge_points()
+                
+                # Fudge the uncertainty if requested:
+                if self.control_frame.averaging_frame.fudge_frame.fudge_state.get():
+                    try:
+                        fudge_val = float(self.control_frame.averaging_frame.fudge_frame.fudge_value_box.get())
+                    except ValueError:
+                        fudge_val = -1.0
+                    if fudge_val < 0:
+                        self.control_frame.status_frame.add_line(
+                            "Invalid value for uncertainty adjustment, uncertainties "
+                            "will not be adjusted!"
+                        )
+                        fudge_val = 0.0
+                    if self.control_frame.averaging_frame.fudge_frame.fudge_type_var.get() == 'absolute':
+                        new_err_y = fudge_val * scipy.ones_like(p.err_y)
+                    else:
+                        new_err_y = fudge_val * p.y
+                    fudge_method = self.control_frame.averaging_frame.fudge_frame.fudge_method_var.get()
+                    if fudge_method == 'override':
+                        p.err_y = new_err_y
+                    elif fudge_method == 'minimum':
+                        bad_idx = (p.err_y <= new_err_y)
+                        p.err_y[bad_idx] = new_err_y[bad_idx]
+                    else:
+                        p.err_y = scipy.sqrt(p.err_y**2 + new_err_y**2)
                 
                 # Plot the data channel-by-channel so it gets color-coded right:
                 p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
@@ -3910,12 +4057,19 @@ class FitWindow(tk.Tk):
         state['time method'] = self.control_frame.averaging_frame.time_window_frame.method_state.get()
         state['t min'] = self.control_frame.averaging_frame.time_window_frame.t_min_box.get()
         state['t max'] = self.control_frame.averaging_frame.time_window_frame.t_max_box.get()
-        state['times'] = self.control_frame.averaging_frame.time_window_frame.times_box.get()
+        state['times'] = self.control_frame.averaging_frame.time_window_frame.times_box.times_box.get()
+        state['times tol'] = self.control_frame.averaging_frame.time_window_frame.times_box.times_tol_box.get()
         
         # From the averaging method frame:
         state['averaging method'] = self.control_frame.averaging_frame.method_frame.method_var.get()
         state['uncertainty method'] = self.control_frame.averaging_frame.method_frame.error_method_var.get()
         state['weighting state'] = self.control_frame.averaging_frame.method_frame.weighted_state.get()
+        
+        # From the uncertainty adjustment frame:
+        state['uncertainty adjust state'] = self.control_frame.averaging_frame.fudge_frame.fudge_state.get()
+        state['uncertainty adjust method'] = self.control_frame.averaging_frame.fudge_frame.fudge_method_var.get()
+        state['uncertainty adjust type'] = self.control_frame.averaging_frame.fudge_frame.fudge_type_var.get()
+        state['uncertainty adjust value'] = self.control_frame.averaging_frame.fudge_frame.fudge_value_box.get()
         
         # From the kernel type frame:
         state['kernel type'] = self.control_frame.kernel_frame.kernel_type_frame.k_var.get()
@@ -4170,14 +4324,43 @@ class FitWindow(tk.Tk):
             state['t max']
         )
         impose_entry(
-            self.control_frame.averaging_frame.time_window_frame.times_box,
+            self.control_frame.averaging_frame.time_window_frame.times_box.times_box,
             state['times']
         )
+        # Handle legacy files without this key:
+        try:
+            impose_entry(
+                self.control_frame.averaging_frame.time_window_frame.times_box.times_tol_box,
+                state['times tol']
+            )
+        except KeyError:
+            pass
         
         self.control_frame.averaging_frame.method_frame.method_var.set(state['averaging method'])
         self.control_frame.averaging_frame.method_frame.update_method(state['averaging method'])
         self.control_frame.averaging_frame.method_frame.error_method_var.set(state['uncertainty method'])
         self.control_frame.averaging_frame.method_frame.weighted_state.set(state['weighting state'])
+        
+        try:
+            self.control_frame.averaging_frame.fudge_frame.fudge_state.set(state['uncertainty adjust state'])
+            self.control_frame.averaging_frame.fudge_frame.set_state()
+        except KeyError:
+            pass
+        try:
+            self.control_frame.averaging_frame.fudge_frame.fudge_method_var.set(state['uncertainty adjust method'])
+        except KeyError:
+            pass
+        try:
+            self.control_frame.averaging_frame.fudge_frame.fudge_type_var.set(state['uncertainty adjust type'])
+        except KeyError:
+            pass
+        try:
+            impose_entry(
+                self.control_frame.averaging_frame.fudge_frame.fudge_value_box,
+                state['uncertainty adjust value']
+            )
+        except KeyError:
+            pass
         
         self.control_frame.kernel_frame.kernel_type_frame.k_var.set(state['kernel type'])
         self.control_frame.kernel_frame.update_kernel(state['kernel type'])
@@ -4948,8 +5131,13 @@ def run_gui(argv=None):
         )
         root.control_frame.averaging_frame.time_window_frame.update_method()
         impose_entry(
-            root.control_frame.averaging_frame.time_window_frame.times_box,
+            root.control_frame.averaging_frame.time_window_frame.times_box.times_box,
             str(args.t_points)[1:-1]
+        )
+    if args.t_tol:
+        impose_entry(
+            root.control_frame.averaging_frame.time_window_frame.times_box.times_tol_box,
+            str(args.t_tol)
         )
     if args.npts is not None:
         root.control_frame.eval_frame.method_state.set(
@@ -5057,6 +5245,21 @@ def run_gui(argv=None):
         root.control_frame.averaging_frame.method_frame.error_method_var.set(args.uncertainty_method.replace('_', ' '))
         root.control_frame.averaging_frame.method_frame.update_method(
             root.control_frame.averaging_frame.method_frame.method_var.get()
+        )
+    if args.uncertainty_adjust_value:
+        root.control_frame.averaging_frame.fudge_frame.fudge_button.select()
+        root.control_frame.averaging_frame.fudge_frame.set_state()
+        impose_entry(
+            root.control_frame.averaging_frame.fudge_frame.fudge_value_box,
+            str(args.uncertainty_adjust_value)
+        )
+    if args.uncertainty_adjust_method:
+        root.control_frame.averaging_frame.fudge_frame.fudge_method_var.set(
+            args.uncertainty_adjust_method
+        )
+    if args.uncertainty_adjust_type:
+        root.control_frame.averaging_frame.fudge_frame.fudge_type_var.set(
+            args.uncertainty_adjust_type
         )
     if args.change_threshold is not None:
         root.control_frame.outlier_frame.extreme_button.select()

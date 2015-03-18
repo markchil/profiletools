@@ -733,7 +733,7 @@ class Profile(object):
                 new_err_y.extend(self.err_y[channel_idxs][keep_idxs])
                 new_channels.extend(self.channels[channel_idxs, :][keep_idxs, :])
             
-            # Raise an error if there aren't any points to keep:
+            # Raise a warning if there aren't any points to keep:
             if new_X:
                 self.X = scipy.vstack(new_X)
                 self.y = scipy.asarray(new_y)
@@ -741,7 +741,12 @@ class Profile(object):
                 self.err_y = scipy.asarray(new_err_y)
                 self.channels = scipy.vstack(new_channels)
             else:
-                raise ValueError("No valid points!")
+                self.X = None
+                self.y = scipy.array([], dtype=float)
+                self.err_X = None
+                self.err_y = scipy.array([], dtype=float)
+                self.channels = None
+                warnings.warn("No valid points!", RuntimeWarning)
         
         mask = [p.keep_slices(axis, vals, tol=tol, **kwargs) for p in self.transformed]
         self.transformed = self.transformed[scipy.asarray(mask, dtype=bool)]
@@ -910,6 +915,12 @@ class Profile(object):
         self.err_y = self.err_y[idxs]
         self.err_X = self.err_X[idxs, :]
         self.channels = self.channels[idxs, :]
+        
+        # Cause other methods to fail gracefully if this causes all pointlike
+        # data to be removed:
+        if len(self.y) == 0:
+            self.X = None
+            self.err_X = None
         
         return (X_bad, y_bad, err_X_bad, err_y_bad)
     
