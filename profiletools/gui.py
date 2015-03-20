@@ -4207,7 +4207,7 @@ class FitWindow(tk.Tk):
         path = tkFileDialog.asksaveasfilename(
             defaultextension='.gpfit',
             filetypes=[
-                ('all files', '*')
+                ('all files', '*'),
                 ('gpfit', '*.gpfit')
             ]
         )
