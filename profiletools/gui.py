@@ -3778,10 +3778,10 @@ class FitWindow(tk.Tk):
         if not args.output_filename:
             path = tkFileDialog.asksaveasfilename(
                 filetypes=[
+                    ('all files', '*'),
                     ('NetCDF', ('*.nc', '*.cdf', '*.dat')),
                     ('Pickle', '*.pkl'),
-                    ('CSV', '*.csv'),
-                    ('all files', '*.*')
+                    ('CSV', '*.csv')
                 ]
             )
         else:
