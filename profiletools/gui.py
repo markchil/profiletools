@@ -18,7 +18,7 @@
 
 from __future__ import division
 
-__version__ = '1.1'
+__version__ = '1.1.1'
 PROG_NAME = 'gpfit'
 
 import collections
@@ -3776,7 +3776,14 @@ class FitWindow(tk.Tk):
         if self.res is None:
             self.fit_data()
         if not args.output_filename:
-            path = tkFileDialog.asksaveasfilename()
+            path = tkFileDialog.asksaveasfilename(
+                filetypes=[
+                    ('NetCDF', ('*.nc', '*.cdf', '*.dat')),
+                    ('Pickle', '*.pkl'),
+                    ('CSV', '*.csv'),
+                    ('all files', '*.*')
+                ]
+            )
         else:
             path = args.output_filename
         if path:
@@ -4197,7 +4204,10 @@ class FitWindow(tk.Tk):
                 pickle.dump(v, f)
     
     def save_state(self):
-        path = tkFileDialog.asksaveasfilename(defaultextension='.gpfit')
+        path = tkFileDialog.asksaveasfilename(
+            defaultextension='.gpfit',
+            filetypes=[('gpfit', '.gpfit')]
+        )
         if path:
             with open(os.path.expanduser(path), 'wb') as outfile:
                 pickle.dump(self.package_state(), outfile, protocol=pickle.HIGHEST_PROTOCOL)
@@ -4209,7 +4219,14 @@ class FitWindow(tk.Tk):
         """Load the state information from the selected file.
         """
         if path is None:
-            path = tkFileDialog.askopenfilename()
+            path = tkFileDialog.askopenfilename(
+                filetypes=[
+                    ('gpfit state files', '*.gpfit'),
+                    ('NetCDF files', ('*.nc', '*.cdf', '*.dat')),
+                    ('Pickle files', '*.pkl'),
+                    ('all files', '*')
+                ]
+            )
         if path:
             root, ext = os.path.splitext(path)
             
