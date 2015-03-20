@@ -4226,7 +4226,7 @@ class FitWindow(tk.Tk):
                 filetypes=[
                     ('all files', '*'),
                     ('gpfit state files', '*.gpfit'),
-                    ('NetCDF files', ('*.cdf', '*.nc', '*.dat')),
+                    ('NetCDF files', ('*.nc', '*.cdf', '*.dat')),
                     ('Pickle files', '*.pkl')
                 ]
             )
