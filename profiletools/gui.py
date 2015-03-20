@@ -4221,10 +4221,10 @@ class FitWindow(tk.Tk):
         if path is None:
             path = tkFileDialog.askopenfilename(
                 filetypes=[
+                    ('all files', '*'),
                     ('gpfit state files', '*.gpfit'),
                     ('NetCDF files', ('*.nc', '*.cdf', '*.dat')),
-                    ('Pickle files', '*.pkl'),
-                    ('all files', '*')
+                    ('Pickle files', '*.pkl')
                 ]
             )
         if path:
