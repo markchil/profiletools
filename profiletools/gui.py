@@ -4206,7 +4206,10 @@ class FitWindow(tk.Tk):
     def save_state(self):
         path = tkFileDialog.asksaveasfilename(
             defaultextension='.gpfit',
-            filetypes=[('gpfit', '.gpfit')]
+            filetypes=[
+                ('all files', '*')
+                ('gpfit', '*.gpfit')
+            ]
         )
         if path:
             with open(os.path.expanduser(path), 'wb') as outfile:
@@ -4223,7 +4226,7 @@ class FitWindow(tk.Tk):
                 filetypes=[
                     ('all files', '*'),
                     ('gpfit state files', '*.gpfit'),
-                    ('NetCDF files', ('*.nc', '*.cdf', '*.dat')),
+                    ('NetCDF files', ('*.cdf', '*.nc', '*.dat')),
                     ('Pickle files', '*.pkl')
                 ]
             )
