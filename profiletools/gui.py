@@ -18,7 +18,7 @@
 
 from __future__ import division
 
-__version__ = '1.1.1'
+__version__ = '1.1.2'
 PROG_NAME = 'gpfit'
 
 import collections
@@ -3552,21 +3552,24 @@ class FitWindow(tk.Tk):
         if X_units:
             X_units = '/' + X_units
         combined_units = y_units + X_units
+        # Use translate instead of strip in case there are buried $'s. This
+        # might be ugly with mixed-math y/X-labels, but will be better than
+        # causing the math to go fubar.
         if combined_units != '1':
             label = "$d%s/d%s$ [%s]" % (
-                self.combined_p.y_label.strip('$'),
-                self.combined_p.X_labels[0].strip('$'),
+                self.combined_p.y_label.translate(None, '$'),
+                self.combined_p.X_labels[0].translate(None, '$'),
                 combined_units
             )
         else:
             label = "$d%s/d%s$" % (
-                self.combined_p.y_label.strip('$'),
+                self.combined_p.y_label.translate(None, '$'),
                 self.combined_p.X_labels[0]
             )
         self.plot_frame.a_grad.set_ylabel(label)
         
         self.plot_frame.a_a_L.set_ylabel(
-            "$a/L_{%s}$" % (self.combined_p.y_label.strip('$'),)
+            "$a/L_{%s}$" % (self.combined_p.y_label.translate(None, '$'),)
         )
         
         self.control_frame.plot_param_frame.update_limits()
