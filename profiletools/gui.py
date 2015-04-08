@@ -18,7 +18,7 @@
 
 from __future__ import division
 
-__version__ = '1.1.2'
+__version__ = '1.1.3'
 PROG_NAME = 'gpfit'
 
 import collections
@@ -940,6 +940,11 @@ FRAME_PARAMS = {'relief': tk.RAISED, 'borderwidth': 2}
 # non-numeric characters, where the decimal point and minus sign are considered
 # numeric.
 LIST_REGEX = r'([-0-9.]+)[^-0-9.]*'
+
+# Regex used to split lists which include ranges up. This will let the list be
+# delimted by any non-numeric characters, where the decimal point and colon
+# are considered numeric.
+RANGE_LIST_REGEX = r'(-?[0-9]+[:-]*-?[0-9]+|-?[0-9]+)[^-0-9:]*'
 
 # Define the JointPrior objects corresponding to each hyperprior:
 HYPERPRIOR_MAP = {
@@ -3583,23 +3588,39 @@ class FitWindow(tk.Tk):
         """
         # Remove points that were flagged by the user:
         s_flagged_idxs = re.findall(
-            LIST_REGEX,
+            RANGE_LIST_REGEX,
             self.control_frame.outlier_frame.specific_box.get()
         )
         flagged_idxs = set()
         for s in s_flagged_idxs:
-            try:
-                i = float(s)
-                if i >= len(self.combined_p.y):
+            if ':' in s or '-' in s:
+                try:
+                    start, stop = re.split('[:-]', s)
+                    start = int(start)
+                    stop = int(stop)
+                    if stop <= start:
+                        raise ValueError("stop <= start")
+                    if start < 0 or stop >= len(self.combined_p.y):
+                        raise ValueError("out of bounds!")
+                    else:
+                        flagged_idxs.update(range(start, stop + 1))
+                except ValueError:
                     self.control_frame.status_frame.add_line(
-                        "Value %d out of range, will be ignored." % (i,)
+                        "Invalid range %s, will be ignored." % (s,)
                     )
-                else:
-                    flagged_idxs.add(i)
-            except ValueError:
-                self.control_frame.status_frame.add_line(
-                    "Invalid index to remove '%s', will be ignored." % (s,)
-                )
+            else:
+                try:
+                    i = int(s)
+                    if i >= len(self.combined_p.y) or i < 0:
+                        self.control_frame.status_frame.add_line(
+                            "Value %d out of range, will be ignored." % (i,)
+                        )
+                    else:
+                        flagged_idxs.add(i)
+                except ValueError:
+                    self.control_frame.status_frame.add_line(
+                        "Invalid index to remove '%s', will be ignored." % (s,)
+                    )
         flagged_idxs = list(flagged_idxs)
         if self.flagged_plt is not None:
             for p in self.flagged_plt:
