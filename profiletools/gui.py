@@ -765,30 +765,6 @@ parser.add_argument(
          "completing the fit."
 )
 parser.add_argument(
-    '--no-save-state',
-    action='store_true',
-    help="By default, pickle and NetCDF files will contain a representation of "
-         "the internal state of the program which can be reloaded at a later "
-         "time. You can set this flag to turn this feature off to make smaller "
-         "files. Note that there is no way to control this through the GUI."
-)
-parser.add_argument(
-    '--cov-in-save-state',
-    action='store_true',
-    help="By default, the state information saved (either into a fit result or "
-         "as a standalone file) will not contain the very large covariance "
-         "matrix. If you wish to have access to this information, pass this flag. "
-         "Note that there is no way to control this through the GUI."
-)
-parser.add_argument(
-    '--sampler-in-save-state',
-    action='store_true',
-    help="By default, the state information saved (either into a fit result or "
-         "as a standalone file) will not contain the very large MCMC sampler "
-         "instance. If you wish to have access to this information, pass this "
-         "flag. Note that there is no way to control this through the GUI."
-)
-parser.add_argument(
     '-x', '--abscissa-name',
     nargs='+',
     help="Name(s) of the variable(s) in the input/output NetCDF/CSV files that "
@@ -820,6 +796,30 @@ parser.add_argument(
          "out, the program will check to see if the first line of your file is "
          "of the form 'metadata LINES', where LINES is the number of lines of "
          "metadata present."
+)
+parser.add_argument(
+    '--no-save-state',
+    action='store_true',
+    help="By default, pickle and NetCDF files will contain a representation of "
+         "the internal state of the program which can be reloaded at a later "
+         "time. You can set this flag to turn this feature off to make smaller "
+         "files. Note that there is no way to control this through the GUI."
+)
+parser.add_argument(
+    '--cov-in-save-state',
+    action='store_true',
+    help="By default, the state information saved (either into a fit result or "
+         "as a standalone file) will not contain the very large covariance "
+         "matrix. If you wish to have access to this information, pass this flag. "
+         "Note that there is no way to control this through the GUI."
+)
+parser.add_argument(
+    '--sampler-in-save-state',
+    action='store_true',
+    help="By default, the state information saved (either into a fit result or "
+         "as a standalone file) will not contain the very large MCMC sampler "
+         "instance. If you wish to have access to this information, pass this "
+         "flag. Note that there is no way to control this through the GUI."
 )
 parser.add_argument(
     '--full-auto',
@@ -2961,7 +2961,9 @@ class FitWindow(tk.Tk):
                 try:
                     self.extreme_flagged = self.combined_p.remove_extreme_changes(
                         thresh=float(self.control_frame.outlier_frame.extreme_thresh_box.get()),
-                        mask_only=True
+                        mask_only=True,
+                        # TEMPORARY TEST!!!
+                        # logic='or'
                     )
                     y_bad_c = self.combined_p.y[self.extreme_flagged]
                     X_bad_c = self.combined_p.X[self.extreme_flagged, :].ravel()
