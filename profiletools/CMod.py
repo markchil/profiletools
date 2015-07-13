@@ -881,16 +881,18 @@ class BivariatePlasmaProfile(Profile):
                         each_t=True
                     )
                     rho_grid = scipy.mean(rho_grid, axis=0)
+                    # Correct for the NaN that shows up sometimes:
+                    rho_grid[0] = 0.0
                 else:
                     if self.abscissa.startswith('sqrt'):
                         rho_grid = scipy.sqrt(vol_grid)
                     else:
                         rho_grid = vol_grid
-            
+                
                 N = npts - 1
                 a = 0
                 b = 1
-            
+                
                 # Use the trapezoid rule:
                 weights = 2 * scipy.ones_like(vol_grid)
                 weights[0] = 1
@@ -979,7 +981,7 @@ class BivariatePlasmaProfile(Profile):
                 if not predict_kwargs.get('use_MCMC', False):
                     self.find_gp_MAP_estimate(**MAP_kwargs)
             rho_grid, weights = self._make_volume_averaging_matrix(rho_grid=grid, npts=npts)
-        
+            
             res = self.gp.predict(
                 rho_grid,
                 output_transform=weights,
