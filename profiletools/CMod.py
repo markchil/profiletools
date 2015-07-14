@@ -1979,7 +1979,7 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
     p.add_data(X, Te, channels={1: channels}, err_y=0.1 * scipy.absolute(Te))
     
     # Remove flagged points:
-    p.remove_points(p.y == 0)
+    p.remove_points(p.y <= 0)
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
     if t_max is not None:
