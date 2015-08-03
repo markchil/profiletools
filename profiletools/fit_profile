@@ -1770,8 +1770,7 @@ class StatusBox(tk.Frame):
             'settings, supports more advanced specification of the priors for '
             'hyperparameters and has new default priors informed by detailed '
             'analysis of synthetic data. {progname} has been left in place so '
-            'that existing analysis codes will continue to function, but should '
-            'not be used for future development.'.format(
+            'that old analysis codes will continue to function.'.format(
                 progname=PROG_NAME,
                 ver=__version__,
                 time=time.strftime(DATE_FORMAT),
