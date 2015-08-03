@@ -1113,22 +1113,19 @@ class Profile(object):
                 SEsym1d   1d SE with symmetry constraint
                 ========= ==============================
             
-            The bounds for each hyperparameter are selected as follows (lower
-            part is for the Gibbs kernel only):
+            The bounds for each hyperparameter are selected as follows:
             
                 ============== =============================================
                 sigma_f        [1/lower_factor, upper_factor]*range(y)
                 l1             [1/lower_factor, upper_factor]*range(X[:, 1])
                 ...            And so on for each length scale
-                -------------- ---------------------------------------------
-                l2 (gibbstanh) [10*eps, upper_factor*range(X[:, 1])]
-                lw             [10*eps, upper_factor*range(X[:, 0]) / 50.0]
-                x0             range(X[:, 0])
                 ============== =============================================
             
             Here, eps is sys.float_info.epsilon. The initial guesses for each
             parameter are set to be halfway between the upper and lower bounds.
-            Default is None (use SE kernel).
+            For the Gibbs kernel, the uniform prior for sigma_f is used, but
+            gamma priors are used for the remaining hyperparameters. Default is
+            None (use SE kernel).
         noise_k : :py:class:`Kernel` instance, optional
             The noise covariance kernel. Default is None (use the default zero
             noise kernel, with all noise being specified by `err_y`).
@@ -1183,7 +1180,10 @@ class Profile(object):
                 param_bounds=bounds,
                 **k_kwargs
             )
-        elif k == 'gibbstanh':
+        elif k == 'gibbstanhlegacy':
+            # This is the old version of gibbstanh, which was found to not work
+            # quite as well, but is needed to keep the legacy version of
+            # fit_profile working.
             # TODO: This is a very hackish way of supporting transformed data. Fix it!
             if self.X_dim != 1:
                 raise ValueError('Gibbs kernel is only supported for univariate data!')
@@ -1207,6 +1207,40 @@ class Profile(object):
             k = gptools.GibbsKernel1dTanh(
                 initial_params=initial,
                 hyperprior=gptools.CoreEdgeJointPrior(bounds),
+                **k_kwargs
+            )
+        elif k == 'gibbstanh':
+            # TODO: This is a very hackish way of supporting transformed data. Fix it!
+            if self.X_dim != 1:
+                raise ValueError('Gibbs kernel is only supported for univariate data!')
+            try:
+                y_range = y.max() - y.min()
+            except (TypeError, ValueError):
+                y_range = 10
+            sigma_f_bounds = (0, upper_factor * y_range)
+            hp = (
+                gptools.UniformJointPrior([sigma_f_bounds]) *
+                gptools.GammaJointPriorAlt(
+                    [1.0, 0.5, 0.0, 1.0],
+                    [0.3, 0.25, 0.1, 0.1]
+                )
+            )
+            initial = [sigma_f_bounds[1] / 2.0, 1.0, 0.5, 0.1, 1.0]
+            # try:
+            #     X_range = X[:, 0].max() - X[:, 0].min()
+            # except TypeError:
+            #     X_range = 1.2
+            # l1_bounds = (0.0, upper_factor * X_range)
+            # l2_bounds = (0.0, l1_bounds[1])
+            # lw_bounds = (l2_bounds[0], l1_bounds[1] / 50.0)
+            # if x0_bounds is None:
+            #     x0_bounds = (X[:, 0].min(), X[:, 0].max())
+            # bounds = [sigma_f_bounds, l1_bounds, l2_bounds, lw_bounds, x0_bounds]
+            # initial = [(b[1] - b[0]) / 2.0 for b in bounds]
+            # initial[2] = initial[2] / 2
+            k = gptools.GibbsKernel1dTanh(
+                initial_params=initial,
+                hyperprior=hp,
                 **k_kwargs
             )
         elif k == 'gibbsdoubletanh':
