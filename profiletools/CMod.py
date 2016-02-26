@@ -507,7 +507,7 @@ class BivariatePlasmaProfile(Profile):
             analysis = MDSplus.Tree('analysis', self.shot)
             Z_lim = analysis.getNode('.limiters.gh_limiter.z').getData().data()
             R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
-        except MDSplus.TreeException:
+        except:
             print("No limiter data, defaulting to R=0.91, Z=0.0!")
             Z_lim = [0.0]
             R_lim = [0.91]
@@ -1239,7 +1239,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     # Remove flagged points:
     try:
         pm = electrons.getNode(r'yag_edgets.data:pointmask').data().flatten()
-    except MDSplus.TreeException:
+    except:
         pm = scipy.ones_like(p.y)
     p.remove_points(
         (pm == 0) |
@@ -1794,7 +1794,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     # Remove flagged points:
     try:
         pm = electrons.getNode(r'yag_edgets.data:pointmask').data().flatten()
-    except MDSplus.TreeException:
+    except:
         pm = scipy.ones_like(p.y)
     p.remove_points(
         (pm == 0) |
