@@ -3469,8 +3469,8 @@ class FitWindow(tk.Tk):
                 cov_w2_vol_avg = res['special_cov'][0, 1]
                 self.mean_peaking = mean_w2 / self.mean_vol_avg
                 self.std_peaking = scipy.sqrt(
-                    std_w2 / self.mean_vol_avg**2 +
-                    self.std_vol_avg * mean_w2**2 / self.mean_vol_avg**4 -
+                    std_w2**2 / self.mean_vol_avg**2 +
+                    self.std_vol_avg**2 * mean_w2**2 / self.mean_vol_avg**4 -
                     cov_w2_vol_avg * mean_w2 / self.mean_vol_avg**3
                 )
                 self.control_frame.status_frame.add_line(

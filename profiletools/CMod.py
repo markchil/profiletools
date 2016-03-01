@@ -1265,7 +1265,7 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
           efit_tree=None, quad_points=20, Z_point=-3.0, theta=scipy.pi / 4,
           thin=1, flag_threshold=1e-3, ds=1e-3):
     """Returns a profile representing electron density from the two color interferometer system.
-
+    
     Parameters
     ----------
     shot : int
