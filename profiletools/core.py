@@ -1225,7 +1225,7 @@ class Profile(object):
                     [0.3, 0.25, 0.1, 0.1]
                 )
             )
-            initial = [sigma_f_bounds[1] / 2.0, 1.0, 0.5, 0.1, 1.0]
+            initial = [sigma_f_bounds[1] / 2.0, 1.0, 0.5, 0.05, 1.0]
             # try:
             #     X_range = X[:, 0].max() - X[:, 0].min()
             # except TypeError:

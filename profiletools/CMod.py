@@ -498,25 +498,16 @@ class BivariatePlasmaProfile(Profile):
             Default is 1.25.
         """
         if self.abscissa in ['RZ', 'Z']:
-            raise ValueError("Limiter constraint is not supported for abscissa "
-                             "'%s'. Convert to a normalized coordinate or Rmid "
-                             "to use this constraint." % (self.abscissa,))
-        # Fail back to a conservative position if the limiter data are not in
-        # the tree:
-        try:
-            analysis = MDSplus.Tree('analysis', self.shot)
-            Z_lim = analysis.getNode('.limiters.gh_limiter.z').getData().data()
-            R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
-        except:
-            print("No limiter data, defaulting to R=0.91, Z=0.0!")
-            Z_lim = [0.0]
-            R_lim = [0.91]
+            raise ValueError(
+                "Limiter constraint is not supported for abscissa '%s'. Convert "
+                "to a normalized coordinate or Rmid to use this constraint." % (self.abscissa,)
+            )
+        R_lim, Z_lim = self.get_limiter_locations()
         if self.X_dim == 1:
             t_EFIT = self._get_efit_times_to_average()
             rho_lim = scipy.mean(
-                self.efit_tree.rz2rho(
-                    self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True
-                ), axis=0
+                self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True),
+                axis=0
             )
             xa = rho_lim.min()
             print("limiter location=%g" % (xa,))
@@ -528,7 +519,7 @@ class BivariatePlasmaProfile(Profile):
             if times is None:
                 times = scipy.unique(scipy.asarray(self.X[:, 0]).ravel())
             rho_lim = self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, times, each_t=True)
-            xa = rho_lim.max(axis=1)
+            xa = rho_lim.min(axis=1)
             x_pts = scipy.asarray([scipy.linspace(x, x * expansion, n_pts) for x in xa]).flatten()
             times = scipy.tile(times, n_pts)
             X = scipy.hstack((scipy.atleast_2d(times).T, scipy.atleast_2d(x_pts).T))
@@ -537,10 +528,75 @@ class BivariatePlasmaProfile(Profile):
             self.gp.add_data(X, y, err_y=err_y, n=0)
             self.gp.add_data(X, y, err_y=err_dy, n=n)
         else:
-            raise ValueError("Limiter constraint is not supported for X_dim=%d, "
-                             "abscissa '%s'. Convert to a normalized "
-                             "coordinate or Rmid to use this constraint."
-                             % (self.X_dim, self.abscissa,))
+            raise ValueError(
+                "Limiter constraint is not supported for X_dim=%d, abscissa "
+                "'%s'. Convert to a normalized coordinate or Rmid to use this "
+                "constraint." % (self.X_dim, self.abscissa,))
+    
+    def remove_quadrature_points_outside_of_limiter(self):
+        """Remove any of the quadrature points which lie outside of the limiter.
+        
+        This is accomplished by setting their weights to zero. When
+        :py:meth:`create_gp` is called, it will call
+        :py:meth:`GaussianProcess.condense_duplicates` which will remove any
+        points for which all of the weights are zero.
+        
+        This only affects the transformed quantities in `self.transformed`.
+        """
+        if self.abscissa in ['RZ', 'Z']:
+            raise ValueError(
+                "Removal of quadrature points outside of the limiter is not "
+                "supported for abscissa '%s'. Convert to a normalized coordinate "
+                "or Rmid to use this method." % (self.abscissa,)
+            )
+        R_lim, Z_lim = self.get_limiter_locations()
+        if self.X_dim == 1:
+            # In this case, there is a unique set of times, and we can just find
+            # one unique limiter location:
+            t_EFIT = self._get_efit_times_to_average()
+            rho_lim = scipy.mean(
+                self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True),
+                axis=0
+            )
+            xa = rho_lim.min()
+            for t in self.transformed:
+                t.T[t.X[:, :, 0] > xa] = 0.0
+        elif self.X_dim == 2:
+            # This case is harder. For each transformed variable, we must find
+            # the limiter location at each time value present.
+            for t in self.transformed:
+                times = scipy.unique(scipy.asarray(t.X[:, :, 0]).ravel())
+                rho_lim = self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, times, each_t=True)
+                xa = rho_lim.min(axis=1)
+                for t_val, xa_val in zip(times, xa):
+                    t.T[(t.X[:, :, 0] == t_val) & (t.X[:, :, 1] > xa_val)] = 0.0
+        else:
+            raise ValueError(
+                "Removal of quadrature points outside of the limiter is not "
+                "supported for X_dim=%d, abscissa '%s'. Convert to a normalized "
+                "coordinate or Rmid to use this method." % (self.X_dim, self.abscissa)
+            )
+    
+    def get_limiter_locations(self):
+        """Retrieve the location of the GH limiter from the tree.
+        
+        If the data are not there (they are missing for some old shots), use
+        R=0.91m, Z=0.0m.
+        """
+        # Fail back to a conservative position if the limiter data are not in
+        # the tree:
+        try:
+            analysis = MDSplus.Tree('analysis', self.shot)
+            Z_lim = analysis.getNode('.limiters.gh_limiter.z').getData().data()
+            R_lim = analysis.getNode('.limiters.gh_limiter.r').getData().data()
+        except:
+            warnings.warn(
+                "No limiter data, defaulting to R=0.91, Z=0.0!",
+                RuntimeWarning
+            )
+            Z_lim = [0.0]
+            R_lim = [0.91]
+        return R_lim, Z_lim
     
     def create_gp(self, constrain_slope_on_axis=True, constrain_at_limiter=True,
                   axis_constraint_kwargs={}, limiter_constraint_kwargs={}, **kwargs):
@@ -1403,7 +1459,7 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
                     ne / 1e20,
                     err_y=0.1 * ne / 1e20,
                     T=T[good, i, :],
-                    y_label='nl_%02d' % (i + 1,),
+                    y_label='$nL_{%02d}$' % (i + 1,),
                     y_units='$10^{20}$ m$^{-2}$'
                 )
             )
@@ -1494,7 +1550,7 @@ def neTCI_old(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                     ne / 1e20,
                     err_y=0.1 * ne / 1e20,
                     T=T,
-                    y_label='nl_%02d' % (i + 1,),
+                    y_label='$nL_{%02d}$' % (i + 1,),
                     y_units='$10^{20}$ m$^{-2}$'
                 )
             )
