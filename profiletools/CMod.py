@@ -42,14 +42,14 @@ try:
 except ImportError:
     warnings.warn("Module TRIPPy could not be loaded!", RuntimeWarning)
 
-_X_label_mapping = {'psinorm': r'$\psi_n$',
-                    'phinorm': r'$\phi_n$',
-                    'volnorm': '$V_n$',
-                    'Rmid': '$R_{mid}$',
+_X_label_mapping = {'psinorm': r'$\psi_{\mathrm{n}}$',
+                    'phinorm': r'$\phi_{\mathrm{n}}$',
+                    'volnorm': r'$V_{\mathrm{n}}$',
+                    'Rmid': r'$R_{\mathrm{mid}}$',
                     'r/a': '$r/a$',
-                    'sqrtpsinorm': r'$\sqrt{\psi_n}$',
-                    'sqrtphinorm': r'$\sqrt{\phi_n}$',
-                    'sqrtvolnorm': r'$\sqrt{V_n}$',
+                    'sqrtpsinorm': r'$\sqrt{\psi_{\mathrm{n}}}$',
+                    'sqrtphinorm': r'$\sqrt{\phi_{\mathrm{n}}}$',
+                    'sqrtvolnorm': r'$\sqrt{V_{\mathrm{n}}}$',
                     'sqrtr/a': r'$\sqrt{r/a}$'}
 _abscissa_mapping = {y:x for x, y in _X_label_mapping.iteritems()}
 _X_unit_mapping = {'psinorm': '',
@@ -686,8 +686,9 @@ class BivariatePlasmaProfile(Profile):
         compute_2 : bool, optional
             If True, the second derivative and some derived quantities will be
             computed and added to the output structure (if `return_prediction`
-            is True). Note that the derived quantities are only valid if the
-            abscissa is r/a. Default is False (don't compute second derivative).
+            is True). You should almost always have r/a for your abscissa when
+            using this: the expressions for other coordinate systems are not as
+            well-vetted. Default is False (don't compute second derivative).
         **predict_kwargs : optional parameters
             All other parameters are passed to the Gaussian process'
             :py:meth:`predict` method.
@@ -707,11 +708,15 @@ class BivariatePlasmaProfile(Profile):
                 scipy.zeros_like(X), scipy.ones_like(X[special_X_vals:])
             ))
             if compute_2:
-                n = scipy.concatenate((n, 2*scipy.ones_like(X[special_X_vals:])))
-            out = self.gp.predict(XX, n=n, full_output=True,
-                                  **predict_kwargs)
+                n = scipy.concatenate((n, 2 * scipy.ones_like(X[special_X_vals:])))
+            out = self.gp.predict(XX, n=n, full_output=True, **predict_kwargs)
             mean = out['mean']
             cov = out['cov']
+            if predict_kwargs.get('return_mean_func', False) and self.gp.mu is not None:
+                mean_func = out['mean_func']
+                std_func = out['std_func']
+                mean_without_func = out['mean_without_func']
+                std_without_func = out['std_without_func']
             
             # Ditch the special values:
             special_mean = mean[:special_vals]
@@ -720,15 +725,30 @@ class BivariatePlasmaProfile(Profile):
             
             cov = cov[special_vals:, special_vals:]
             mean = mean[special_vals:]
+            if predict_kwargs.get('return_mean_func', False) and self.gp.mu is not None:
+                mean_func = mean_func[special_vals:]
+                std_func = std_func[special_vals:]
+                mean_without_func = mean_without_func[special_vals:]
+                std_without_func = std_without_func[special_vals:]
             
             var = scipy.diagonal(cov)
             mean_val = mean[:len(X)]
             var_val = var[:len(X)]
-            mean_grad = mean[len(X):2*len(X)]
-            var_grad = var[len(X):2*len(X)]
+            mean_grad = mean[len(X):2 * len(X)]
+            var_grad = var[len(X):2 * len(X)]
+            if predict_kwargs.get('return_mean_func', False) and self.gp.mu is not None:
+                mean_func_val = mean_func[:len(X)]
+                std_func_val = std_func[:len(X)]
+                mean_func_grad = mean_func[len(X):]
+                std_func_grad = std_func[len(X):]
+                
+                mean_without_func_val = mean_without_func[:len(X)]
+                std_without_func_val = std_without_func[:len(X)]
+                mean_without_func_grad = mean_without_func[len(X):]
+                std_without_func_grad = std_without_func[len(X):]
             if compute_2:
-                mean_2 = mean[2*len(X):]
-                var_2 = var[2*len(X):]
+                mean_2 = mean[2 * len(X):]
+                var_2 = var[2 * len(X):]
             i = range(0, len(X))
             j = range(len(X), 2 * len(X))
             cov_val_grad = scipy.asarray(cov[i, j]).flatten()
@@ -741,89 +761,122 @@ class BivariatePlasmaProfile(Profile):
             # Get geometry from EFIT:
             t_efit = self.efit_tree.getTimeBase()
             ok_idxs = self._get_efit_times_to_average(return_idxs=True)
-            a = self.efit_tree.getAOut()[ok_idxs]
-            var_a = scipy.var(a, ddof=1)
-            if scipy.isnan(var_a):
-                var_a = 0
-            mean_a = scipy.mean(a)
             
             # Get correction factor for converting the abscissa back to Rmid:
             if self.abscissa == 'Rmid':
-                mean_dX_dRmid = scipy.ones_like(X)
-                var_dX_dRmid = scipy.zeros_like(X)
+                a = self.efit_tree.getAOut()[ok_idxs]
+                var_a = scipy.var(a, ddof=1)
+                if scipy.isnan(var_a):
+                    var_a = 0
+                mean_a = scipy.mean(a)
+                
+                mean_dX_droa = mean_a
+                var_dX_droa = var_a
+                
+                if compute_2:
+                    mean_dX_droa_2 = 0.0
+                    var_dX_droa_2 = 0.0
+                    cov_dX_droa_2 = 0.0
             elif self.abscissa == 'r/a':
-                mean_dX_dRmid = scipy.mean(1.0 / a) * scipy.ones_like(X)
-                var_dX_dRmid = scipy.var(1.0 / a, ddof=1) * scipy.ones_like(X)
-                var_dX_dRmid[scipy.isnan(var_dX_dRmid)] = 0
+                mean_dX_droa = 1.0
+                var_dX_droa = 0.0
+                
+                if compute_2:
+                    mean_dX_droa_2 = 0.0
+                    var_dX_droa_2 = 0.0
+                    cov_dX_droa_2 = 0.0
             else:
                 # Code taken from core.py of eqtools, modified to use
-                # InterpolatedUnivariateSpline so I have direct access to derivatives:
-                dX_dRmid = scipy.zeros((len(X), len(ok_idxs)))
+                # InterpolatedUnivariateSpline to get access to derivatives:
+                dX_droa = scipy.zeros((len(X), len(ok_idxs)))
+                if compute_2:
+                    dX_droa_2 = scipy.zeros((len(X), len(ok_idxs)))
                 # Loop over time indices:
                 for idx, k in zip(ok_idxs, range(0, len(ok_idxs))):
                     resample_factor = 3
-                    R_grid = scipy.linspace(
-                        self.efit_tree.getMagR()[idx],
-                        self.efit_tree.getRGrid()[-1],
-                        resample_factor * len(self.efit_tree.getRGrid())
-                    )
+                    roa_grid = scipy.linspace(0, 2, resample_factor * len(self.efit_tree.getRGrid()))
                     
-                    X_on_grid = self.efit_tree.rz2rho(
-                        self.abscissa,
-                        R_grid,
-                        self.efit_tree.getMagZ()[idx] * scipy.ones(R_grid.shape),
-                        t_efit[idx]
-                    )
+                    X_on_grid = self.efit_tree.roa2rho(self.abscissa, roa_grid, t_efit[idx])
+                    # Rmid is handled specially up here, so we can filter the
+                    # origin out properly:
+                    X_on_grid[roa_grid == 0.0] = 0.0
                     
                     good_idxs = ~scipy.isnan(X_on_grid)
                     X_on_grid = X_on_grid[good_idxs]
-                    R_grid = R_grid[good_idxs]
+                    roa_grid = roa_grid[good_idxs]
                     
                     spline = scipy.interpolate.InterpolatedUnivariateSpline(
-                        X_on_grid, R_grid, k=3
+                        roa_grid, X_on_grid, k=3
                     )
-                    dX_dRmid[:, k] = 1.0 / spline(X, nu=1)
+                    roa_X = self.efit_tree.rho2rho(self.abscissa, 'r/a', X, t_efit[idx])
+                    roa_X[X == 0.0] = 0.0
+                    dX_droa[:, k] = spline(roa_X, nu=1)
+                    
+                    if compute_2:
+                        # dX_droa_2[:, k] = -spline(X, nu=2) * (dX_droa[:, k])**3.0
+                        dX_droa_2[:, k] = spline(roa_X, nu=2)
                 
-                mean_dX_dRmid = scipy.mean(dX_dRmid, axis=1)
-                var_dX_dRmid = scipy.var(dX_dRmid, ddof=1, axis=1)
-                var_dX_dRmid[scipy.isnan(var_dX_dRmid)] = 0
+                mean_dX_droa = scipy.mean(dX_droa, axis=1)
+                var_dX_droa = scipy.var(dX_droa, ddof=predict_kwargs.get('ddof', 1), axis=1)
+                var_dX_droa[scipy.isnan(var_dX_droa)] = 0.0
+                
+                if compute_2:
+                    mean_dX_droa_2 = scipy.mean(dX_droa_2, axis=1)
+                    var_dX_droa_2 = scipy.var(dX_droa_2, ddof=predict_kwargs.get('ddof', 1), axis=1)
+                    var_dX_droa_2[scipy.isnan(var_dX_droa_2)] = 0.0
+                    cov_dX_droa_2 = scipy.cov(dX_droa, dX_droa_2, ddof=predict_kwargs.get('ddof', 1))[i, j]
             
             if predict_kwargs.get('full_MC', False):
                 # TODO: Doesn't include uncertainty in EFIT quantities!
                 # Use samples:
-                val_samps = out['samp'][special_vals:len(X)+special_vals]
-                grad_samps = out['samp'][len(X)+special_vals:2*len(X)+special_vals]
-                g2_samps = out['samp'][2*len(X)+special_vals:]
-                dX_dRmid = scipy.tile(mean_dX_dRmid, (val_samps.shape[1], 1)).T
-                a_L_samps = -mean_a * grad_samps * dX_dRmid / val_samps
+                val_samps = out['samp'][special_vals:len(X) + special_vals]
+                grad_samps = out['samp'][len(X) + special_vals:2 * len(X) + special_vals]
+                if scipy.ndim(mean_dX_droa) > 0:
+                    dX_droa = scipy.tile(mean_dX_droa, (val_samps.shape[1], 1)).T
+                a_L_samps = -grad_samps * dX_droa / val_samps
                 mean_a_L = scipy.mean(a_L_samps, axis=1)
                 std_a_L = scipy.std(a_L_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
                 if compute_2:
-                    # TODO: Extend for coordinates other than r/a!
-                    a_L_grad_samps = g2_samps / grad_samps
+                    g2_samps = out['samp'][2 * len(X) + special_vals:]
+                    if scipy.ndim(mean_dX_droa_2) > 0:
+                        dX_droa_2 = scipy.tile(mean_dX_droa_2, (val_samps.shape[1], 1)).T
+                    a_L_grad_samps = g2_samps * dX_droa / grad_samps + dX_droa_2 / dX_droa
                     mean_a_L_grad = scipy.mean(a_L_grad_samps, axis=1)
                     std_a_L_grad = scipy.std(a_L_grad_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
-                    a2_2_samps = g2_samps / val_samps
+                    a2_2_samps = (g2_samps * dX_droa**2.0 + grad_samps * dX_droa_2) / val_samps
                     mean_a2_2 = scipy.mean(a2_2_samps, axis=1)
                     std_a2_2 = scipy.std(a2_2_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
             else:
                 # Compute using error propagation:
-                mean_a_L = -mean_a * mean_grad * mean_dX_dRmid / mean_val
-                # TODO: This needs to change for X=r/a!
+                mean_a_L = -mean_grad * mean_dX_droa / mean_val
                 std_a_L = scipy.sqrt(
-                    var_a * (mean_grad * mean_dX_dRmid / mean_val)**2 +
-                    var_val * (-mean_a * mean_grad * mean_dX_dRmid / mean_val**2)**2 +
-                    var_grad * (mean_a * mean_dX_dRmid / mean_val)**2 +
-                    var_dX_dRmid * (mean_a * mean_grad / mean_val)**2 +
-                    cov_val_grad * ((-mean_a * mean_grad * mean_dX_dRmid / mean_val**2) *
-                                    (mean_a * mean_dX_dRmid / mean_val))
+                    var_val * (mean_grad * mean_dX_droa / mean_val**2.0)**2.0 +
+                    var_grad * (mean_dX_droa / mean_val)**2.0 +
+                    var_dX_droa * (mean_grad / mean_val)**2 -
+                    2.0 * cov_val_grad * (mean_grad * mean_dX_droa**2.0 / mean_val**3.0)
                 )
                 if compute_2:
-                    # TODO: Extend for coordinates other than r/a!
-                    mean_a_L_grad = mean_2 / mean_grad
-                    std_a_L_grad = scipy.sqrt(var_2 / mean_grad**2 + var_grad * mean_2**2 / mean_grad**4)
-                    mean_a2_2 = mean_2 / mean_val
-                    std_a2_2 = scipy.sqrt(var_2 / mean_val**2 + var_val * mean_2**2 / mean_val**4)
+                    mean_a_L_grad = mean_2 * mean_dX_droa / mean_grad + mean_dX_droa_2 / mean_dX_droa
+                    std_a_L_grad = scipy.sqrt(
+                        var_grad * (mean_2 * mean_dX_droa / mean_grad**2.0)**2.0 +
+                        var_2 * (mean_dX_droa / mean_grad)**2.0 -
+                        2.0 * cov_grad_2 * mean_2 * mean_dX_droa**2.0 / mean_grad**3.0 +
+                        var_dX_droa * (mean_2 / mean_grad - mean_dX_droa_2 / mean_dX_droa**2.0)**2.0 +
+                        var_dX_droa_2 / mean_dX_droa**2.0 +
+                        2.0 * cov_dX_droa_2 * (mean_2 / mean_grad - mean_dX_droa_2 / mean_dX_droa**2.0) / mean_dX_droa
+                    )
+                    mean_a2_2 = (mean_2 * mean_dX_droa**2.0 + mean_grad * mean_dX_droa_2) / mean_val
+                    std_a2_2 = scipy.sqrt(
+                        var_val * (mean_2 * mean_dX_droa**2.0 + mean_grad * mean_dX_droa_2)**2 / mean_val**4 +
+                        var_2 * (mean_dX_droa**2.0 / mean_val)**2.0 -
+                        2.0 * cov_val_2 * mean_dX_droa**2.0 / mean_val**3.0 * (
+                            mean_2 * mean_dX_droa**2.0 + mean_grad * mean_dX_droa_2
+                        ) +
+                        4.0 * var_dX_droa * (mean_2 * mean_dX_droa / mean_val)**2.0 +
+                        var_dX_droa_2 * (mean_grad / mean_val)**2.0 +
+                        4.0 * cov_dX_droa_2 * mean_grad * mean_2 * mean_dX_droa / mean_val**2.0
+                    )
+            
             # Plot result:
             if plot:
                 ax = plot_kwargs.pop('ax', None)
@@ -861,6 +914,19 @@ class BivariatePlasmaProfile(Profile):
                       'special_mean': special_mean,
                       'special_cov': special_cov
                      }
+            if predict_kwargs.get('return_mean_func', False) and self.gp.mu is not None:
+                retval['mean_func_val'] = mean_func_val
+                retval['mean_func_grad'] = mean_func_grad
+                retval['std_func_val'] = std_func_val
+                retval['std_func_grad'] = std_func_grad
+                
+                retval['mean_without_func_val'] = mean_without_func_val
+                retval['mean_without_func_grad'] = mean_without_func_grad
+                retval['std_without_func_val'] = std_without_func_val
+                retval['std_without_func_grad'] = std_without_func_grad
+                
+                retval['cov_func'] = out['cov_func']
+                retval['cov_without_func'] = out['cov_without_func']
             if compute_2:
                 retval['mean_2'] = mean_2
                 retval['std_2'] = scipy.sqrt(var_2)
@@ -1108,7 +1174,7 @@ class BivariatePlasmaProfile(Profile):
             else:
                 times = self._get_efit_times_to_average()
                 
-                core_loc = self.efit_tree.rho2rho('psinorm', self.abscissa, times, each_t=True)
+                core_loc = self.efit_tree.psinorm2rho(self.abscissa, 0.2, times, each_t=True)
                 core_loc = scipy.mean(core_loc)
             
             rho_grid = scipy.append(rho_grid, core_loc)
@@ -1127,9 +1193,11 @@ class BivariatePlasmaProfile(Profile):
                 mean_res = res[0]
                 cov_res = res[1]
                 mean = mean_res[1] / mean_res[0]
-                std = scipy.sqrt(cov_res[1, 1] / mean_res[0]**2 +
-                                 cov_res[0, 0] * mean_res[1]**2 / mean_res[0]**4 -
-                                 cov_res[0, 1] * mean_res[1] / mean_res[0]**3)
+                std = scipy.sqrt(
+                    cov_res[1, 1] / mean_res[0]**2 +
+                    cov_res[0, 0] * mean_res[1]**2 / mean_res[0]**4 -
+                    2.0 * cov_res[0, 1] * mean_res[1] / mean_res[0]**3
+                )
                 return (mean, std)
             else:
                 return res[1] / res[0]
@@ -1165,7 +1233,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='$10^{20}$ m$^{-3}$',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label='$n_e$, CTS')
+                               y_label=r'$n_{\mathrm{e}}$, CTS')
     
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1177,8 +1245,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     dev_ne_TS = electrons.getNode(r'yag_new.results.profiles:ne_err').data() / 1e20
     
     Z_CTS = electrons.getNode(r'yag_new.results.profiles:z_sorted').data()
-    R_CTS = (electrons.getNode(r'yag.results.param:r').data() *
-             scipy.ones_like(Z_CTS))
+    R_CTS = (electrons.getNode(r'yag.results.param:r').data() * scipy.ones_like(Z_CTS))
     channels = range(0, len(Z_CTS))
     
     t_grid, Z_grid = scipy.meshgrid(t_ne_TS, Z_CTS)
@@ -1255,7 +1322,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='$10^{20}$ m$^{-3}$',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label='$n_e$, ETS')
+                               y_label=r'$n_{\mathrm{e}}$, ETS')
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1389,7 +1456,7 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
         X_units=['s', _X_unit_mapping[abscissa]],
         y_units='$10^{20}$ m$^{-3}$',
         X_labels=['$t$', _X_label_mapping[abscissa]],
-        y_label='$n_e$, TCI',
+        y_label=r'$n_{\mathrm{e}}$, TCI',
         weightable=False
     )
     
@@ -1502,7 +1569,7 @@ def neTCI_old(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         X_units=['s', 'm', 'm'],
         y_units='$10^{20}$ m$^{-3}$',
         X_labels=['$t$','$R$', '$Z$'],
-        y_label='$n_e$, TCI',
+        y_label=r'$n_{\mathrm{e}}$, TCI',
         weightable=False
     )
     
@@ -1591,8 +1658,8 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='$10^{20}$ m$^{-3}$',
-        X_labels=['$t$', '$R_{mid}$'],
-        y_label='$n_e$, reflect',
+        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        y_label=r'$n_{\mathrm{e}}$, reflect',
         weightable=False
     )
     if rf is None:
@@ -1726,7 +1793,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='keV',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label='$T_e$, CTS')
+                               y_label=r'$T_{\mathrm{e}}$, CTS')
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1810,7 +1877,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='keV',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label='$T_e$, ETS')
+                               y_label=r'$T_{\mathrm{e}}$, ETS')
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1860,7 +1927,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         (p.err_y == 1.0) |
         (p.err_y == 0.5) |
         ((p.y == 0.0) & remove_zeros) |
-        ((p.y == 0) & (p.err_y == 0.029999999329447746))  # This seems to be an old way of flagging. Could be risky...
+        ((p.y == 0.0) & (p.err_y == 0.029999999329447746))  # This seems to be an old way of flagging. Could be risky...
     )
     
     if t_min is not None:
@@ -1907,8 +1974,8 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', '$R_{mid}$'],
-        y_label='$T_e$, FRCECE (%s)' % (rate,),
+        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        y_label=r'$T_{\mathrm{e}}$, FRCECE (%s)' % (rate,),
         weightable=False
     )
 
@@ -1993,8 +2060,8 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', '$R_{mid}$'],
-        y_label='$T_e$, GPC2',
+        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        y_label=r'$T_{\mathrm{e}}$, GPC2',
         weightable=False
     )
     if electrons is None:
@@ -2079,8 +2146,8 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', '$R_{mid}$'],
-        y_label='$T_e$, GPC',
+        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        y_label=r'$T_{\mathrm{e}}$, GPC',
         weightable=False
     )
     if electrons is None:
@@ -2164,8 +2231,8 @@ def TeMic(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', '$R_{mid}$'],
-        y_label='$T_e$, Mic',
+        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        y_label=r'$T_{\mathrm{e}}$, Mic',
         weightable=False
     )
     
@@ -2326,8 +2393,8 @@ def emissAX(shot, system, abscissa='Rmid', t_min=None, t_max=None, tree=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='MW/m$^3$',
-        X_labels=['$t$', '$R_{mid}$'],
-        y_label='$\epsilon$, %s' % (system.upper())
+        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        y_label=r'$\epsilon$, %s' % (system.upper())
     )
     if tree is None:
         tree = MDSplus.Tree('cmod', shot)

@@ -67,7 +67,8 @@ def average_points(X, y, err_X, err_y, T=None, ddof=1, robust=False,
         * 'of mean' computes the uncertainty in the mean using error propagation
           with the given uncertainties.
         * 'of mean sample' computes the uncertainty in the mean using error
-          propagation with the sample variance.
+          propagation with the sample variance. Should not be used with weighted
+          estimators!
         
         Default is 'sample' (use sample variance).
     X_method : {'sample', 'RMS', 'total', 'of mean', 'of mean sample'}, optional
@@ -122,7 +123,7 @@ def average_points(X, y, err_X, err_y, T=None, ddof=1, robust=False,
             )
         elif y_method == 'of mean':
             if weighted:
-                err_y = scipy.sqrt((weights**2 * err_y**2).sum()) / weights.sum()
+                err_y = (weights.sum())**(-0.5)
             else:
                 err_y = scipy.sqrt((err_y**2).sum()) / len(y)
         elif y_method == 'of mean sample':
@@ -173,7 +174,7 @@ def average_points(X, y, err_X, err_y, T=None, ddof=1, robust=False,
         elif y_method == 'of mean':
             # TODO: This is a very sketchy approximation!
             if weighted:
-                err_y = scipy.sqrt((weights**2 * err_y**2).sum()) / weights.sum()
+                err_y = (weights.sum())**(-0.5)
             else:
                 err_y = scipy.sqrt((err_y**2).sum()) / len(y)
         elif y_method == 'of mean sample':
@@ -447,6 +448,16 @@ class Profile(object):
     
     Attributes
     ----------
+    y : :py:class:`Array`, (`M`,)
+        The `M` dependent variables.
+    X : :py:class:`Matrix`, (`M`, `X_dim`)
+        The `M` independent variables.
+    err_y : :py:class:`Array`, (`M`,)
+        The uncertainty in the `M` dependent variables.
+    err_X : :py:class:`Matrix`, (`M`, `X_dim`)
+        The uncertainties in each dimension of the `M` independent variables.
+    channels : :py:class:`Matrix`, (`M`, `X_dim`)
+        The logical groups of points into channels along each of the independent variables.
     X_dim : positive int
         The number of dimensions of the independent variable.
     X_units : list of str, (X_dim,)
@@ -457,17 +468,12 @@ class Profile(object):
         Descriptive labels for each of the independent variables.
     y_label : str
         Descriptive label for the dependent variable.
-    y : :py:class:`Array`, (`M`,)
-        The `M` dependent variables.
-    X : :py:class:`Matrix`, (`M`, `X_dim`)
-        The `M` independent variables.
-    err_y : :py:class:`Array`, (`M`,)
-        The uncertainty in the `M` dependent variables.
-    err_X : :py:class:`Matrix`, (`M`, `X_dim`)
-        The uncertainties in each dimension of the `M` independent variables.
-    channels : :py:class:`Matrix`, (`M`, `X_dim`)
-        The logical groups of points into channels along each of the independent
-        variables.
+    weightable : bool
+        Whether or not weighted estimators can be used.
+    transformed : list of :py:class:`Channel`
+        The transformed quantities associated with the :py:class:`Profile` instance.
+    gp : :py:class:`gptools.GaussianProcess` instance
+        The Gaussian process with the local and transformed data included.
     """
     def __init__(self, X_dim=1, X_units=None, y_units='', X_labels=None, y_label='',
                  weightable=True):
@@ -1934,7 +1940,7 @@ def varw(x, weights=None, axis=None, ddof=1, mean=None):
         M = leading_axis_product(weights, (x - mean)**2).sum(axis=axis)
         if ddof:
             res = V1 / (V1**2 - (weights**2).sum(axis=axis)) * M
-            # Put nan where the result blow up to be consistent with scipy:
+            # Put nan where the result blows up to be consistent with scipy:
             try:
                 res[scipy.isinf(res)] = scipy.nan
             except TypeError:

@@ -3471,7 +3471,7 @@ class FitWindow(tk.Tk):
                 self.std_peaking = scipy.sqrt(
                     std_w2**2 / self.mean_vol_avg**2 +
                     self.std_vol_avg**2 * mean_w2**2 / self.mean_vol_avg**4 -
-                    cov_w2_vol_avg * mean_w2 / self.mean_vol_avg**3
+                    2.0 * cov_w2_vol_avg * mean_w2 / self.mean_vol_avg**3
                 )
                 self.control_frame.status_frame.add_line(
                     u"Peaking is %g\u00b1%g"
