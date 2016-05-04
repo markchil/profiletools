@@ -42,14 +42,14 @@ try:
 except ImportError:
     warnings.warn("Module TRIPPy could not be loaded!", RuntimeWarning)
 
-_X_label_mapping = {'psinorm': r'$\psi_{\mathrm{n}}$',
-                    'phinorm': r'$\phi_{\mathrm{n}}$',
-                    'volnorm': r'$V_{\mathrm{n}}$',
-                    'Rmid': r'$R_{\mathrm{mid}}$',
+_X_label_mapping = {'psinorm': r'$\psi_n$',
+                    'phinorm': r'$\phi_n$',
+                    'volnorm': r'$V_n$',
+                    'Rmid': r'$R_{mid}$',
                     'r/a': '$r/a$',
-                    'sqrtpsinorm': r'$\sqrt{\psi_{\mathrm{n}}}$',
-                    'sqrtphinorm': r'$\sqrt{\phi_{\mathrm{n}}}$',
-                    'sqrtvolnorm': r'$\sqrt{V_{\mathrm{n}}}$',
+                    'sqrtpsinorm': r'$\sqrt{\psi_n}$',
+                    'sqrtphinorm': r'$\sqrt{\phi_n}$',
+                    'sqrtvolnorm': r'$\sqrt{V_n}$',
                     'sqrtr/a': r'$\sqrt{r/a}$'}
 _abscissa_mapping = {y:x for x, y in _X_label_mapping.iteritems()}
 _X_unit_mapping = {'psinorm': '',
@@ -1233,7 +1233,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='$10^{20}$ m$^{-3}$',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label=r'$n_{\mathrm{e}}$, CTS')
+                               y_label=r'$n_e$, CTS')
     
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1322,7 +1322,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='$10^{20}$ m$^{-3}$',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label=r'$n_{\mathrm{e}}$, ETS')
+                               y_label=r'$n_e$, ETS')
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1456,7 +1456,7 @@ def neTCI(shot, abscissa='r/a', t_min=None, t_max=None, electrons=None,
         X_units=['s', _X_unit_mapping[abscissa]],
         y_units='$10^{20}$ m$^{-3}$',
         X_labels=['$t$', _X_label_mapping[abscissa]],
-        y_label=r'$n_{\mathrm{e}}$, TCI',
+        y_label=r'$n_e$, TCI',
         weightable=False
     )
     
@@ -1569,7 +1569,7 @@ def neTCI_old(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         X_units=['s', 'm', 'm'],
         y_units='$10^{20}$ m$^{-3}$',
         X_labels=['$t$','$R$', '$Z$'],
-        y_label=r'$n_{\mathrm{e}}$, TCI',
+        y_label=r'$n_e$, TCI',
         weightable=False
     )
     
@@ -1658,8 +1658,8 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='$10^{20}$ m$^{-3}$',
-        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
-        y_label=r'$n_{\mathrm{e}}$, reflect',
+        X_labels=['$t$', r'$R_{mid}$'],
+        y_label=r'$n_e$, reflect',
         weightable=False
     )
     if rf is None:
@@ -1793,7 +1793,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='keV',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label=r'$T_{\mathrm{e}}$, CTS')
+                               y_label=r'$T_e$, CTS')
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1877,7 +1877,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
                                X_units=['s', 'm', 'm'],
                                y_units='keV',
                                X_labels=['$t$', '$R$', '$Z$'],
-                               y_label=r'$T_{\mathrm{e}}$, ETS')
+                               y_label=r'$T_e$, ETS')
 
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
@@ -1974,8 +1974,8 @@ def TeFRCECE(shot, rate='s', cutoff=0.15, abscissa='Rmid', t_min=None, t_max=Non
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
-        y_label=r'$T_{\mathrm{e}}$, FRCECE (%s)' % (rate,),
+        X_labels=['$t$', r'$R_{mid}$'],
+        y_label=r'$T_e$, FRCECE (%s)' % (rate,),
         weightable=False
     )
 
@@ -2060,8 +2060,8 @@ def TeGPC2(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
-        y_label=r'$T_{\mathrm{e}}$, GPC2',
+        X_labels=['$t$', r'$R_{mid}$'],
+        y_label=r'$T_e$, GPC2',
         weightable=False
     )
     if electrons is None:
@@ -2146,8 +2146,8 @@ def TeGPC(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None, electrons=
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
-        y_label=r'$T_{\mathrm{e}}$, GPC',
+        X_labels=['$t$', r'$R_{mid}$'],
+        y_label=r'$T_e$, GPC',
         weightable=False
     )
     if electrons is None:
@@ -2231,8 +2231,8 @@ def TeMic(shot, cutoff=0.15, abscissa='Rmid', t_min=None, t_max=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='keV',
-        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
-        y_label=r'$T_{\mathrm{e}}$, Mic',
+        X_labels=['$t$', r'$R_{mid}$'],
+        y_label=r'$T_e$, Mic',
         weightable=False
     )
     
@@ -2393,7 +2393,7 @@ def emissAX(shot, system, abscissa='Rmid', t_min=None, t_max=None, tree=None,
         X_dim=2,
         X_units=['s', 'm'],
         y_units='MW/m$^3$',
-        X_labels=['$t$', r'$R_{\mathrm{mid}}$'],
+        X_labels=['$t$', r'$R_{mid}$'],
         y_label=r'$\epsilon$, %s' % (system.upper())
     )
     if tree is None:
