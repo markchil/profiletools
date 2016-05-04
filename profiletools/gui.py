@@ -4022,6 +4022,7 @@ class FitWindow(tk.Tk):
                         f.state = pickle.dumps(self.package_state(), protocol=pickle.HIGHEST_PROTOCOL)
                     
                     f.x_name = X_name
+                    f.y_name = y_name
                     f.createDimension(X_name, len(self.X))
                     v_X = f.createVariable(X_name, float, (X_name,))
                     v_X[:] = self.X
