@@ -832,18 +832,18 @@ class BivariatePlasmaProfile(Profile):
                 val_samps = out['samp'][special_vals:len(X) + special_vals]
                 grad_samps = out['samp'][len(X) + special_vals:2 * len(X) + special_vals]
                 if scipy.ndim(mean_dX_droa) > 0:
-                    dX_droa = scipy.tile(mean_dX_droa, (val_samps.shape[1], 1)).T
-                a_L_samps = -grad_samps * dX_droa / val_samps
+                    mean_dX_droa = scipy.tile(mean_dX_droa, (val_samps.shape[1], 1)).T
+                a_L_samps = -grad_samps * mean_dX_droa / val_samps
                 mean_a_L = scipy.mean(a_L_samps, axis=1)
                 std_a_L = scipy.std(a_L_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
                 if compute_2:
                     g2_samps = out['samp'][2 * len(X) + special_vals:]
                     if scipy.ndim(mean_dX_droa_2) > 0:
-                        dX_droa_2 = scipy.tile(mean_dX_droa_2, (val_samps.shape[1], 1)).T
-                    a_L_grad_samps = g2_samps * dX_droa / grad_samps + dX_droa_2 / dX_droa
+                        mean_dX_droa_2 = scipy.tile(mean_dX_droa_2, (val_samps.shape[1], 1)).T
+                    a_L_grad_samps = g2_samps * mean_dX_droa / grad_samps + mean_dX_droa_2 / mean_dX_droa
                     mean_a_L_grad = scipy.mean(a_L_grad_samps, axis=1)
                     std_a_L_grad = scipy.std(a_L_grad_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
-                    a2_2_samps = (g2_samps * dX_droa**2.0 + grad_samps * dX_droa_2) / val_samps
+                    a2_2_samps = (g2_samps * mean_dX_droa**2.0 + grad_samps * mean_dX_droa_2) / val_samps
                     mean_a2_2 = scipy.mean(a2_2_samps, axis=1)
                     std_a2_2 = scipy.std(a2_2_samps, axis=1, ddof=predict_kwargs.get('ddof', 1))
             else:
@@ -1208,7 +1208,7 @@ class BivariatePlasmaProfile(Profile):
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
           efit_tree=None, remove_edge=False, remove_zeros=True):
     """Returns a profile representing electron density from the core Thomson scattering system.
-
+    
     Parameters
     ----------
     shot : int
@@ -1228,6 +1228,10 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     remove_edge : bool, optional
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
+    remove_zeros: bool, optional
+        If True, will remove points that are identically zero. Default is True
+        (remove zero points). This was added because clearly bad points aren't
+        always flagged with a sentinel value of errorbar.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -1291,7 +1295,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=True):
+          efit_tree=None, remove_edge=False, remove_zeros=False):
     """Returns a profile representing electron density from the edge Thomson scattering system.
     
     Parameters
@@ -1711,21 +1715,21 @@ def neReflect(shot, abscissa='Rmid', t_min=None, t_max=None, electrons=None,
 def ne(shot, include=['CTS', 'ETS'], TCI_quad_points=None, TCI_flag_threshold=None,
        TCI_thin=None, TCI_ds=None, **kwargs):
     """Returns a profile representing electron density from both the core and edge Thomson scattering systems.
-
+    
     Parameters
     ----------
     shot : int
         The shot number to load.
     include : list of str, optional
         The data sources to include. Valid options are:
-
+        
             ======= ========================
             CTS     Core Thomson scattering
             ETS     Edge Thomson scattering
             TCI     Two color interferometer
             reflect SOL reflectometer
             ======= ========================
-
+        
         The default is to include all TS data sources, but not TCI or the
         reflectometer.
     **kwargs
@@ -1769,9 +1773,9 @@ def neTS(shot, **kwargs):
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_zeros=True, remove_edge=False):
+          efit_tree=None, remove_edge=False, remove_zeros=True):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
-
+    
     Parameters
     ----------
     shot : int
@@ -1788,18 +1792,25 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     efit_tree : eqtools.CModEFITTree, optional
         An eqtools.CModEFITTree object open to the correct shot. The shot of the
         given tree is not checked! Default is None (open tree).
+    remove_edge : bool, optional
+        If True, will remove points that are outside the LCFS. It will convert
+        the abscissa to psinorm if necessary. Default is False (keep edge).
+    remove_zeros: bool, optional
+        If True, will remove points that are identically zero. Default is True
+        (remove zero points). This was added because clearly bad points aren't
+        always flagged with a sentinel value of errorbar.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
                                y_units='keV',
                                X_labels=['$t$', '$R$', '$Z$'],
                                y_label=r'$T_e$, CTS')
-
+    
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
-
+    
     N_Te_TS = electrons.getNode(r'\electrons::top.yag_new.results.profiles:Te_rz')
-
+    
     t_Te_TS = N_Te_TS.dim_of().data()
     Te_TS = N_Te_TS.data()
     dev_Te_TS = electrons.getNode(r'yag_new.results.profiles:Te_err').data()
@@ -1843,10 +1854,10 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     if t_max is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() > t_max)
     p.convert_abscissa(abscissa)
-
+    
     if remove_edge:
         p.remove_edge_points()
-
+    
     return p
 
 def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
@@ -1872,6 +1883,10 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     remove_edge : bool, optional
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
+    remove_zeros: bool, optional
+        If True, will remove points that are identically zero. Default is False
+        (keep zero points). This was added because clearly bad points aren't
+        always flagged with a sentinel value of errorbar.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
