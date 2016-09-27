@@ -1206,7 +1206,7 @@ class BivariatePlasmaProfile(Profile):
                                       "supported for X_dim > 1!")
 
 def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=True):
+          efit_tree=None, remove_edge=False, remove_zeros=True, Z_shift=0.0):
     """Returns a profile representing electron density from the core Thomson scattering system.
     
     Parameters
@@ -1232,6 +1232,9 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         If True, will remove points that are identically zero. Default is True
         (remove zero points). This was added because clearly bad points aren't
         always flagged with a sentinel value of errorbar.
+    Z_shift: float, optional
+        The shift to apply to the vertical coordinate, sometimes needed to
+        correct EFIT mapping. Default is 0.0.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -1248,7 +1251,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     ne_TS = N_ne_TS.data() / 1e20
     dev_ne_TS = electrons.getNode(r'yag_new.results.profiles:ne_err').data() / 1e20
     
-    Z_CTS = electrons.getNode(r'yag_new.results.profiles:z_sorted').data()
+    Z_CTS = electrons.getNode(r'yag_new.results.profiles:z_sorted').data() + Z_shift
     R_CTS = (electrons.getNode(r'yag.results.param:r').data() * scipy.ones_like(Z_CTS))
     channels = range(0, len(Z_CTS))
     
@@ -1295,7 +1298,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=False):
+          efit_tree=None, remove_edge=False, remove_zeros=False, Z_shift=0.0):
     """Returns a profile representing electron density from the edge Thomson scattering system.
     
     Parameters
@@ -1321,13 +1324,16 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         If True, will remove points that are identically zero. Default is False
         (keep zero points). This was added because clearly bad points aren't
         always flagged with a sentinel value of errorbar.
+    Z_shift: float, optional
+        The shift to apply to the vertical coordinate, sometimes needed to
+        correct EFIT mapping. Default is 0.0.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
                                y_units='$10^{20}$ m$^{-3}$',
                                X_labels=['$t$', '$R$', '$Z$'],
                                y_label=r'$n_e$, ETS')
-
+    
     if electrons is None:
         electrons = MDSplus.Tree('electrons', shot)
     
@@ -1337,7 +1343,7 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     ne_ETS = N_ne_ETS.data() / 1e20
     dev_ne_ETS = electrons.getNode(r'yag_edgets.results:ne:error').data() / 1e20
     
-    Z_ETS = electrons.getNode(r'yag_edgets.data:fiber_z').data()
+    Z_ETS = electrons.getNode(r'yag_edgets.data:fiber_z').data() + Z_shift
     R_ETS = (electrons.getNode(r'yag.results.param:R').data() *
              scipy.ones_like(Z_ETS))
     channels = range(0, len(Z_ETS))
@@ -1773,7 +1779,7 @@ def neTS(shot, **kwargs):
     return ne(shot, include=['CTS', 'ETS'], **kwargs)
 
 def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=True):
+          efit_tree=None, remove_edge=False, remove_zeros=True, Z_shift=0.0):
     """Returns a profile representing electron temperature from the core Thomson scattering system.
     
     Parameters
@@ -1799,6 +1805,9 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         If True, will remove points that are identically zero. Default is True
         (remove zero points). This was added because clearly bad points aren't
         always flagged with a sentinel value of errorbar.
+    Z_shift: float, optional
+        The shift to apply to the vertical coordinate, sometimes needed to
+        correct EFIT mapping. Default is 0.0.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -1815,7 +1824,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     Te_TS = N_Te_TS.data()
     dev_Te_TS = electrons.getNode(r'yag_new.results.profiles:Te_err').data()
     
-    Z_CTS = electrons.getNode(r'yag_new.results.profiles:z_sorted').data()
+    Z_CTS = electrons.getNode(r'yag_new.results.profiles:z_sorted').data() + Z_shift
     R_CTS = (electrons.getNode(r'yag.results.param:r').data() *
              scipy.ones_like(Z_CTS))
     channels = range(0, len(Z_CTS))
@@ -1861,7 +1870,7 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=False):
+          efit_tree=None, remove_edge=False, remove_zeros=False, Z_shift=0.0):
     """Returns a profile representing electron temperature from the edge Thomson scattering system.
 
     Parameters
@@ -1887,6 +1896,9 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         If True, will remove points that are identically zero. Default is False
         (keep zero points). This was added because clearly bad points aren't
         always flagged with a sentinel value of errorbar.
+    Z_shift: float, optional
+        The shift to apply to the vertical coordinate, sometimes needed to
+        correct EFIT mapping. Default is 0.0.
     """
     p = BivariatePlasmaProfile(X_dim=3,
                                X_units=['s', 'm', 'm'],
@@ -1903,7 +1915,7 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     Te_TS = N_Te_TS.data() / 1e3
     dev_Te_TS = electrons.getNode(r'yag_edgets.results:te:error').data() / 1e3
     
-    Z_CTS = electrons.getNode(r'yag_edgets.data:fiber_z').data()
+    Z_CTS = electrons.getNode(r'yag_edgets.data:fiber_z').data() + Z_shift
     R_CTS = (electrons.getNode(r'yag.results.param:r').data() *
              scipy.ones_like(Z_CTS))
     channels = range(0, len(Z_CTS))
