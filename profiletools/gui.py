@@ -2600,7 +2600,7 @@ class FitWindow(tk.Tk):
                         shot,
                         tree=EFIT_tree_name
                     )
-                except MDSplus.TreeException as e:
+                except:
                     self.control_frame.status_frame.add_line(
                         "Could not load EFIT data from tree %s! Loading of data "
                         "from tree failed." % (EFIT_tree_name,)
