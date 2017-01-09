@@ -1284,7 +1284,9 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         (p.err_y == 0.0) |
         (p.err_y == 1.0) |
         (p.err_y == 2.0) |
-        ((p.y == 0.0) & remove_zeros)
+        ((p.y == 0.0) & remove_zeros) |
+        scipy.isnan(p.y) |
+        scipy.isinf(p.y)
     )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
@@ -1381,7 +1383,9 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         (p.err_y == 0.0) |
         (p.err_y == 1.0) |
         (p.err_y == 2.0) |
-        ((p.y == 0.0) & remove_zeros)
+        ((p.y == 0.0) & remove_zeros) |
+        scipy.isnan(p.y) |
+        scipy.isinf(p.y)
     )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
@@ -1856,7 +1860,9 @@ def TeCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         scipy.isinf(p.err_y) |
         (p.err_y == 0.0) |
         (p.err_y == 1.0) |
-        ((p.y == 0.0) & remove_zeros)
+        ((p.y == 0.0) & remove_zeros) |
+        scipy.isnan(p.y) |
+        scipy.isinf(p.y)
     )
     if t_min is not None:
         p.remove_points(scipy.asarray(p.X[:, 0]).flatten() < t_min)
@@ -1954,7 +1960,9 @@ def TeETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         (p.err_y == 1.0) |
         (p.err_y == 0.5) |
         ((p.y == 0.0) & remove_zeros) |
-        ((p.y == 0.0) & (p.err_y == 0.029999999329447746))  # This seems to be an old way of flagging. Could be risky...
+        ((p.y == 0.0) & (p.err_y == 0.029999999329447746)) | # This seems to be an old way of flagging. Could be risky...
+        scipy.isnan(p.y) |
+        scipy.isinf(p.y) 
     )
     
     if t_min is not None:
