@@ -1300,7 +1300,7 @@ def neCTS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
     return p
 
 def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
-          efit_tree=None, remove_edge=False, remove_zeros=False, Z_shift=0.0):
+          efit_tree=None, remove_edge=False, remove_zeros=True, Z_shift=0.0):
     """Returns a profile representing electron density from the edge Thomson scattering system.
     
     Parameters
@@ -1323,8 +1323,8 @@ def neETS(shot, abscissa='RZ', t_min=None, t_max=None, electrons=None,
         If True, will remove points that are outside the LCFS. It will convert
         the abscissa to psinorm if necessary. Default is False (keep edge).
     remove_zeros: bool, optional
-        If True, will remove points that are identically zero. Default is False
-        (keep zero points). This was added because clearly bad points aren't
+        If True, will remove points that are identically zero. Default is True
+        (remove zero points). This was added because clearly bad points aren't
         always flagged with a sentinel value of errorbar.
     Z_shift: float, optional
         The shift to apply to the vertical coordinate, sometimes needed to
