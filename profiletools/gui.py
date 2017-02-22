@@ -2584,7 +2584,7 @@ class FitWindow(tk.Tk):
             # Put empty lists in each field so that the order/position is
             # preserved.
             self.master_p = collections.OrderedDict(
-                zip(SYSTEM_OPTIONS[signal], [[]] * len(SYSTEM_OPTIONS[signal]))
+                zip(SYSTEM_OPTIONS[signal], [None,] * len(SYSTEM_OPTIONS[signal]))
             )
             try:
                 shot = int(self.control_frame.data_source_frame.shot_frame.shot_box.get())
@@ -2851,7 +2851,7 @@ class FitWindow(tk.Tk):
         
         for k, p in self.p.iteritems():
             # Data that haven't been loaded are stored as an empty list.
-            if p != []:
+            if p:
                 self.control_frame.status_frame.add_line(
                     "Processing data from %s..." % (k,)
                 )
@@ -4575,7 +4575,7 @@ class FitWindow(tk.Tk):
         # First, we plot the data points:
         if self.p is not None:
             for k, p in self.p.iteritems():
-                if p != []:
+                if p:
                     p.plot_data(ax=self.plot_frame.a_val, fmt=markercycle.next())
             
             # And the flagged outliers:
