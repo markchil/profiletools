@@ -2525,6 +2525,9 @@ class FitWindow(tk.Tk):
         # Need to use old, hackish way since tkinter uses old-style classes:
         tk.Tk.__init__(self, *args, **kwargs)
         
+        # Workaround for Tkinter hanging on quit:
+        self.protocol("WM_DELETE_WINDOW", self.exit)
+
         self.wm_title("%s %s" % (PROG_NAME, __version__,))
         
         self.control_frame = ControlFrame(self)
@@ -2558,7 +2561,7 @@ class FitWindow(tk.Tk):
         self.bind("<F2>", self.set_tab)
         self.bind("<F3>", self.set_tab)
         self.bind("<F4>", self.set_tab)
-    
+
     def set_tab(self, event):
         """Set the tab as indicated by the keysym in the event.
         """
@@ -4697,6 +4700,7 @@ class FitWindow(tk.Tk):
         """Quit the program, cleaning up as needed.
         """
         self.destroy()
+        self.quit()
 
 class MCMCResultsFrame(tk.Frame):
     """Frame to plot the results of the MCMC sampler.
