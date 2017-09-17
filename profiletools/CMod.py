@@ -510,6 +510,12 @@ class BivariatePlasmaProfile(Profile):
                 axis=0
             )
             xa = rho_lim.min()
+            if scipy.isnan(xa):
+                warnings.warn(
+                    "Could not convert limiter location, limiter constraint "
+                    "will NOT be applied!"
+                )
+                return
             print("limiter location=%g" % (xa,))
             x_pts = scipy.linspace(xa, xa * expansion, n_pts)
             y = scipy.zeros_like(x_pts)
