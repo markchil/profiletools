@@ -505,7 +505,7 @@ class BivariatePlasmaProfile(Profile):
         R_lim, Z_lim = self.get_limiter_locations()
         if self.X_dim == 1:
             t_EFIT = self._get_efit_times_to_average()
-            rho_lim = scipy.mean(
+            rho_lim = scipy.nanmean(
                 self.efit_tree.rz2rho(self.abscissa, R_lim, Z_lim, t_EFIT, each_t=True),
                 axis=0
             )
